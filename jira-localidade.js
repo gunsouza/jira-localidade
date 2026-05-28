@@ -14,18 +14,10 @@
   const OPEN_FILTER = 'statusCategory != Done';
   const ORDER_BY = 'updated DESC';
 
-  // Highlight (palavras do resumo do ticket atual)
-  const KEYWORDS_MAX = 6;
-  const KEYWORDS_MIN_LEN = 5;
-  const KEYWORDS_STOP = new Set([
-    'para','com','sem','uma','umas','uns','não','nao','que','por','pra','pro',
-    'the','and','with','without','from','this','that','isso','essa','este','esta',
-    'solicitar','solicitação','solicitacao','acesso','liberação','liberacao',
-    'problema','erro','falha','sistema','cliente','usuário','usuario','conta',
-    'time','equipe','suporte','ajuda','help'
-  ]);
-
   const DESC_PREVIEW_LEN = 280;
+
+  // Quantos identificadores mostrar na etiqueta "possível duplicado"
+  const DUP_LABEL_MAX_TOKENS = 3;
 
   const IDS = {
     style: 'ml_loc_style_bm',
@@ -36,7 +28,8 @@
 
   const esc = (s) => String(s ?? '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
   const getIssueKey = () => {
@@ -74,7 +67,6 @@
       #${IDS.modal} table{width:100%;border-collapse:collapse;margin-top:10px;}
       #${IDS.modal} th,#${IDS.modal} td{border-bottom:1px solid #2c2f36;padding:10px 8px;font-size:13px;vertical-align:top;}
       #${IDS.modal} th{position:sticky;top:0;background:#1d1f23;text-align:left;}
-      #${IDS.modal} .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#2c2f36;font-size:12px;}
       #${IDS.modal} .err{color:#ffb4b4;background:#2a1d1d;border:1px solid #5a2a2a;padding:10px;border-radius:8px;}
       #${IDS.modal} .warn{color:#ffe2a8;background:#2a2418;border:1px solid #5a4a22;padding:10px;border-radius:8px;}
       #${IDS.modal} code{white-space:pre-wrap}
@@ -177,49 +169,110 @@
     }
   }
 
-  function buildKeywords(summary){
-    const clean = String(summary || '')
-      .toLowerCase()
-      .replace(/[#()[\]{}.,;:!?/\\|'"`~@%^&*_+=<>]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if(!clean) return [];
-
-    const parts = clean.split(' ')
-      .map(w => w.trim())
-      .filter(w => w.length >= KEYWORDS_MIN_LEN)
-      .filter(w => !KEYWORDS_STOP.has(w));
-
-    const freq = new Map();
-    for(const w of parts) freq.set(w, (freq.get(w) || 0) + 1);
-
-    return [...freq.entries()]
-      .sort((a,b) => b[1]-a[1] || b[0].length-a[0].length)
-      .slice(0, KEYWORDS_MAX)
-      .map(([w]) => w);
+  function uniq(arr){
+    return [...new Set(arr)];
   }
 
-  function highlightText(text, keywords){
-    if(!keywords.length) return esc(text);
-    let html = esc(text);
-    for(const kw of keywords){
-      const re = new RegExp(`\\b(${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\b`, 'ig');
+  function normalizeToken(t){
+    return String(t).trim();
+  }
+
+  function isPrivateIp(ip){
+    const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if(!m) return false;
+    const a = Number(m[1]), b = Number(m[2]);
+    if(a === 10) return true;
+    if(a === 192 && b === 168) return true;
+    if(a === 172 && b >= 16 && b <= 31) return true;
+    return false;
+  }
+
+  function extractIdentifiersFromText(text){
+    const t = String(text || '');
+    const found = [];
+
+    // IPs (pega todos, mas só considera private como "forte" por padrão)
+    const ipRe = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
+    for(const m of t.matchAll(ipRe)){
+      const ip = m[0];
+      if(isPrivateIp(ip)) found.push({ type:'ip', value: ip, weight: 4 });
+    }
+
+    // MAC
+    const macRe = /\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b/g;
+    for(const m of t.matchAll(macRe)){
+      found.push({ type:'mac', value: m[0].toUpperCase().replace(/-/g,':'), weight: 5 });
+    }
+
+    // ZEB#### / ZPL#### (mín 3 dígitos)
+    const zebzplRe = /\b(ZEB|ZPL)\s*[-_:]?\s*(\d{3,})\b/gi;
+    for(const m of t.matchAll(zebzplRe)){
+      found.push({ type: m[1].toUpperCase(), value: `${m[1].toUpperCase()}${m[2]}`, weight: 6 });
+    }
+
+    // SELB (simples)
+    const selbRe = /\bSELB\b/gi;
+    if(selbRe.test(t)) found.push({ type:'SELB', value:'SELB', weight: 3 });
+
+    // Serial por label (SN/SN: / S/N / SERIAL / N/S)
+    const serialLabelRe = /\b(?:S\/N|SN|N\/S|SERIAL(?:\s*NUMBER)?)[\s:#-]*([A-Z0-9]{6,24})\b/gi;
+    for(const m of t.matchAll(serialLabelRe)){
+      const s = m[1].toUpperCase();
+      // evita pegar só números pequenos
+      if(s.length >= 8) found.push({ type:'serial', value: s, weight: 6 });
+    }
+
+    // Serial "forte" solto: token alfanum >= 10 com pelo menos 2 letras e 2 números
+    // (evita pegar muitas coisas aleatórias)
+    const strongTokenRe = /\b[A-Z0-9]{10,24}\b/g;
+    const up = t.toUpperCase();
+    for(const m of up.matchAll(strongTokenRe)){
+      const tok = m[0];
+      if(/^\d+$/.test(tok)) continue; // só números -> ignora
+      if((tok.match(/[A-Z]/g) || []).length < 2) continue;
+      if((tok.match(/\d/g) || []).length < 2) continue;
+      // evita MAC sem separador (12 hex)
+      if(/^[0-9A-F]{12}$/.test(tok)) continue;
+      found.push({ type:'serial?', value: tok, weight: 3 });
+    }
+
+    // normaliza e dedup pelo value
+    const byVal = new Map();
+    for(const it of found){
+      const v = normalizeToken(it.value);
+      const prev = byVal.get(v);
+      if(!prev || it.weight > prev.weight) byVal.set(v, { ...it, value: v });
+    }
+
+    return [...byVal.values()]
+      .sort((a,b)=> b.weight - a.weight || a.value.localeCompare(b.value));
+  }
+
+  function intersectIdentifiers(currentIds, otherText){
+    if(!currentIds.length) return [];
+    const other = String(otherText || '').toUpperCase();
+    const hits = [];
+    for(const it of currentIds){
+      const needle = it.value.toUpperCase();
+      if(needle && other.includes(needle)) hits.push(it);
+    }
+    return hits;
+  }
+
+  function highlightIdentifiers(text, identifiers){
+    let html = esc(text || '');
+    if(!identifiers.length) return html;
+
+    // destaca os tokens mais longos primeiro para evitar parcial
+    const sorted = [...identifiers].sort((a,b)=> b.value.length - a.value.length);
+    for(const it of sorted){
+      const token = it.value;
+      if(!token) continue;
+      const safe = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`\\b(${safe})\\b`, 'ig');
       html = html.replace(re, '<span class="kwh">$1</span>');
     }
     return html;
-  }
-
-  function matchScore(summary, descText, keywords){
-    if(!keywords.length) return 0;
-    const s = String(summary || '').toLowerCase();
-    const d = String(descText || '').toLowerCase();
-    let score = 0;
-    for(const kw of keywords){
-      if(s.includes(kw)) score += 2; // resumo pesa mais
-      if(d.includes(kw)) score += 1;
-    }
-    return score;
   }
 
   async function getAssetFromIssue(issueKey){
@@ -316,17 +369,22 @@
         modal.setBody('Lendo ticket atual / localidade…');
 
         const [issueCurrent, asset] = await Promise.all([
-          getIssueFields(issueKey, ["summary"]),
+          getIssueFields(issueKey, ["summary","description"]),
           getAssetFromIssue(issueKey),
         ]);
 
         const summaryCurrent = String(issueCurrent?.fields?.summary || '').trim();
-        const keywords = buildKeywords(summaryCurrent);
-        const kwLabel = keywords.length ? keywords.join(', ') : '—';
+        const descCurrent = descriptionToText(issueCurrent?.fields?.description);
+        const currentText = `${summaryCurrent}\n${descCurrent}`.trim();
+
+        const currentIds = extractIdentifiersFromText(currentText);
+        const idsLabel = currentIds.length
+          ? currentIds.slice(0, 6).map(x => x.value).join(', ')
+          : '—';
 
         const { objectId, workspaceId } = asset;
 
-        modal.setSubtitle(`Localidade (objectId): ${objectId} • Atual: ${issueKey} • Keywords: ${kwLabel}`);
+        modal.setSubtitle(`Localidade (objectId): ${objectId} • Atual: ${issueKey} • IDs: ${idsLabel}`);
 
         modal.setBody('Buscando tickets vinculados…');
 
@@ -341,7 +399,7 @@
           if(keys.length < PAGE_SIZE) break;
         }
 
-        allKeys = [...new Set(allKeys)]
+        allKeys = uniq(allKeys)
           .filter(k => PROJECTS.includes(k.split('-')[0]))
           .filter(k => k !== issueKey);
 
@@ -367,7 +425,7 @@
             <a href="${esc(issuesUrl)}" target="_blank" rel="noopener">Abrir busca no Jira</a>
           </div>
           <div class="meta">
-            Keys: ${Math.min(allKeys.length,400)}${allKeys.length>400?` (limitado de ${allKeys.length})`:""}<br/>
+            Vinculados: ${Math.min(allKeys.length,400)}${allKeys.length>400?` (limitado de ${allKeys.length})`:""}<br/>
             JQL: <code>${esc(jql)}</code>
           </div>
         `);
@@ -380,21 +438,21 @@
           return;
         }
 
-        // Score por resumo+descrição e desempate por updated
+        // Score por interseção de identificadores (Resumo+Descrição)
         issues = issues
           .map(i => {
             const f = i.fields || {};
             const descText = descriptionToText(f.description);
-            return {
-              issue: i,
-              score: matchScore(f.summary || '', descText, keywords),
-              updated: f.updated || '',
-              descText
-            };
+            const combined = `${f.summary || ''}\n${descText}`;
+            const hits = intersectIdentifiers(currentIds, combined);
+            const score = hits.reduce((acc, x) => acc + (x.weight || 1), 0);
+            const updated = f.updated || '';
+            return { issue: i, hits, score, updated, descText };
           })
           .sort((a,b) => (b.score - a.score) || (String(b.updated).localeCompare(String(a.updated))))
           .map(x => x.issue);
 
+        // Para render, recalcula hits (pra não mudar estrutura acima)
         const rows = issues.map(i=>{
           const f = i.fields || {};
           const link = `${location.origin}/browse/${i.key}`;
@@ -402,22 +460,27 @@
           const descText = descriptionToText(f.description);
           const descPreview = descText.length > DESC_PREVIEW_LEN ? descText.slice(0, DESC_PREVIEW_LEN) + "…" : descText;
 
-          const score = matchScore(f.summary || '', descText, keywords);
+          const combined = `${f.summary || ''}\n${descText}`;
+          const hits = intersectIdentifiers(currentIds, combined);
+          const score = hits.reduce((acc, x) => acc + (x.weight || 1), 0);
 
           const rt = f[`customfield_${CF_RES_TEAM}`];
           const resTeam = (rt && (rt.value || rt.name)) ? (rt.value || rt.name) : (rt ? String(rt) : '—');
 
           const fullEsc = esc(descText || '');
 
+          const labelTokens = hits.slice(0, DUP_LABEL_MAX_TOKENS).map(x => x.value).join(', ');
+          const dupLabel = score ? `possível duplicado (${labelTokens || 'match'})` : '';
+
           return `
             <tr class="${score ? 'hl' : ''}" data-key="${esc(i.key)}" data-full="${fullEsc}">
               <td style="width:140px">
                 <a target="_blank" rel="noopener" href="${esc(link)}">${esc(i.key)}</a>
                 <div class="meta">${esc(f.project?.key||'')} • ${esc(f.issuetype?.name||'')}</div>
-                ${score ? `<span class="kw">possível duplicado (${score})</span>` : ``}
+                ${score ? `<span class="kw">${esc(dupLabel)}</span>` : ``}
               </td>
-              <td style="width:260px">${highlightText(f.summary||'', keywords)}</td>
-              <td class="desc">${highlightText(descPreview||'', keywords)}</td>
+              <td style="width:260px">${highlightIdentifiers(f.summary||'', hits)}</td>
+              <td class="desc">${highlightIdentifiers(descPreview||'', hits)}</td>
               <td style="width:210px">${esc(resTeam)}</td>
               <td style="width:220px">${esc(f.assignee?.displayName||'—')}</td>
             </tr>
@@ -425,7 +488,7 @@
         }).join('');
 
         modal.setBody(`
-          <div><b>${issues.length}</b> ticket(s) em aberto. <span class="meta">Ordenado por match+updated. Clique em uma linha para ver a descrição completa.</span></div>
+          <div><b>${issues.length}</b> ticket(s) em aberto. <span class="meta">Ordenado por match(IDs)+updated. Clique em uma linha para ver a descrição completa.</span></div>
           <table>
             <thead>
               <tr>
@@ -440,7 +503,7 @@
           </table>
           <div class="meta">
             Localidade (objectId): ${esc(objectId)}<br/>
-            Keywords: ${esc(kwLabel)}<br/>
+            IDs extraídos do ticket atual (Resumo+Descrição): ${esc(idsLabel)}<br/>
             JQL: <code>${esc(jql)}</code>
           </div>
         `);
