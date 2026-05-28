@@ -15,7 +15,7 @@
   const ORDER_BY = 'updated DESC';
 
   const DESC_PREVIEW_LEN = 280;
-  const DUP_LABEL_MAX_TOKENS = 3; // quantos IDs mostrar na etiqueta "possível duplicado"
+  const DUP_LABEL_MAX_TOKENS = 3;
 
   const IDS = {
     style: 'ml_loc_style_bm',
@@ -30,16 +30,12 @@
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-  // Suporta:
-  // - /browse/IS-123
-  // - /jira/servicedesk/projects/IS/queues/issue/IS-123
+  // /browse/IS-123  OR  /jira/servicedesk/projects/IS/queues/issue/IS-123
   const getIssueKey = () => {
     let m = location.pathname.match(/\/browse\/([A-Z][A-Z0-9_]+-\d+)/);
     if (m) return m[1];
-
     m = location.pathname.match(/\/queues\/issue\/([A-Z][A-Z0-9_]+-\d+)/);
     if (m) return m[1];
-
     return '';
   };
 
@@ -82,6 +78,19 @@
       #${IDS.modal} .actions a{margin-right:10px}
       #${IDS.modal} .desc{opacity:.92}
 
+      /* Chips (IDs) */
+      #${IDS.modal} .chips{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 6px 0}
+      #${IDS.modal} .chip{
+        display:inline-flex;align-items:center;gap:6px;
+        padding:4px 10px;border-radius:999px;
+        background:#22252b;border:1px solid #2c2f36;color:#e6e6e6;
+        font-size:12px;cursor:pointer;user-select:none;
+      }
+      #${IDS.modal} .chip:hover{border-color:#3b82f6}
+      #${IDS.modal} .chip.active{background:#17335f;border-color:#2c6bed}
+      #${IDS.modal} .chip.small{padding:2px 8px;font-size:11px;opacity:.9}
+      #${IDS.modal} .chip.clear{background:#2a1d1d;border-color:#5a2a2a}
+
       /* Expand descrição completa */
       #${IDS.modal} tr{cursor:pointer}
       #${IDS.modal} tr.descrow td{
@@ -99,6 +108,29 @@
         opacity:.75;
         font-size:12px;
         margin-bottom:6px
+      }
+      #${IDS.modal} .compare{
+        display:grid;
+        grid-template-columns: 1fr;
+        gap:10px;
+        margin-bottom:10px;
+      }
+      #${IDS.modal} .compare .box{
+        background:#121417;
+        border:1px solid #2c2f36;
+        border-radius:10px;
+        padding:10px;
+      }
+      #${IDS.modal} .compare .title{
+        font-weight:800;
+        font-size:12px;
+        margin-bottom:6px;
+        opacity:.9;
+      }
+      #${IDS.modal} .compare .list{
+        display:flex;
+        gap:8px;
+        flex-wrap:wrap;
       }
     `;
     document.head.appendChild(st);
@@ -157,7 +189,6 @@
     if(!desc) return '';
     if(typeof desc === 'string') return desc.replace(/\s+/g,' ').trim();
 
-    // ADF: percorre textos
     try{
       let out = '';
       const walk = (n) => {
@@ -175,13 +206,8 @@
     }
   }
 
-  function uniq(arr){
-    return [...new Set(arr)];
-  }
-
-  function normalizeToken(t){
-    return String(t).trim();
-  }
+  function uniq(arr){ return [...new Set(arr)]; }
+  function normalizeToken(t){ return String(t).trim(); }
 
   function isPrivateIp(ip){
     const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
@@ -193,7 +219,6 @@
     return false;
   }
 
-  // Agora considera IP público também (peso menor que private).
   function extractIdentifiersFromText(text){
     const t = String(text || '');
     const found = [];
@@ -221,14 +246,14 @@
     const selbRe = /\bSELB\b/gi;
     if(selbRe.test(t)) found.push({ type:'SELB', value:'SELB', weight: 3 });
 
-    // Serial por label (SN/SN: / S/N / SERIAL / N/S)
+    // Serial por label
     const serialLabelRe = /\b(?:S\/N|SN|N\/S|SERIAL(?:\s*NUMBER)?)[\s:#-]*([A-Z0-9]{6,24})\b/gi;
     for(const m of t.matchAll(serialLabelRe)){
       const s = m[1].toUpperCase();
       if(s.length >= 8) found.push({ type:'serial', value: s, weight: 6 });
     }
 
-    // Serial "forte" solto: token alfanum >= 10 com pelo menos 2 letras e 2 números
+    // Serial "forte" solto
     const strongTokenRe = /\b[A-Z0-9]{10,24}\b/g;
     const up = t.toUpperCase();
     for(const m of up.matchAll(strongTokenRe)){
@@ -267,7 +292,6 @@
     let html = esc(text || '');
     if(!identifiers.length) return html;
 
-    // destaca os tokens mais longos primeiro
     const sorted = [...identifiers].sort((a,b)=> b.value.length - a.value.length);
     for(const it of sorted){
       const token = it.value;
@@ -359,6 +383,43 @@
     return JSON.parse(txt);
   }
 
+  function renderChips(currentIds, activeFilter){
+    if(!currentIds.length){
+      return `<div class="meta">IDs extraídos: —</div>`;
+    }
+
+    const chips = currentIds.slice(0, 12).map(it => {
+      const v = it.value;
+      const active = activeFilter === v ? 'active' : '';
+      return `<span class="chip ${active}" data-chip="${esc(v)}" title="Filtrar por ${esc(v)}">${esc(v)}</span>`;
+    }).join('');
+
+    const clear = activeFilter
+      ? `<span class="chip clear" data-chip="" title="Limpar filtro">Limpar filtro</span>`
+      : '';
+
+    return `
+      <div class="meta">Clique em um ID para filtrar a lista:</div>
+      <div class="chips" id="ml_loc_chips">
+        ${chips}
+        ${clear}
+      </div>
+    `;
+  }
+
+  function applyTableFilter(tbody, filterValue){
+    const rows = [...tbody.querySelectorAll('tr[data-hits]')];
+    for(const tr of rows){
+      const hits = (tr.getAttribute('data-hits') || '').split('|').filter(Boolean);
+      const show = !filterValue || hits.includes(filterValue);
+      tr.style.display = show ? '' : 'none';
+
+      // se tiver descrow aberto, remove ao filtrar
+      const next = tr.nextElementSibling;
+      if(next && next.classList.contains('descrow')) next.remove();
+    }
+  }
+
   async function run(){
     const issueKey = getIssueKey();
     if(!issueKey){
@@ -383,7 +444,7 @@
 
         const currentIds = extractIdentifiersFromText(currentText);
         const idsLabel = currentIds.length
-          ? currentIds.slice(0, 8).map(x => x.value).join(', ')
+          ? currentIds.slice(0, 10).map(x => x.value).join(', ')
           : '—';
 
         const { objectId, workspaceId } = asset;
@@ -451,10 +512,13 @@
             const hits = intersectIdentifiers(currentIds, combined);
             const score = hits.reduce((acc, x) => acc + (x.weight || 1), 0);
             const updated = f.updated || '';
-            return { issue: i, hits, score, updated };
+            return { issue: i, hits, score, updated, descText };
           })
           .sort((a,b) => (b.score - a.score) || (String(b.updated).localeCompare(String(a.updated))))
           .map(x => x.issue);
+
+        // Render
+        const chipsHtml = renderChips(currentIds, '');
 
         const rows = issues.map(i=>{
           const f = i.fields || {};
@@ -475,8 +539,14 @@
           const labelTokens = hits.slice(0, DUP_LABEL_MAX_TOKENS).map(x => x.value).join(', ');
           const dupLabel = score ? `possível duplicado (${labelTokens || 'match'})` : '';
 
+          const hitVals = hits.map(x => x.value);
+          const hitAttr = hitVals.join('|');
+
           return `
-            <tr class="${score ? 'hl' : ''}" data-key="${esc(i.key)}" data-full="${fullEsc}">
+            <tr class="${score ? 'hl' : ''}"
+                data-key="${esc(i.key)}"
+                data-full="${fullEsc}"
+                data-hits="${esc(hitAttr)}">
               <td style="width:140px">
                 <a target="_blank" rel="noopener" href="${esc(link)}">${esc(i.key)}</a>
                 <div class="meta">${esc(f.project?.key||'')} • ${esc(f.issuetype?.name||'')}</div>
@@ -491,7 +561,12 @@
         }).join('');
 
         modal.setBody(`
-          <div><b>${issues.length}</b> ticket(s) em aberto. <span class="meta">Ordenado por match(IDs)+updated. Clique em uma linha para ver a descrição completa.</span></div>
+          <div><b>${issues.length}</b> ticket(s) em aberto.
+            <span class="meta">Ordenado por match(IDs)+updated. Clique em uma linha para ver a descrição completa.</span>
+          </div>
+
+          ${chipsHtml}
+
           <table>
             <thead>
               <tr>
@@ -502,20 +577,60 @@
                 <th style="width:220px">Responsável</th>
               </tr>
             </thead>
-            <tbody>${rows}</tbody>
+            <tbody id="ml_loc_tbody">${rows}</tbody>
           </table>
+
           <div class="meta">
             Localidade (objectId): ${esc(objectId)}<br/>
-            IDs extraídos do ticket atual (Resumo+Descrição): ${esc(idsLabel)}<br/>
+            IDs do ticket atual (Resumo+Descrição): ${esc(idsLabel)}<br/>
             JQL: <code>${esc(jql)}</code>
           </div>
         `);
 
-        // Expand/collapse descrição completa
+        // Interação: chips de filtro
         setTimeout(() => {
-          const tbody = document.querySelector(`#${IDS.modal} tbody`);
+          const chipWrap = document.getElementById('ml_loc_chips');
+          const tbody = document.getElementById('ml_loc_tbody');
+          if(!chipWrap || !tbody) return;
+
+          let active = '';
+
+          chipWrap.addEventListener('click', (ev) => {
+            const el = ev.target.closest('[data-chip]');
+            if(!el) return;
+            const v = el.getAttribute('data-chip') || '';
+
+            active = (active === v) ? '' : v;
+
+            // atualiza classes
+            [...chipWrap.querySelectorAll('.chip')].forEach(c => c.classList.remove('active'));
+            if(active){
+              const activeEl = [...chipWrap.querySelectorAll('.chip')].find(c => (c.getAttribute('data-chip')||'') === active);
+              if(activeEl) activeEl.classList.add('active');
+            }
+
+            // injeta/remove "Limpar filtro"
+            const hasClear = !!chipWrap.querySelector('.chip.clear');
+            if(active && !hasClear){
+              chipWrap.insertAdjacentHTML('beforeend', `<span class="chip clear" data-chip="" title="Limpar filtro">Limpar filtro</span>`);
+            }
+            if(!active && hasClear){
+              chipWrap.querySelector('.chip.clear')?.remove();
+            }
+
+            applyTableFilter(tbody, active);
+          });
+        }, 0);
+
+        // Expand/collapse + mini diff
+        setTimeout(() => {
+          const tbody = document.getElementById('ml_loc_tbody');
           if(!tbody || tbody.dataset.bound === '1') return;
           tbody.dataset.bound = '1';
+
+          const currentListHtml = (currentIds.length
+            ? currentIds.slice(0, 12).map(it => `<span class="chip small">${esc(it.value)}</span>`).join('')
+            : `<span class="muted">Nenhum ID encontrado no ticket atual.</span>`);
 
           tbody.addEventListener('click', (ev) => {
             const tr = ev.target.closest('tr');
@@ -532,11 +647,29 @@
             tbody.__openKey = tr.dataset.key;
 
             const full = tr.getAttribute('data-full') || '';
+            const hits = (tr.getAttribute('data-hits') || '').split('|').filter(Boolean);
+            const hitsHtml = hits.length
+              ? hits.slice(0, 12).map(v => `<span class="chip small active">${esc(v)}</span>`).join('')
+              : `<span class="muted">Nenhum ID em comum.</span>`;
+
             const descRow = document.createElement('tr');
             descRow.className = 'descrow';
             descRow.innerHTML = `
               <td colspan="5">
-                <div class="muted">Descrição completa • ${esc(tr.dataset.key || '')}</div>
+                <div class="muted">Comparar com ticket atual • ${esc(tr.dataset.key || '')}</div>
+
+                <div class="compare">
+                  <div class="box">
+                    <div class="title">IDs do ticket atual</div>
+                    <div class="list">${currentListHtml}</div>
+                  </div>
+                  <div class="box">
+                    <div class="title">IDs em comum (match)</div>
+                    <div class="list">${hitsHtml}</div>
+                  </div>
+                </div>
+
+                <div class="muted">Descrição completa</div>
                 <div class="fulldesc">${full || '<span class="muted">Sem descrição.</span>'}</div>
               </td>
             `;
@@ -564,7 +697,7 @@
     document.body.appendChild(b);
   }
 
-  // Jira é SPA: garante botão quando houver issueKey em qualquer uma das rotas suportadas
+  // Jira é SPA: garante botão quando houver issueKey
   const tick = () => {
     const key = getIssueKey();
     if(key) ensureButton();
