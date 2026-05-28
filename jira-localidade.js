@@ -15,9 +15,7 @@
   const ORDER_BY = 'updated DESC';
 
   const DESC_PREVIEW_LEN = 280;
-
-  // Quantos identificadores mostrar na etiqueta "possível duplicado"
-  const DUP_LABEL_MAX_TOKENS = 3;
+  const DUP_LABEL_MAX_TOKENS = 3; // quantos IDs mostrar na etiqueta "possível duplicado"
 
   const IDS = {
     style: 'ml_loc_style_bm',
@@ -32,9 +30,17 @@
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
+  // Suporta:
+  // - /browse/IS-123
+  // - /jira/servicedesk/projects/IS/queues/issue/IS-123
   const getIssueKey = () => {
-    const m = location.pathname.match(/\/browse\/([A-Z][A-Z0-9_]+-\d+)/);
-    return m ? m[1] : '';
+    let m = location.pathname.match(/\/browse\/([A-Z][A-Z0-9_]+-\d+)/);
+    if (m) return m[1];
+
+    m = location.pathname.match(/\/queues\/issue\/([A-Z][A-Z0-9_]+-\d+)/);
+    if (m) return m[1];
+
+    return '';
   };
 
   const ensureStyle = () => {
@@ -187,15 +193,16 @@
     return false;
   }
 
+  // Agora considera IP público também (peso menor que private).
   function extractIdentifiersFromText(text){
     const t = String(text || '');
     const found = [];
 
-    // IPs (pega todos, mas só considera private como "forte" por padrão)
+    // IPs (privados e públicos)
     const ipRe = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
     for(const m of t.matchAll(ipRe)){
       const ip = m[0];
-      if(isPrivateIp(ip)) found.push({ type:'ip', value: ip, weight: 4 });
+      found.push({ type:'ip', value: ip, weight: isPrivateIp(ip) ? 4 : 3 });
     }
 
     // MAC
@@ -218,25 +225,22 @@
     const serialLabelRe = /\b(?:S\/N|SN|N\/S|SERIAL(?:\s*NUMBER)?)[\s:#-]*([A-Z0-9]{6,24})\b/gi;
     for(const m of t.matchAll(serialLabelRe)){
       const s = m[1].toUpperCase();
-      // evita pegar só números pequenos
       if(s.length >= 8) found.push({ type:'serial', value: s, weight: 6 });
     }
 
     // Serial "forte" solto: token alfanum >= 10 com pelo menos 2 letras e 2 números
-    // (evita pegar muitas coisas aleatórias)
     const strongTokenRe = /\b[A-Z0-9]{10,24}\b/g;
     const up = t.toUpperCase();
     for(const m of up.matchAll(strongTokenRe)){
       const tok = m[0];
-      if(/^\d+$/.test(tok)) continue; // só números -> ignora
+      if(/^\d+$/.test(tok)) continue;
       if((tok.match(/[A-Z]/g) || []).length < 2) continue;
       if((tok.match(/\d/g) || []).length < 2) continue;
-      // evita MAC sem separador (12 hex)
-      if(/^[0-9A-F]{12}$/.test(tok)) continue;
+      if(/^[0-9A-F]{12}$/.test(tok)) continue; // evita MAC sem separador
       found.push({ type:'serial?', value: tok, weight: 3 });
     }
 
-    // normaliza e dedup pelo value
+    // dedup por value (mantém maior weight)
     const byVal = new Map();
     for(const it of found){
       const v = normalizeToken(it.value);
@@ -263,7 +267,7 @@
     let html = esc(text || '');
     if(!identifiers.length) return html;
 
-    // destaca os tokens mais longos primeiro para evitar parcial
+    // destaca os tokens mais longos primeiro
     const sorted = [...identifiers].sort((a,b)=> b.value.length - a.value.length);
     for(const it of sorted){
       const token = it.value;
@@ -358,7 +362,7 @@
   async function run(){
     const issueKey = getIssueKey();
     if(!issueKey){
-      alert('Abra um ticket (/browse/XXX-123) para usar.');
+      alert('Abra um ticket (/browse/XXX-123) ou /queues/issue/XXX-123 para usar.');
       return;
     }
 
@@ -379,7 +383,7 @@
 
         const currentIds = extractIdentifiersFromText(currentText);
         const idsLabel = currentIds.length
-          ? currentIds.slice(0, 6).map(x => x.value).join(', ')
+          ? currentIds.slice(0, 8).map(x => x.value).join(', ')
           : '—';
 
         const { objectId, workspaceId } = asset;
@@ -438,7 +442,7 @@
           return;
         }
 
-        // Score por interseção de identificadores (Resumo+Descrição)
+        // Ordena por match(IDs)+updated
         issues = issues
           .map(i => {
             const f = i.fields || {};
@@ -447,12 +451,11 @@
             const hits = intersectIdentifiers(currentIds, combined);
             const score = hits.reduce((acc, x) => acc + (x.weight || 1), 0);
             const updated = f.updated || '';
-            return { issue: i, hits, score, updated, descText };
+            return { issue: i, hits, score, updated };
           })
           .sort((a,b) => (b.score - a.score) || (String(b.updated).localeCompare(String(a.updated))))
           .map(x => x.issue);
 
-        // Para render, recalcula hits (pra não mudar estrutura acima)
         const rows = issues.map(i=>{
           const f = i.fields || {};
           const link = `${location.origin}/browse/${i.key}`;
@@ -508,7 +511,7 @@
           </div>
         `);
 
-        // Expand/collapse descrição completa ao clicar (delegação)
+        // Expand/collapse descrição completa
         setTimeout(() => {
           const tbody = document.querySelector(`#${IDS.modal} tbody`);
           if(!tbody || tbody.dataset.bound === '1') return;
@@ -561,9 +564,10 @@
     document.body.appendChild(b);
   }
 
-  // Jira é SPA
+  // Jira é SPA: garante botão quando houver issueKey em qualquer uma das rotas suportadas
   const tick = () => {
-    if(location.pathname.startsWith('/browse/')) ensureButton();
+    const key = getIssueKey();
+    if(key) ensureButton();
     else document.getElementById(IDS.btn)?.remove();
   };
 
