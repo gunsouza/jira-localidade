@@ -1,25 +1,31 @@
 (function () {
   'use strict';
 
-  const CF_ID = 18388; // IS Ubicación - cf[18388]
+  const CF_ASSET = 18388; // IS Ubicación - cf[18388]
+  const CF_RES_TEAM = 15613; // Resolution team IS (Dropdown) - customfield_15613
+
   const PROJECTS = ['IS', 'ISS', 'SSHP'];
 
   const PAGE_SIZE = 50;
   const MAX_PAGES = 6;
   const MAX_RESULTS = 100;
-  const HIDE_RESOLVED = true;
+
+  const HIDE_RESOLVED = true;                 // assets endpoint
   const OPEN_FILTER = 'statusCategory != Done';
   const ORDER_BY = 'updated DESC';
 
-  // Highlight (palavras do summary)
+  // Highlight (palavras do resumo do ticket atual)
   const KEYWORDS_MAX = 6;
   const KEYWORDS_MIN_LEN = 5;
   const KEYWORDS_STOP = new Set([
     'para','com','sem','uma','umas','uns','não','nao','que','por','pra','pro',
     'the','and','with','without','from','this','that','isso','essa','este','esta',
     'solicitar','solicitação','solicitacao','acesso','liberação','liberacao',
-    'problema','erro','falha','sistema','cliente','usuário','usuario','conta'
+    'problema','erro','falha','sistema','cliente','usuário','usuario','conta',
+    'time','equipe','suporte','ajuda','help'
   ]);
+
+  const DESC_PREVIEW_LEN = 280;
 
   const IDS = {
     style: 'ml_loc_style_bm',
@@ -54,7 +60,7 @@
       #${IDS.overlay}{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999998;}
       #${IDS.modal}{
         position:fixed; top:6vh; left:50%; transform:translateX(-50%);
-        width:min(1100px,94vw); max-height:88vh; overflow:auto;
+        width:min(1200px,95vw); max-height:88vh; overflow:auto;
         background:#1d1f23; color:#e6e6e6; border:1px solid #333;
         border-radius:12px; z-index:9999999; box-shadow:0 10px 30px rgba(0,0,0,.45);
         font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
@@ -73,9 +79,10 @@
       #${IDS.modal} .warn{color:#ffe2a8;background:#2a2418;border:1px solid #5a4a22;padding:10px;border-radius:8px;}
       #${IDS.modal} code{white-space:pre-wrap}
       #${IDS.modal} .kw{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;background:#3a2f11;border:1px solid #6b5a1d;color:#ffe2a8;font-size:12px}
-      #${IDS.modal} .hl{background:rgba(255,226,168,.12)}
+      #${IDS.modal} .hl{background:rgba(255,226,168,.10)}
       #${IDS.modal} .kwh{padding:1px 4px;border-radius:6px;background:rgba(255,226,168,.18);border:1px solid rgba(255,226,168,.25)}
       #${IDS.modal} .actions a{margin-right:10px}
+      #${IDS.modal} .desc{opacity:.92}
     `;
     document.head.appendChild(st);
   };
@@ -122,25 +129,88 @@
     };
   };
 
-  async function getIssueSummary(issueKey){
-    const url = `${location.origin}/rest/api/3/issue/${issueKey}?fields=summary`;
+  async function getIssueFields(issueKey, fields) {
+    const url = `${location.origin}/rest/api/3/issue/${issueKey}?fields=${encodeURIComponent(fields.join(','))}`;
     const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
-    if(!r.ok) throw new Error(`HTTP ${r.status} ao ler summary do ticket atual`);
-    const j = await r.json();
-    return String(j?.fields?.summary || '').trim();
+    if(!r.ok) throw new Error(`HTTP ${r.status} ao ler campos do ticket`);
+    return r.json();
+  }
+
+  function descriptionToText(desc){
+    if(!desc) return '';
+    if(typeof desc === 'string') return desc.replace(/\s+/g,' ').trim();
+
+    // ADF: percorre textos
+    try{
+      let out = '';
+      const walk = (n) => {
+        if(!n) return;
+        if(Array.isArray(n)) return n.forEach(walk);
+        if(typeof n === 'object'){
+          if(n.type === 'text' && typeof n.text === 'string') out += n.text + ' ';
+          if(n.content) walk(n.content);
+        }
+      };
+      walk(desc);
+      return out.replace(/\s+/g,' ').trim();
+    }catch{
+      return '';
+    }
+  }
+
+  function buildKeywords(summary){
+    const clean = String(summary || '')
+      .toLowerCase()
+      .replace(/[#()[\]{}.,;:!?/\\|'"`~@%^&*_+=<>]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if(!clean) return [];
+
+    const parts = clean.split(' ')
+      .map(w => w.trim())
+      .filter(w => w.length >= KEYWORDS_MIN_LEN)
+      .filter(w => !KEYWORDS_STOP.has(w));
+
+    const freq = new Map();
+    for(const w of parts) freq.set(w, (freq.get(w) || 0) + 1);
+
+    return [...freq.entries()]
+      .sort((a,b) => b[1]-a[1] || b[0].length-a[0].length)
+      .slice(0, KEYWORDS_MAX)
+      .map(([w]) => w);
+  }
+
+  function highlightText(text, keywords){
+    if(!keywords.length) return esc(text);
+    let html = esc(text);
+    for(const kw of keywords){
+      const re = new RegExp(`\\b(${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\b`, 'ig');
+      html = html.replace(re, '<span class="kwh">$1</span>');
+    }
+    return html;
+  }
+
+  function matchScore(summary, descText, keywords){
+    if(!keywords.length) return 0;
+    const s = String(summary || '').toLowerCase();
+    const d = String(descText || '').toLowerCase();
+    let score = 0;
+    for(const kw of keywords){
+      if(s.includes(kw)) score += 2; // resumo pesa mais
+      if(d.includes(kw)) score += 1;
+    }
+    return score;
   }
 
   async function getAssetFromIssue(issueKey){
-    const url = `${location.origin}/rest/api/3/issue/${issueKey}?fields=customfield_${CF_ID}`;
-    const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
-    if(!r.ok) throw new Error(`HTTP ${r.status} ao ler customfield_${CF_ID}`);
-    const j = await r.json();
-    const v = j?.fields?.[`customfield_${CF_ID}`];
+    const issue = await getIssueFields(issueKey, [`customfield_${CF_ASSET}`]);
+    const v = issue?.fields?.[`customfield_${CF_ASSET}`];
     const obj = Array.isArray(v) ? v[0] : v;
     const objectId = obj?.objectId;
     const workspaceId = obj?.workspaceId;
     if(!objectId || !workspaceId){
-      throw new Error(`customfield_${CF_ID} sem objectId/workspaceId (formato inesperado).`);
+      throw new Error(`customfield_${CF_ASSET} sem objectId/workspaceId (formato inesperado).`);
     }
     return { objectId: String(objectId), workspaceId: String(workspaceId) };
   }
@@ -185,52 +255,21 @@
     return [...keys];
   }
 
-  function buildKeywords(summary){
-    const clean = summary
-      .toLowerCase()
-      .replace(/[#()[\]{}.,;:!?/\\|'"`~@%^&*_+=<>]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if(!clean) return [];
-
-    const parts = clean.split(' ')
-      .map(w => w.trim())
-      .filter(w => w.length >= KEYWORDS_MIN_LEN)
-      .filter(w => !KEYWORDS_STOP.has(w));
-
-    const freq = new Map();
-    for(const w of parts) freq.set(w, (freq.get(w) || 0) + 1);
-
-    return [...freq.entries()]
-      .sort((a,b) => b[1]-a[1] || b[0].length-a[0].length)
-      .slice(0, KEYWORDS_MAX)
-      .map(([w]) => w);
-  }
-
-  function highlightSummary(summary, keywords){
-    if(!keywords.length) return esc(summary);
-    let html = esc(summary);
-    for(const kw of keywords){
-      const re = new RegExp(`\\b(${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\b`, 'ig');
-      html = html.replace(re, '<span class="kwh">$1</span>');
-    }
-    return html;
-  }
-
-  function matchScore(summary, keywords){
-    if(!keywords.length) return 0;
-    const s = String(summary || '').toLowerCase();
-    let score = 0;
-    for(const kw of keywords){
-      if(s.includes(kw)) score++;
-    }
-    return score;
-  }
-
   async function searchByJql(jql){
     const url = `${location.origin}/rest/api/3/search/jql`;
-    const payload = { jql, maxResults: MAX_RESULTS, fields: ["summary","status","assignee","issuetype","project","updated"] };
+    const payload = {
+      jql,
+      maxResults: MAX_RESULTS,
+      fields: [
+        "summary",
+        "description",
+        "assignee",
+        "issuetype",
+        "project",
+        "updated",
+        `customfield_${CF_RES_TEAM}`,
+      ]
+    };
 
     const r = await fetch(url, {
       method:'POST',
@@ -257,15 +296,16 @@
       try{
         modal.setBody('Lendo ticket atual / localidade…');
 
-        const [summaryCurrent, asset] = await Promise.all([
-          getIssueSummary(issueKey),
+        const [issueCurrent, asset] = await Promise.all([
+          getIssueFields(issueKey, ["summary"]),
           getAssetFromIssue(issueKey),
         ]);
 
-        const { objectId, workspaceId } = asset;
-
+        const summaryCurrent = String(issueCurrent?.fields?.summary || '').trim();
         const keywords = buildKeywords(summaryCurrent);
         const kwLabel = keywords.length ? keywords.join(', ') : '—';
+
+        const { objectId, workspaceId } = asset;
 
         modal.setSubtitle(`Localidade (objectId): ${objectId} • Atual: ${issueKey} • Keywords: ${kwLabel}`);
 
@@ -321,29 +361,43 @@
           return;
         }
 
+        // Score por resumo+descrição e desempate por updated
         issues = issues
-          .map(i => ({
-            issue: i,
-            score: matchScore(i?.fields?.summary || '', keywords),
-            updated: i?.fields?.updated || ''
-          }))
+          .map(i => {
+            const f = i.fields || {};
+            const descText = descriptionToText(f.description);
+            return {
+              issue: i,
+              score: matchScore(f.summary || '', descText, keywords),
+              updated: f.updated || '',
+              descText
+            };
+          })
           .sort((a,b) => (b.score - a.score) || (String(b.updated).localeCompare(String(a.updated))))
           .map(x => x.issue);
 
         const rows = issues.map(i=>{
           const f = i.fields || {};
           const link = `${location.origin}/browse/${i.key}`;
-          const score = matchScore(f.summary || '', keywords);
+
+          const descText = descriptionToText(f.description);
+          const descPreview = descText.length > DESC_PREVIEW_LEN ? descText.slice(0, DESC_PREVIEW_LEN) + "…" : descText;
+
+          const score = matchScore(f.summary || '', descText, keywords);
+
+          const rt = f[`customfield_${CF_RES_TEAM}`];
+          const resTeam = (rt && (rt.value || rt.name)) ? (rt.value || rt.name) : (rt ? String(rt) : '—');
 
           return `
             <tr class="${score ? 'hl' : ''}">
-              <td style="width:170px">
+              <td style="width:140px">
                 <a target="_blank" rel="noopener" href="${esc(link)}">${esc(i.key)}</a>
                 <div class="meta">${esc(f.project?.key||'')} • ${esc(f.issuetype?.name||'')}</div>
                 ${score ? `<span class="kw">possível duplicado (${score})</span>` : ``}
               </td>
-              <td>${highlightSummary(f.summary||'', keywords)}</td>
-              <td style="width:160px"><span class="pill">${esc(f.status?.name||'')}</span></td>
+              <td style="width:260px">${highlightText(f.summary||'', keywords)}</td>
+              <td class="desc">${highlightText(descPreview||'', keywords)}</td>
+              <td style="width:210px">${esc(resTeam)}</td>
               <td style="width:220px">${esc(f.assignee?.displayName||'—')}</td>
             </tr>
           `;
@@ -354,9 +408,10 @@
           <table>
             <thead>
               <tr>
-                <th style="width:170px">Key</th>
-                <th>Resumo</th>
-                <th style="width:160px">Status</th>
+                <th style="width:140px">Key</th>
+                <th style="width:260px">Resumo</th>
+                <th>Descrição (preview)</th>
+                <th style="width:210px">Resolution team IS</th>
                 <th style="width:220px">Responsável</th>
               </tr>
             </thead>
@@ -389,6 +444,7 @@
     document.body.appendChild(b);
   }
 
+  // Jira é SPA
   const tick = () => {
     if(location.pathname.startsWith('/browse/')) ensureButton();
     else document.getElementById(IDS.btn)?.remove();
