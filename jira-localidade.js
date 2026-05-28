@@ -83,6 +83,25 @@
       #${IDS.modal} .kwh{padding:1px 4px;border-radius:6px;background:rgba(255,226,168,.18);border:1px solid rgba(255,226,168,.25)}
       #${IDS.modal} .actions a{margin-right:10px}
       #${IDS.modal} .desc{opacity:.92}
+
+      /* Expand descrição completa */
+      #${IDS.modal} tr{cursor:pointer}
+      #${IDS.modal} tr.descrow td{
+        background:#17191c;
+        border-bottom:1px solid #2c2f36;
+        padding:12px 10px;
+      }
+      #${IDS.modal} .fulldesc{
+        white-space:pre-wrap;
+        line-height:1.35;
+        font-size:13px;
+        opacity:.95;
+      }
+      #${IDS.modal} .muted{
+        opacity:.75;
+        font-size:12px;
+        margin-bottom:6px
+      }
     `;
     document.head.appendChild(st);
   };
@@ -388,8 +407,10 @@
           const rt = f[`customfield_${CF_RES_TEAM}`];
           const resTeam = (rt && (rt.value || rt.name)) ? (rt.value || rt.name) : (rt ? String(rt) : '—');
 
+          const fullEsc = esc(descText || '');
+
           return `
-            <tr class="${score ? 'hl' : ''}">
+            <tr class="${score ? 'hl' : ''}" data-key="${esc(i.key)}" data-full="${fullEsc}">
               <td style="width:140px">
                 <a target="_blank" rel="noopener" href="${esc(link)}">${esc(i.key)}</a>
                 <div class="meta">${esc(f.project?.key||'')} • ${esc(f.issuetype?.name||'')}</div>
@@ -404,7 +425,7 @@
         }).join('');
 
         modal.setBody(`
-          <div><b>${issues.length}</b> ticket(s) em aberto. <span class="meta">Ordenado por match+updated.</span></div>
+          <div><b>${issues.length}</b> ticket(s) em aberto. <span class="meta">Ordenado por match+updated. Clique em uma linha para ver a descrição completa.</span></div>
           <table>
             <thead>
               <tr>
@@ -423,6 +444,39 @@
             JQL: <code>${esc(jql)}</code>
           </div>
         `);
+
+        // Expand/collapse descrição completa ao clicar (delegação)
+        setTimeout(() => {
+          const tbody = document.querySelector(`#${IDS.modal} tbody`);
+          if(!tbody || tbody.dataset.bound === '1') return;
+          tbody.dataset.bound = '1';
+
+          tbody.addEventListener('click', (ev) => {
+            const tr = ev.target.closest('tr');
+            if(!tr || tr.classList.contains('descrow')) return;
+
+            const existing = tbody.querySelector('tr.descrow');
+            if(existing) existing.remove();
+
+            if(tbody.__openKey === tr.dataset.key){
+              tbody.__openKey = null;
+              return;
+            }
+
+            tbody.__openKey = tr.dataset.key;
+
+            const full = tr.getAttribute('data-full') || '';
+            const descRow = document.createElement('tr');
+            descRow.className = 'descrow';
+            descRow.innerHTML = `
+              <td colspan="5">
+                <div class="muted">Descrição completa • ${esc(tr.dataset.key || '')}</div>
+                <div class="fulldesc">${full || '<span class="muted">Sem descrição.</span>'}</div>
+              </td>
+            `;
+            tr.insertAdjacentElement('afterend', descRow);
+          });
+        }, 0);
 
       }catch(e){
         modal.setBody(`<div class="err">Erro: ${esc(e.message || String(e))}</div>`);
