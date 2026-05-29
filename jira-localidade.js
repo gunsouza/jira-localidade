@@ -15,6 +15,7 @@
   const ORDER_BY = 'updated DESC';
 
   const DESC_PREVIEW_LEN = 240;
+  const DUP_LABEL_MAX_TOKENS = 3; // <-- FIX: definido
 
   const IDS = {
     style: 'ml_loc_style_bm',
@@ -29,7 +30,6 @@
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-  // /browse/IS-123  OR  /jira/servicedesk/projects/IS/queues/issue/IS-123
   const getIssueKey = () => {
     let m = location.pathname.match(/\/browse\/([A-Z][A-Z0-9_]+-\d+)/);
     if (m) return m[1];
@@ -75,7 +75,6 @@
       #${IDS.modal} .meta{opacity:.85;font-size:12px;margin-top:6px;word-break:break-word}
       #${IDS.modal} code{white-space:pre-wrap}
 
-      /* Topbar sticky */
       #${IDS.modal} .topbar{
         position:sticky; top:0; z-index:3;
         background:#1d1f23;
@@ -94,7 +93,6 @@
         padding:2px 10px;
       }
 
-      /* Chips */
       #${IDS.modal} .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
       #${IDS.modal} .chip{
         display:inline-flex;align-items:center;gap:6px;
@@ -106,7 +104,6 @@
       #${IDS.modal} .chip.active{background:#17335f;border-color:#2c6bed}
       #${IDS.modal} .chip.clear{background:#2a1d1d;border-color:#5a2a2a}
 
-      /* List/cards */
       #${IDS.modal} .list{padding:12px 16px 16px 16px}
       #${IDS.modal} .card{
         border:1px solid #2c2f36; border-radius:12px;
@@ -129,6 +126,7 @@
       }
       #${IDS.modal} .badge.dup{background:#3a2f11;border-color:#6b5a1d;color:#ffe2a8;font-weight:800}
       #${IDS.modal} .badge.strong{background:#193b1a;border-color:#2f6b2f;color:#c9f7c9;font-weight:800}
+      #${IDS.modal} .badge.ip{background:#1f2a44;border-color:#2c6bed;color:#cfe3ff;font-weight:800}
       #${IDS.modal} .line2{
         margin-top:8px;
         display:flex; gap:10px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;
@@ -146,7 +144,6 @@
       #${IDS.modal} .primary{background:#2c6bed}
       #${IDS.modal} .disabled{opacity:.55; cursor:not-allowed}
 
-      /* Expand */
       #${IDS.modal} .expand{
         margin-top:10px;
         background:#121417;
@@ -156,12 +153,8 @@
       }
       #${IDS.modal} .expand .title{font-weight:900;font-size:12px;opacity:.9;margin-bottom:6px}
       #${IDS.modal} .fulldesc{white-space:pre-wrap; line-height:1.35; font-size:13px; opacity:.95;}
-      #${IDS.modal} .compare{
-        display:grid; grid-template-columns:1fr; gap:10px; margin-bottom:10px;
-      }
-      #${IDS.modal} .box{
-        background:#0f1114; border:1px solid #2c2f36; border-radius:10px; padding:10px;
-      }
+      #${IDS.modal} .compare{display:grid; grid-template-columns:1fr; gap:10px; margin-bottom:10px;}
+      #${IDS.modal} .box{background:#0f1114; border:1px solid #2c2f36; border-radius:10px; padding:10px;}
       #${IDS.modal} .box .title{font-weight:900;font-size:12px;opacity:.9;margin-bottom:6px}
     `;
     document.head.appendChild(st);
@@ -218,7 +211,7 @@
 
   async function addComment(issueKey, bodyText) {
     const url = `${location.origin}/rest/api/3/issue/${issueKey}/comment`;
-    const payload = { body: bodyText }; // plain text ok no Jira Cloud
+    const payload = { body: bodyText };
     const r = await fetch(url, {
       method: 'POST',
       credentials: 'same-origin',
@@ -233,7 +226,6 @@
   function descriptionToText(desc){
     if(!desc) return '';
     if(typeof desc === 'string') return desc.replace(/\s+/g,' ').trim();
-
     try{
       let out = '';
       const walk = (n) => {
@@ -268,37 +260,31 @@
     const t = String(text || '');
     const found = [];
 
-    // IPs (privados e públicos)
     const ipRe = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
     for(const m of t.matchAll(ipRe)){
       const ip = m[0];
       found.push({ type:'ip', value: ip, weight: isPrivateIp(ip) ? 4 : 3 });
     }
 
-    // MAC
     const macRe = /\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b/g;
     for(const m of t.matchAll(macRe)){
       found.push({ type:'mac', value: m[0].toUpperCase().replace(/-/g,':'), weight: 6 });
     }
 
-    // ZEB#### / ZPL####
     const zebzplRe = /\b(ZEB|ZPL)\s*[-_:]?\s*(\d{3,})\b/gi;
     for(const m of t.matchAll(zebzplRe)){
       found.push({ type: m[1].toUpperCase(), value: `${m[1].toUpperCase()}${m[2]}`, weight: 7 });
     }
 
-    // SELB
     const selbRe = /\bSELB\b/gi;
     if(selbRe.test(t)) found.push({ type:'SELB', value:'SELB', weight: 2 });
 
-    // Serial por label
     const serialLabelRe = /\b(?:S\/N|SN|N\/S|SERIAL(?:\s*NUMBER)?)[\s:#-]*([A-Z0-9]{6,24})\b/gi;
     for(const m of t.matchAll(serialLabelRe)){
       const s = m[1].toUpperCase();
       if(s.length >= 8) found.push({ type:'serial', value: s, weight: 7 });
     }
 
-    // Token alfanum forte
     const strongTokenRe = /\b[A-Z0-9]{10,24}\b/g;
     const up = t.toUpperCase();
     for(const m of up.matchAll(strongTokenRe)){
@@ -310,7 +296,6 @@
       found.push({ type:'serial?', value: tok, weight: 3 });
     }
 
-    // dedup por value (mantém maior weight)
     const byVal = new Map();
     for(const it of found){
       const v = normalizeToken(it.value);
@@ -372,7 +357,6 @@
 
   function extractIssueKeysFromConnectedTickets(data){
     const keys = new Set();
-
     const walk = (x) => {
       if(x == null) return;
       if(Array.isArray(x)){ x.forEach(walk); return; }
@@ -393,7 +377,6 @@
       for(const m of s.matchAll(/"issueKey"\s*:\s*"([A-Z][A-Z0-9_]+-\d+)"/g)) keys.add(m[1]);
       for(const m of s.matchAll(/"key"\s*:\s*"([A-Z][A-Z0-9_]+-\d+)"/g)) keys.add(m[1]);
     }
-
     return [...keys];
   }
 
@@ -431,34 +414,6 @@
     return t.length > DESC_PREVIEW_LEN ? t.slice(0, DESC_PREVIEW_LEN) + '…' : t;
   }
 
-  function renderTopbar({counts, chipsHtml, activeFilter, issuesUrl, selectedCount}) {
-    const clearChip = activeFilter ? `<span class="chip clear" data-chip="">Limpar filtro</span>` : '';
-    const commentDisabled = selectedCount === 0 ? 'disabled' : '';
-    return `
-      <div class="topbar">
-        <div class="toprow">
-          <div class="counts">
-            <span class="countpill">Total: <b>${counts.total}</b></span>
-            <span class="countpill">Com match: <b>${counts.withMatch}</b></span>
-            <span class="countpill">Match forte: <b>${counts.strong}</b></span>
-            <span class="countpill">Só IP: <b>${counts.ipOnly}</b></span>
-          </div>
-          <div class="actions">
-            <a href="${esc(issuesUrl)}" target="_blank" rel="noopener">Abrir busca no Jira</a>
-            <button id="ml_loc_comment" class="${commentDisabled} ${selectedCount? 'primary':''}">
-              Inserir comentário (${selectedCount})
-            </button>
-          </div>
-        </div>
-        <div class="meta">Clique em um ID para filtrar a lista (e clique no card para selecionar tickets).</div>
-        <div class="chips" id="ml_loc_chips">
-          ${chipsHtml}
-          ${clearChip}
-        </div>
-      </div>
-    `;
-  }
-
   function computeCounts(items){
     let withMatch = 0, strong = 0, ipOnly = 0;
     for(const it of items){
@@ -475,21 +430,18 @@
       const hits = (card.getAttribute('data-hits') || '').split('|').filter(Boolean);
       const show = !filterValue || hits.includes(filterValue);
       card.style.display = show ? '' : 'none';
-
-      // fecha expand se filtrar
       const exp = card.querySelector('.expand');
       if(exp) exp.remove();
     }
   }
 
-  function renderIssueCard(item, currentIds){
+  function renderIssueCard(item){
     const { issue, hits, score, strongMatch, ipOnlyMatch } = item;
     const f = issue.fields || {};
     const key = issue.key;
     const link = `${location.origin}/browse/${key}`;
 
-    const descText = item.descText;
-    const preview = formatPreview(descText);
+    const preview = formatPreview(item.descText);
 
     const rt = f[`customfield_${CF_RES_TEAM}`];
     const resTeam = (rt && (rt.value || rt.name)) ? (rt.value || rt.name) : (rt ? String(rt) : '—');
@@ -498,13 +450,13 @@
     const hitVals = hits.map(h => h.value);
     const hitAttr = hitVals.join('|');
 
-    const labelTokens = hitVals.slice(0, DUP_LABEL_MAX_TOKENS).join(', ');
+    const labelTokens = hitVals.slice(0, DUP_LABEL_MAX_TOKENS).join(', '); // <-- usa const corrigida
     const dupLabel = score ? `match: ${labelTokens || 'IDs'}` : '';
 
     const badges = [
       score ? `<span class="badge dup">${esc(dupLabel)}</span>` : '',
       strongMatch ? `<span class="badge strong">forte</span>` : '',
-      ipOnlyMatch ? `<span class="badge">ip</span>` : '',
+      ipOnlyMatch ? `<span class="badge ip">ip</span>` : '',
       `<span class="badge">${esc(resTeam)}</span>`,
     ].filter(Boolean).join('');
 
@@ -512,28 +464,15 @@
       ? hitVals.slice(0, 8).map(v => `<span class="idpill">${esc(v)}</span>`).join('')
       : `<span class="muted">sem IDs em comum</span>`;
 
-    const fullEsc = esc(descText || '');
-    const currentHtml = currentIds.length
-      ? currentIds.slice(0, 12).map(it => `<span class="idpill">${esc(it.value)}</span>`).join('')
-      : `<span class="muted">nenhum</span>`;
-
-    const hitsHtml = hitVals.length
-      ? hitVals.slice(0, 12).map(v => `<span class="idpill">${esc(v)}</span>`).join('')
-      : `<span class="muted">nenhum</span>`;
+    const fullEsc = esc(item.descText || '');
 
     return `
-      <div class="card ${score ? 'hl' : ''}"
+      <div class="card"
            data-key="${esc(key)}"
            data-link="${esc(link)}"
            data-full="${fullEsc}"
            data-hits="${esc(hitAttr)}"
-           data-current="${esc(currentIds.map(x=>x.value).join('|'))}"
-           data-currenthtml="${esc(currentHtml)}"
-           data-hitstext="${esc(hitVals.join('|'))}"
-           data-hitsh="${esc(hitsHtml)}"
-           data-assignee="${esc(assignee)}"
-           data-resteam="${esc(resTeam)}"
-           >
+           data-hitstext="${esc(hitVals.join('|'))}">
         <div class="line1">
           <div class="kblock">
             <div class="key"><a href="${esc(link)}" target="_blank" rel="noopener">${esc(key)}</a></div>
@@ -628,7 +567,6 @@
           return;
         }
 
-        // Monta itens com hits/score/flags
         const items = issues.map(issue => {
           const f = issue.fields || {};
           const descText = descriptionToText(f.description);
@@ -642,21 +580,32 @@
 
         const counts = computeCounts(items);
 
-        // Chips: mostrar os IDs do ticket atual
         const chipsHtml = currentIds.length
           ? currentIds.slice(0, 12).map(it => `<span class="chip" data-chip="${esc(it.value)}">${esc(it.value)}</span>`).join('')
           : `<span class="muted">Nenhum ID detectado no ticket atual.</span>`;
 
-        // Render topbar sticky + list
-        const topbar = renderTopbar({
-          counts,
-          chipsHtml,
-          activeFilter: '',
-          issuesUrl,
-          selectedCount: 0
-        });
+        const topbar = `
+          <div class="topbar">
+            <div class="toprow">
+              <div class="counts">
+                <span class="countpill">Total: <b>${counts.total}</b></span>
+                <span class="countpill">Com match: <b>${counts.withMatch}</b></span>
+                <span class="countpill">Match forte: <b>${counts.strong}</b></span>
+                <span class="countpill">Só IP: <b>${counts.ipOnly}</b></span>
+              </div>
+              <div class="actions">
+                <a href="${esc(issuesUrl)}" target="_blank" rel="noopener">Abrir busca no Jira</a>
+                <button id="ml_loc_comment" class="disabled">Inserir comentário (0)</button>
+              </div>
+            </div>
+            <div class="meta">Clique em um ID para filtrar a lista (e clique no card para selecionar tickets).</div>
+            <div class="chips" id="ml_loc_chips">
+              ${chipsHtml}
+            </div>
+          </div>
+        `;
 
-        const listHtml = items.map(it => renderIssueCard(it, currentIds)).join('');
+        const listHtml = items.map(it => renderIssueCard(it)).join('');
 
         modal.setBody(`
           ${topbar}
@@ -668,7 +617,6 @@
           </div>
         `);
 
-        // Behavior: chips filter + selection + expand + comment
         setTimeout(() => {
           const chipWrap = document.getElementById('ml_loc_chips');
           const list = document.getElementById('ml_loc_list');
@@ -676,7 +624,7 @@
           if(!chipWrap || !list || !commentBtn) return;
 
           let activeFilter = '';
-          const selected = new Set(); // keys
+          const selected = new Set();
 
           const refreshCommentBtn = () => {
             commentBtn.textContent = `Inserir comentário (${selected.size})`;
@@ -689,7 +637,7 @@
             }
           };
 
-          const updateTopbarClearChip = () => {
+          const updateClearChip = () => {
             const hasClear = !!chipWrap.querySelector('.chip.clear');
             if(activeFilter && !hasClear){
               chipWrap.insertAdjacentHTML('beforeend', `<span class="chip clear" data-chip="">Limpar filtro</span>`);
@@ -712,16 +660,14 @@
               if(activeEl) activeEl.classList.add('active');
             }
 
-            updateTopbarClearChip();
+            updateClearChip();
             applyFilterToCards(list, activeFilter);
           });
 
-          // selection + expand
           list.addEventListener('click', (ev) => {
             const card = ev.target.closest('.card');
             if(!card) return;
 
-            // ctrl/cmd click abre ticket
             if(ev.ctrlKey || ev.metaKey){
               const link = card.getAttribute('data-link');
               if(link) window.open(link, '_blank', 'noopener');
@@ -730,7 +676,6 @@
 
             const key = card.getAttribute('data-key');
 
-            // toggle selection with ALT key? (optional) - aqui: clique normal seleciona/deseleciona
             if(selected.has(key)){
               selected.delete(key);
               card.classList.remove('sel');
@@ -740,21 +685,16 @@
             }
             refreshCommentBtn();
 
-            // expand/collapse descrição completa (se clicar duas vezes rápido pode confundir com seleção;
-            // aqui vamos expandir só se clicar no texto da descrição ou resumo com SHIFT)
             if(ev.shiftKey){
               const existing = card.querySelector('.expand');
               if(existing){ existing.remove(); return; }
-
-              // fecha outros expandidos
               [...list.querySelectorAll('.expand')].forEach(e => e.remove());
 
               const full = card.getAttribute('data-full') || '';
-              const currentIdsText = (card.getAttribute('data-current') || '').split('|').filter(Boolean);
               const hitVals = (card.getAttribute('data-hitstext') || '').split('|').filter(Boolean);
 
-              const currentHtml = currentIdsText.length
-                ? currentIdsText.slice(0, 12).map(v => `<span class="idpill">${esc(v)}</span>`).join('')
+              const currentHtml = currentIds.length
+                ? currentIds.slice(0, 12).map(it => `<span class="idpill">${esc(it.value)}</span>`).join('')
                 : `<span class="muted">nenhum</span>`;
 
               const hitsHtml = hitVals.length
