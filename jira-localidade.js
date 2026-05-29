@@ -109,7 +109,6 @@
         border:1px solid #2c2f36; border-radius:12px;
         padding:10px 12px; margin-bottom:10px;
         background:#16181c;
-        cursor:pointer;
       }
       #${IDS.modal} .card:hover{border-color:#3b82f6}
       #${IDS.modal} .card.sel{border-color:#2c6bed; box-shadow:0 0 0 2px rgba(44,107,237,.15) inset;}
@@ -143,6 +142,8 @@
       #${IDS.modal} .actions{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
       #${IDS.modal} .primary{background:#2c6bed}
       #${IDS.modal} .disabled{opacity:.55; cursor:not-allowed}
+      #${IDS.modal} .detailsBtn{background:#22252b;border:1px solid #2c2f36}
+      #${IDS.modal} .detailsBtn:hover{border-color:#3b82f6}
 
       #${IDS.modal} .expand{
         margin-top:10px;
@@ -202,19 +203,24 @@
     };
   };
 
-  // ---- ADF comment with paragraphs ----
   function textToAdfParagraphs(text) {
     const lines = String(text || '').split(/\r?\n/);
     const content = lines.map(line => {
-      const t = line === '' ? ' ' : line; // evita parágrafo vazio inválido
+      const t = line === '' ? ' ' : line;
       return { type: "paragraph", content: [{ type: "text", text: t }] };
     });
     return { type: "doc", version: 1, content };
   }
 
-  async function addComment(issueKey, bodyText) {
+  // Comentário interno (JSM): sd.public.comment -> internal: true
+  async function addInternalComment(issueKey, bodyText) {
     const url = `${location.origin}/rest/api/3/issue/${issueKey}/comment`;
-    const payload = { body: textToAdfParagraphs(bodyText) };
+    const payload = {
+      body: textToAdfParagraphs(bodyText),
+      properties: [
+        { key: "sd.public.comment", value: { internal: true } }
+      ]
+    };
 
     const r = await fetch(url, {
       method: 'POST',
@@ -470,6 +476,7 @@
       strongMatch ? `<span class="badge strong">forte</span>` : '',
       ipOnlyMatch ? `<span class="badge ip">ip</span>` : '',
       `<span class="badge">${esc(resTeam)}</span>`,
+      `<button class="detailsBtn" data-details="1" title="Ver detalhes">Detalhes</button>`
     ].filter(Boolean).join('');
 
     const idsHtml = hitVals.length
@@ -610,7 +617,7 @@
                 <button id="ml_loc_comment" class="disabled">Inserir comentário (0)</button>
               </div>
             </div>
-            <div class="meta">Clique em um ID para filtrar a lista (e clique no card para selecionar tickets).</div>
+            <div class="meta">Clique em um ID para filtrar a lista (e clique no card para selecionar tickets). Use o botão “Detalhes” para abrir a descrição completa.</div>
             <div class="chips" id="ml_loc_chips">
               ${chipsHtml}
             </div>
@@ -677,29 +684,17 @@
           });
 
           list.addEventListener('click', (ev) => {
+            const detailsBtn = ev.target.closest('[data-details="1"]');
             const card = ev.target.closest('.card');
             if(!card) return;
 
-            if(ev.ctrlKey || ev.metaKey){
-              const link = card.getAttribute('data-link');
-              if(link) window.open(link, '_blank', 'noopener');
-              return;
-            }
+            if(detailsBtn){
+              ev.preventDefault();
+              ev.stopPropagation();
 
-            const key = card.getAttribute('data-key');
-
-            if(selected.has(key)){
-              selected.delete(key);
-              card.classList.remove('sel');
-            } else {
-              selected.add(key);
-              card.classList.add('sel');
-            }
-            refreshCommentBtn();
-
-            if(ev.shiftKey){
               const existing = card.querySelector('.expand');
               if(existing){ existing.remove(); return; }
+
               [...list.querySelectorAll('.expand')].forEach(e => e.remove());
 
               const full = card.getAttribute('data-full') || '';
@@ -728,10 +723,27 @@
                   </div>
                   <div class="title">Descrição completa</div>
                   <div class="fulldesc">${full || '<span class="muted">Sem descrição.</span>'}</div>
-                  <div class="muted" style="margin-top:8px">Dica: SHIFT+clique para expandir/fechar, Ctrl+clique abre o ticket.</div>
                 </div>
               `);
+
+              return;
             }
+
+            if(ev.ctrlKey || ev.metaKey){
+              const link = card.getAttribute('data-link');
+              if(link) window.open(link, '_blank', 'noopener');
+              return;
+            }
+
+            const key = card.getAttribute('data-key');
+            if(selected.has(key)){
+              selected.delete(key);
+              card.classList.remove('sel');
+            } else {
+              selected.add(key);
+              card.classList.add('sel');
+            }
+            refreshCommentBtn();
           });
 
           commentBtn.addEventListener('click', async () => {
@@ -752,13 +764,13 @@
               });
 
               const body =
-`Possíveis duplicados na mesma localidade (Assets):
+`Possíveis duplicados na mesma localidade (Assets) [OBS INTERNA]:
 Ticket atual: ${issueKey}
 
 Tickets relacionados:
 ${lines.join('\n')}`;
 
-              await addComment(issueKey, body);
+              await addInternalComment(issueKey, body);
 
               commentBtn.textContent = 'Comentado!';
               setTimeout(() => { commentBtn.textContent = `Inserir comentário (${selected.size})`; }, 1200);
