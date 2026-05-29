@@ -2,7 +2,7 @@
   'use strict';
 
   const CF_ASSET = 18388; // IS Ubicación - cf[18388]
-  const CF_RES_TEAM = 15613; // Resolution team IS (Dropdown) - customfield_15613
+  const CF_RES_TEAM = 15613; // Resolution team IS (Dropdown)
 
   const PROJECTS = ['IS', 'ISS', 'SSHP'];
 
@@ -10,12 +10,11 @@
   const MAX_PAGES = 6;
   const MAX_RESULTS = 100;
 
-  const HIDE_RESOLVED = true;                 // assets endpoint
+  const HIDE_RESOLVED = true;
   const OPEN_FILTER = 'statusCategory != Done';
   const ORDER_BY = 'updated DESC';
 
-  const DESC_PREVIEW_LEN = 280;
-  const DUP_LABEL_MAX_TOKENS = 3;
+  const DESC_PREVIEW_LEN = 240;
 
   const IDS = {
     style: 'ml_loc_style_bm',
@@ -55,31 +54,48 @@
       #${IDS.overlay}{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999998;}
       #${IDS.modal}{
         position:fixed; top:6vh; left:50%; transform:translateX(-50%);
-        width:min(1200px,95vw); max-height:88vh; overflow:auto;
+        width:min(1100px,94vw); max-height:88vh; overflow:auto;
         background:#1d1f23; color:#e6e6e6; border:1px solid #333;
         border-radius:12px; z-index:9999999; box-shadow:0 10px 30px rgba(0,0,0,.45);
         font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       }
-      #${IDS.modal} .h{display:flex;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid #2c2f36;}
-      #${IDS.modal} .b{padding:12px 16px 16px;}
-      #${IDS.modal} .meta{opacity:.85;font-size:12px;margin-top:6px;word-break:break-word}
-      #${IDS.modal} button{background:#2c2f36;color:#fff;border:0;border-radius:8px;padding:8px 10px;cursor:pointer;font-weight:900;}
+      #${IDS.modal} .h{
+        display:flex;justify-content:space-between;gap:12px;
+        padding:14px 16px;border-bottom:1px solid #2c2f36;
+      }
+      #${IDS.modal} .b{padding:0}
+      #${IDS.modal} button{
+        background:#2c2f36;color:#fff;border:0;border-radius:8px;
+        padding:8px 10px;cursor:pointer;font-weight:900;
+      }
       #${IDS.modal} a{color:#7ab7ff;text-decoration:none;}
       #${IDS.modal} a:hover{text-decoration:underline;}
-      #${IDS.modal} table{width:100%;border-collapse:collapse;margin-top:10px;}
-      #${IDS.modal} th,#${IDS.modal} td{border-bottom:1px solid #2c2f36;padding:10px 8px;font-size:13px;vertical-align:top;}
-      #${IDS.modal} th{position:sticky;top:0;background:#1d1f23;text-align:left;}
-      #${IDS.modal} .err{color:#ffb4b4;background:#2a1d1d;border:1px solid #5a2a2a;padding:10px;border-radius:8px;}
-      #${IDS.modal} .warn{color:#ffe2a8;background:#2a2418;border:1px solid #5a4a22;padding:10px;border-radius:8px;}
+      #${IDS.modal} .err{color:#ffb4b4;background:#2a1d1d;border:1px solid #5a2a2a;padding:10px;border-radius:8px;margin:12px 16px;}
+      #${IDS.modal} .warn{color:#ffe2a8;background:#2a2418;border:1px solid #5a4a22;padding:10px;border-radius:8px;margin:12px 16px;}
+      #${IDS.modal} .meta{opacity:.85;font-size:12px;margin-top:6px;word-break:break-word}
       #${IDS.modal} code{white-space:pre-wrap}
-      #${IDS.modal} .kw{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;background:#3a2f11;border:1px solid #6b5a1d;color:#ffe2a8;font-size:12px}
-      #${IDS.modal} .hl{background:rgba(255,226,168,.10)}
-      #${IDS.modal} .kwh{padding:1px 4px;border-radius:6px;background:rgba(255,226,168,.18);border:1px solid rgba(255,226,168,.25)}
-      #${IDS.modal} .actions a{margin-right:10px}
-      #${IDS.modal} .desc{opacity:.92}
 
-      /* Chips (IDs) */
-      #${IDS.modal} .chips{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 6px 0}
+      /* Topbar sticky */
+      #${IDS.modal} .topbar{
+        position:sticky; top:0; z-index:3;
+        background:#1d1f23;
+        border-bottom:1px solid #2c2f36;
+        padding:12px 16px;
+      }
+      #${IDS.modal} .toprow{
+        display:flex; gap:12px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;
+      }
+      #${IDS.modal} .counts{
+        display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+        font-size:12px; opacity:.9;
+      }
+      #${IDS.modal} .countpill{
+        background:#22252b;border:1px solid #2c2f36;border-radius:999px;
+        padding:2px 10px;
+      }
+
+      /* Chips */
+      #${IDS.modal} .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
       #${IDS.modal} .chip{
         display:inline-flex;align-items:center;gap:6px;
         padding:4px 10px;border-radius:999px;
@@ -88,50 +104,65 @@
       }
       #${IDS.modal} .chip:hover{border-color:#3b82f6}
       #${IDS.modal} .chip.active{background:#17335f;border-color:#2c6bed}
-      #${IDS.modal} .chip.small{padding:2px 8px;font-size:11px;opacity:.9}
       #${IDS.modal} .chip.clear{background:#2a1d1d;border-color:#5a2a2a}
 
-      /* Expand descrição completa */
-      #${IDS.modal} tr{cursor:pointer}
-      #${IDS.modal} tr.descrow td{
-        background:#17191c;
-        border-bottom:1px solid #2c2f36;
-        padding:12px 10px;
+      /* List/cards */
+      #${IDS.modal} .list{padding:12px 16px 16px 16px}
+      #${IDS.modal} .card{
+        border:1px solid #2c2f36; border-radius:12px;
+        padding:10px 12px; margin-bottom:10px;
+        background:#16181c;
+        cursor:pointer;
       }
-      #${IDS.modal} .fulldesc{
-        white-space:pre-wrap;
-        line-height:1.35;
-        font-size:13px;
-        opacity:.95;
+      #${IDS.modal} .card:hover{border-color:#3b82f6}
+      #${IDS.modal} .card.sel{border-color:#2c6bed; box-shadow:0 0 0 2px rgba(44,107,237,.15) inset;}
+      #${IDS.modal} .line1{
+        display:flex; gap:10px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;
       }
-      #${IDS.modal} .muted{
-        opacity:.75;
-        font-size:12px;
-        margin-bottom:6px
+      #${IDS.modal} .kblock{min-width:240px}
+      #${IDS.modal} .key{font-weight:950; font-size:14px}
+      #${IDS.modal} .summary{font-size:14px; font-weight:700}
+      #${IDS.modal} .badges{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+      #${IDS.modal} .badge{
+        display:inline-block; padding:2px 10px; border-radius:999px;
+        background:#22252b; border:1px solid #2c2f36; font-size:12px; opacity:.95;
       }
-      #${IDS.modal} .compare{
-        display:grid;
-        grid-template-columns: 1fr;
-        gap:10px;
-        margin-bottom:10px;
+      #${IDS.modal} .badge.dup{background:#3a2f11;border-color:#6b5a1d;color:#ffe2a8;font-weight:800}
+      #${IDS.modal} .badge.strong{background:#193b1a;border-color:#2f6b2f;color:#c9f7c9;font-weight:800}
+      #${IDS.modal} .line2{
+        margin-top:8px;
+        display:flex; gap:10px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;
       }
-      #${IDS.modal} .compare .box{
+      #${IDS.modal} .desc{opacity:.92; font-size:13px; max-width:760px}
+      #${IDS.modal} .ids{display:flex; gap:6px; flex-wrap:wrap; align-items:center}
+      #${IDS.modal} .idpill{
+        padding:1px 8px;border-radius:999px;
+        background:rgba(255,226,168,.10);
+        border:1px solid rgba(255,226,168,.22);
+        font-size:12px; opacity:.95;
+      }
+      #${IDS.modal} .muted{opacity:.7; font-size:12px}
+      #${IDS.modal} .actions{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+      #${IDS.modal} .primary{background:#2c6bed}
+      #${IDS.modal} .disabled{opacity:.55; cursor:not-allowed}
+
+      /* Expand */
+      #${IDS.modal} .expand{
+        margin-top:10px;
         background:#121417;
         border:1px solid #2c2f36;
         border-radius:10px;
         padding:10px;
       }
-      #${IDS.modal} .compare .title{
-        font-weight:800;
-        font-size:12px;
-        margin-bottom:6px;
-        opacity:.9;
+      #${IDS.modal} .expand .title{font-weight:900;font-size:12px;opacity:.9;margin-bottom:6px}
+      #${IDS.modal} .fulldesc{white-space:pre-wrap; line-height:1.35; font-size:13px; opacity:.95;}
+      #${IDS.modal} .compare{
+        display:grid; grid-template-columns:1fr; gap:10px; margin-bottom:10px;
       }
-      #${IDS.modal} .compare .list{
-        display:flex;
-        gap:8px;
-        flex-wrap:wrap;
+      #${IDS.modal} .box{
+        background:#0f1114; border:1px solid #2c2f36; border-radius:10px; padding:10px;
       }
+      #${IDS.modal} .box .title{font-weight:900;font-size:12px;opacity:.9;margin-bottom:6px}
     `;
     document.head.appendChild(st);
   };
@@ -185,6 +216,20 @@
     return r.json();
   }
 
+  async function addComment(issueKey, bodyText) {
+    const url = `${location.origin}/rest/api/3/issue/${issueKey}/comment`;
+    const payload = { body: bodyText }; // plain text ok no Jira Cloud
+    const r = await fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Accept':'application/json', 'Content-Type':'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const txt = await r.text().catch(()=> '');
+    if(!r.ok) throw new Error(`HTTP ${r.status} ao comentar: ${txt.slice(0,200)}`);
+    return JSON.parse(txt);
+  }
+
   function descriptionToText(desc){
     if(!desc) return '';
     if(typeof desc === 'string') return desc.replace(/\s+/g,' ').trim();
@@ -233,27 +278,27 @@
     // MAC
     const macRe = /\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b/g;
     for(const m of t.matchAll(macRe)){
-      found.push({ type:'mac', value: m[0].toUpperCase().replace(/-/g,':'), weight: 5 });
+      found.push({ type:'mac', value: m[0].toUpperCase().replace(/-/g,':'), weight: 6 });
     }
 
-    // ZEB#### / ZPL#### (mín 3 dígitos)
+    // ZEB#### / ZPL####
     const zebzplRe = /\b(ZEB|ZPL)\s*[-_:]?\s*(\d{3,})\b/gi;
     for(const m of t.matchAll(zebzplRe)){
-      found.push({ type: m[1].toUpperCase(), value: `${m[1].toUpperCase()}${m[2]}`, weight: 6 });
+      found.push({ type: m[1].toUpperCase(), value: `${m[1].toUpperCase()}${m[2]}`, weight: 7 });
     }
 
-    // SELB (simples)
+    // SELB
     const selbRe = /\bSELB\b/gi;
-    if(selbRe.test(t)) found.push({ type:'SELB', value:'SELB', weight: 3 });
+    if(selbRe.test(t)) found.push({ type:'SELB', value:'SELB', weight: 2 });
 
     // Serial por label
     const serialLabelRe = /\b(?:S\/N|SN|N\/S|SERIAL(?:\s*NUMBER)?)[\s:#-]*([A-Z0-9]{6,24})\b/gi;
     for(const m of t.matchAll(serialLabelRe)){
       const s = m[1].toUpperCase();
-      if(s.length >= 8) found.push({ type:'serial', value: s, weight: 6 });
+      if(s.length >= 8) found.push({ type:'serial', value: s, weight: 7 });
     }
 
-    // Serial "forte" solto
+    // Token alfanum forte
     const strongTokenRe = /\b[A-Z0-9]{10,24}\b/g;
     const up = t.toUpperCase();
     for(const m of up.matchAll(strongTokenRe)){
@@ -261,7 +306,7 @@
       if(/^\d+$/.test(tok)) continue;
       if((tok.match(/[A-Z]/g) || []).length < 2) continue;
       if((tok.match(/\d/g) || []).length < 2) continue;
-      if(/^[0-9A-F]{12}$/.test(tok)) continue; // evita MAC sem separador
+      if(/^[0-9A-F]{12}$/.test(tok)) continue;
       found.push({ type:'serial?', value: tok, weight: 3 });
     }
 
@@ -288,19 +333,16 @@
     return hits;
   }
 
-  function highlightIdentifiers(text, identifiers){
-    let html = esc(text || '');
-    if(!identifiers.length) return html;
+  function scoreHits(hits){
+    return hits.reduce((acc, x) => acc + (x.weight || 1), 0);
+  }
 
-    const sorted = [...identifiers].sort((a,b)=> b.value.length - a.value.length);
-    for(const it of sorted){
-      const token = it.value;
-      if(!token) continue;
-      const safe = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const re = new RegExp(`\\b(${safe})\\b`, 'ig');
-      html = html.replace(re, '<span class="kwh">$1</span>');
-    }
-    return html;
+  function isStrongHit(hit){
+    const t = String(hit.type || '').toUpperCase();
+    return (t === 'MAC' || t === 'ZEB' || t === 'ZPL' || t === 'SERIAL' || t === 'SERIAL?');
+  }
+  function isIpOnly(hits){
+    return hits.length > 0 && hits.every(h => h.type === 'ip');
   }
 
   async function getAssetFromIssue(issueKey){
@@ -383,41 +425,133 @@
     return JSON.parse(txt);
   }
 
-  function renderChips(currentIds, activeFilter){
-    if(!currentIds.length){
-      return `<div class="meta">IDs extraídos: —</div>`;
-    }
+  function formatPreview(text){
+    const t = String(text || '').trim();
+    if(!t) return '';
+    return t.length > DESC_PREVIEW_LEN ? t.slice(0, DESC_PREVIEW_LEN) + '…' : t;
+  }
 
-    const chips = currentIds.slice(0, 12).map(it => {
-      const v = it.value;
-      const active = activeFilter === v ? 'active' : '';
-      return `<span class="chip ${active}" data-chip="${esc(v)}" title="Filtrar por ${esc(v)}">${esc(v)}</span>`;
-    }).join('');
-
-    const clear = activeFilter
-      ? `<span class="chip clear" data-chip="" title="Limpar filtro">Limpar filtro</span>`
-      : '';
-
+  function renderTopbar({counts, chipsHtml, activeFilter, issuesUrl, selectedCount}) {
+    const clearChip = activeFilter ? `<span class="chip clear" data-chip="">Limpar filtro</span>` : '';
+    const commentDisabled = selectedCount === 0 ? 'disabled' : '';
     return `
-      <div class="meta">Clique em um ID para filtrar a lista:</div>
-      <div class="chips" id="ml_loc_chips">
-        ${chips}
-        ${clear}
+      <div class="topbar">
+        <div class="toprow">
+          <div class="counts">
+            <span class="countpill">Total: <b>${counts.total}</b></span>
+            <span class="countpill">Com match: <b>${counts.withMatch}</b></span>
+            <span class="countpill">Match forte: <b>${counts.strong}</b></span>
+            <span class="countpill">Só IP: <b>${counts.ipOnly}</b></span>
+          </div>
+          <div class="actions">
+            <a href="${esc(issuesUrl)}" target="_blank" rel="noopener">Abrir busca no Jira</a>
+            <button id="ml_loc_comment" class="${commentDisabled} ${selectedCount? 'primary':''}">
+              Inserir comentário (${selectedCount})
+            </button>
+          </div>
+        </div>
+        <div class="meta">Clique em um ID para filtrar a lista (e clique no card para selecionar tickets).</div>
+        <div class="chips" id="ml_loc_chips">
+          ${chipsHtml}
+          ${clearChip}
+        </div>
       </div>
     `;
   }
 
-  function applyTableFilter(tbody, filterValue){
-    const rows = [...tbody.querySelectorAll('tr[data-hits]')];
-    for(const tr of rows){
-      const hits = (tr.getAttribute('data-hits') || '').split('|').filter(Boolean);
-      const show = !filterValue || hits.includes(filterValue);
-      tr.style.display = show ? '' : 'none';
-
-      // se tiver descrow aberto, remove ao filtrar
-      const next = tr.nextElementSibling;
-      if(next && next.classList.contains('descrow')) next.remove();
+  function computeCounts(items){
+    let withMatch = 0, strong = 0, ipOnly = 0;
+    for(const it of items){
+      if(it.score > 0) withMatch++;
+      if(it.strongMatch) strong++;
+      if(it.ipOnlyMatch) ipOnly++;
     }
+    return { total: items.length, withMatch, strong, ipOnly };
+  }
+
+  function applyFilterToCards(container, filterValue){
+    const cards = [...container.querySelectorAll('.card[data-hits]')];
+    for(const card of cards){
+      const hits = (card.getAttribute('data-hits') || '').split('|').filter(Boolean);
+      const show = !filterValue || hits.includes(filterValue);
+      card.style.display = show ? '' : 'none';
+
+      // fecha expand se filtrar
+      const exp = card.querySelector('.expand');
+      if(exp) exp.remove();
+    }
+  }
+
+  function renderIssueCard(item, currentIds){
+    const { issue, hits, score, strongMatch, ipOnlyMatch } = item;
+    const f = issue.fields || {};
+    const key = issue.key;
+    const link = `${location.origin}/browse/${key}`;
+
+    const descText = item.descText;
+    const preview = formatPreview(descText);
+
+    const rt = f[`customfield_${CF_RES_TEAM}`];
+    const resTeam = (rt && (rt.value || rt.name)) ? (rt.value || rt.name) : (rt ? String(rt) : '—');
+
+    const assignee = f.assignee?.displayName || '—';
+    const hitVals = hits.map(h => h.value);
+    const hitAttr = hitVals.join('|');
+
+    const labelTokens = hitVals.slice(0, DUP_LABEL_MAX_TOKENS).join(', ');
+    const dupLabel = score ? `match: ${labelTokens || 'IDs'}` : '';
+
+    const badges = [
+      score ? `<span class="badge dup">${esc(dupLabel)}</span>` : '',
+      strongMatch ? `<span class="badge strong">forte</span>` : '',
+      ipOnlyMatch ? `<span class="badge">ip</span>` : '',
+      `<span class="badge">${esc(resTeam)}</span>`,
+    ].filter(Boolean).join('');
+
+    const idsHtml = hitVals.length
+      ? hitVals.slice(0, 8).map(v => `<span class="idpill">${esc(v)}</span>`).join('')
+      : `<span class="muted">sem IDs em comum</span>`;
+
+    const fullEsc = esc(descText || '');
+    const currentHtml = currentIds.length
+      ? currentIds.slice(0, 12).map(it => `<span class="idpill">${esc(it.value)}</span>`).join('')
+      : `<span class="muted">nenhum</span>`;
+
+    const hitsHtml = hitVals.length
+      ? hitVals.slice(0, 12).map(v => `<span class="idpill">${esc(v)}</span>`).join('')
+      : `<span class="muted">nenhum</span>`;
+
+    return `
+      <div class="card ${score ? 'hl' : ''}"
+           data-key="${esc(key)}"
+           data-link="${esc(link)}"
+           data-full="${fullEsc}"
+           data-hits="${esc(hitAttr)}"
+           data-current="${esc(currentIds.map(x=>x.value).join('|'))}"
+           data-currenthtml="${esc(currentHtml)}"
+           data-hitstext="${esc(hitVals.join('|'))}"
+           data-hitsh="${esc(hitsHtml)}"
+           data-assignee="${esc(assignee)}"
+           data-resteam="${esc(resTeam)}"
+           >
+        <div class="line1">
+          <div class="kblock">
+            <div class="key"><a href="${esc(link)}" target="_blank" rel="noopener">${esc(key)}</a></div>
+            <div class="muted">${esc(f.project?.key||'')} • ${esc(f.issuetype?.name||'')}</div>
+          </div>
+          <div style="flex:1;min-width:260px">
+            <div class="summary">${esc(f.summary || '')}</div>
+            <div class="muted">${esc(assignee)}</div>
+          </div>
+          <div class="badges">${badges}</div>
+        </div>
+
+        <div class="line2">
+          <div class="desc">${preview ? esc(preview) : '<span class="muted">sem descrição</span>'}</div>
+          <div class="ids">${idsHtml}</div>
+        </div>
+      </div>
+    `;
   }
 
   async function run(){
@@ -431,7 +565,7 @@
 
     const load = async () => {
       try{
-        modal.setBody('Lendo ticket atual / localidade…');
+        modal.setBody(`<div class="meta" style="padding:12px 16px">Lendo ticket atual / localidade…</div>`);
 
         const [issueCurrent, asset] = await Promise.all([
           getIssueFields(issueKey, ["summary","description"]),
@@ -451,7 +585,7 @@
 
         modal.setSubtitle(`Localidade (objectId): ${objectId} • Atual: ${issueKey} • IDs: ${idsLabel}`);
 
-        modal.setBody('Buscando tickets vinculados…');
+        modal.setBody(`<div class="meta" style="padding:12px 16px">Buscando tickets vinculados…</div>`);
 
         let allKeys = [];
         for(let page=0; page<MAX_PAGES; page++){
@@ -484,197 +618,208 @@
 
         const issuesUrl = `${location.origin}/issues/?jql=${encodeURIComponent(jql)}`;
 
-        modal.setBody(`
-          Buscando detalhes…
-          <div class="meta actions">
-            <a href="${esc(issuesUrl)}" target="_blank" rel="noopener">Abrir busca no Jira</a>
-          </div>
-          <div class="meta">
-            Vinculados: ${Math.min(allKeys.length,400)}${allKeys.length>400?` (limitado de ${allKeys.length})`:""}<br/>
-            JQL: <code>${esc(jql)}</code>
-          </div>
-        `);
+        modal.setBody(`<div class="meta" style="padding:12px 16px">Buscando detalhes…</div>`);
 
         const data = await searchByJql(jql);
-        let issues = data.issues || [];
+        const issues = data.issues || [];
 
         if(!issues.length){
-          modal.setBody(`<div><b>Nenhum ticket aberto</b> encontrado.</div><div class="meta">JQL: <code>${esc(jql)}</code></div>`);
+          modal.setBody(`<div class="warn">Nenhum ticket aberto encontrado para esta localidade.</div>`);
           return;
         }
 
-        // Ordena por match(IDs)+updated
-        issues = issues
-          .map(i => {
-            const f = i.fields || {};
-            const descText = descriptionToText(f.description);
-            const combined = `${f.summary || ''}\n${descText}`;
-            const hits = intersectIdentifiers(currentIds, combined);
-            const score = hits.reduce((acc, x) => acc + (x.weight || 1), 0);
-            const updated = f.updated || '';
-            return { issue: i, hits, score, updated, descText };
-          })
-          .sort((a,b) => (b.score - a.score) || (String(b.updated).localeCompare(String(a.updated))))
-          .map(x => x.issue);
-
-        // Render
-        const chipsHtml = renderChips(currentIds, '');
-
-        const rows = issues.map(i=>{
-          const f = i.fields || {};
-          const link = `${location.origin}/browse/${i.key}`;
-
+        // Monta itens com hits/score/flags
+        const items = issues.map(issue => {
+          const f = issue.fields || {};
           const descText = descriptionToText(f.description);
-          const descPreview = descText.length > DESC_PREVIEW_LEN ? descText.slice(0, DESC_PREVIEW_LEN) + "…" : descText;
-
           const combined = `${f.summary || ''}\n${descText}`;
           const hits = intersectIdentifiers(currentIds, combined);
-          const score = hits.reduce((acc, x) => acc + (x.weight || 1), 0);
+          const score = scoreHits(hits);
+          const strongMatch = hits.some(isStrongHit);
+          const ipOnlyMatch = isIpOnly(hits);
+          return { issue, hits, score, strongMatch, ipOnlyMatch, descText };
+        }).sort((a,b) => (b.score - a.score) || String(b.issue.fields?.updated||'').localeCompare(String(a.issue.fields?.updated||'')));
 
-          const rt = f[`customfield_${CF_RES_TEAM}`];
-          const resTeam = (rt && (rt.value || rt.name)) ? (rt.value || rt.name) : (rt ? String(rt) : '—');
+        const counts = computeCounts(items);
 
-          const fullEsc = esc(descText || '');
+        // Chips: mostrar os IDs do ticket atual
+        const chipsHtml = currentIds.length
+          ? currentIds.slice(0, 12).map(it => `<span class="chip" data-chip="${esc(it.value)}">${esc(it.value)}</span>`).join('')
+          : `<span class="muted">Nenhum ID detectado no ticket atual.</span>`;
 
-          const labelTokens = hits.slice(0, DUP_LABEL_MAX_TOKENS).map(x => x.value).join(', ');
-          const dupLabel = score ? `possível duplicado (${labelTokens || 'match'})` : '';
+        // Render topbar sticky + list
+        const topbar = renderTopbar({
+          counts,
+          chipsHtml,
+          activeFilter: '',
+          issuesUrl,
+          selectedCount: 0
+        });
 
-          const hitVals = hits.map(x => x.value);
-          const hitAttr = hitVals.join('|');
-
-          return `
-            <tr class="${score ? 'hl' : ''}"
-                data-key="${esc(i.key)}"
-                data-full="${fullEsc}"
-                data-hits="${esc(hitAttr)}">
-              <td style="width:140px">
-                <a target="_blank" rel="noopener" href="${esc(link)}">${esc(i.key)}</a>
-                <div class="meta">${esc(f.project?.key||'')} • ${esc(f.issuetype?.name||'')}</div>
-                ${score ? `<span class="kw">${esc(dupLabel)}</span>` : ``}
-              </td>
-              <td style="width:260px">${highlightIdentifiers(f.summary||'', hits)}</td>
-              <td class="desc">${highlightIdentifiers(descPreview||'', hits)}</td>
-              <td style="width:210px">${esc(resTeam)}</td>
-              <td style="width:220px">${esc(f.assignee?.displayName||'—')}</td>
-            </tr>
-          `;
-        }).join('');
+        const listHtml = items.map(it => renderIssueCard(it, currentIds)).join('');
 
         modal.setBody(`
-          <div><b>${issues.length}</b> ticket(s) em aberto.
-            <span class="meta">Ordenado por match(IDs)+updated. Clique em uma linha para ver a descrição completa.</span>
-          </div>
-
-          ${chipsHtml}
-
-          <table>
-            <thead>
-              <tr>
-                <th style="width:140px">Key</th>
-                <th style="width:260px">Resumo</th>
-                <th>Descrição (preview)</th>
-                <th style="width:210px">Resolution team IS</th>
-                <th style="width:220px">Responsável</th>
-              </tr>
-            </thead>
-            <tbody id="ml_loc_tbody">${rows}</tbody>
-          </table>
-
-          <div class="meta">
-            Localidade (objectId): ${esc(objectId)}<br/>
-            IDs do ticket atual (Resumo+Descrição): ${esc(idsLabel)}<br/>
-            JQL: <code>${esc(jql)}</code>
+          ${topbar}
+          <div class="list" id="ml_loc_list">
+            ${listHtml}
+            <div class="meta" style="margin-top:10px">
+              JQL: <code>${esc(jql)}</code>
+            </div>
           </div>
         `);
 
-        // Interação: chips de filtro
+        // Behavior: chips filter + selection + expand + comment
         setTimeout(() => {
           const chipWrap = document.getElementById('ml_loc_chips');
-          const tbody = document.getElementById('ml_loc_tbody');
-          if(!chipWrap || !tbody) return;
+          const list = document.getElementById('ml_loc_list');
+          const commentBtn = document.getElementById('ml_loc_comment');
+          if(!chipWrap || !list || !commentBtn) return;
 
-          let active = '';
+          let activeFilter = '';
+          const selected = new Set(); // keys
+
+          const refreshCommentBtn = () => {
+            commentBtn.textContent = `Inserir comentário (${selected.size})`;
+            if(selected.size === 0){
+              commentBtn.classList.add('disabled');
+              commentBtn.classList.remove('primary');
+            } else {
+              commentBtn.classList.remove('disabled');
+              commentBtn.classList.add('primary');
+            }
+          };
+
+          const updateTopbarClearChip = () => {
+            const hasClear = !!chipWrap.querySelector('.chip.clear');
+            if(activeFilter && !hasClear){
+              chipWrap.insertAdjacentHTML('beforeend', `<span class="chip clear" data-chip="">Limpar filtro</span>`);
+            }
+            if(!activeFilter && hasClear){
+              chipWrap.querySelector('.chip.clear')?.remove();
+            }
+          };
 
           chipWrap.addEventListener('click', (ev) => {
             const el = ev.target.closest('[data-chip]');
             if(!el) return;
             const v = el.getAttribute('data-chip') || '';
 
-            active = (active === v) ? '' : v;
+            activeFilter = (activeFilter === v) ? '' : v;
 
-            // atualiza classes
             [...chipWrap.querySelectorAll('.chip')].forEach(c => c.classList.remove('active'));
-            if(active){
-              const activeEl = [...chipWrap.querySelectorAll('.chip')].find(c => (c.getAttribute('data-chip')||'') === active);
+            if(activeFilter){
+              const activeEl = [...chipWrap.querySelectorAll('.chip')].find(c => (c.getAttribute('data-chip')||'') === activeFilter);
               if(activeEl) activeEl.classList.add('active');
             }
 
-            // injeta/remove "Limpar filtro"
-            const hasClear = !!chipWrap.querySelector('.chip.clear');
-            if(active && !hasClear){
-              chipWrap.insertAdjacentHTML('beforeend', `<span class="chip clear" data-chip="" title="Limpar filtro">Limpar filtro</span>`);
-            }
-            if(!active && hasClear){
-              chipWrap.querySelector('.chip.clear')?.remove();
-            }
-
-            applyTableFilter(tbody, active);
+            updateTopbarClearChip();
+            applyFilterToCards(list, activeFilter);
           });
-        }, 0);
 
-        // Expand/collapse + mini diff
-        setTimeout(() => {
-          const tbody = document.getElementById('ml_loc_tbody');
-          if(!tbody || tbody.dataset.bound === '1') return;
-          tbody.dataset.bound = '1';
+          // selection + expand
+          list.addEventListener('click', (ev) => {
+            const card = ev.target.closest('.card');
+            if(!card) return;
 
-          const currentListHtml = (currentIds.length
-            ? currentIds.slice(0, 12).map(it => `<span class="chip small">${esc(it.value)}</span>`).join('')
-            : `<span class="muted">Nenhum ID encontrado no ticket atual.</span>`);
-
-          tbody.addEventListener('click', (ev) => {
-            const tr = ev.target.closest('tr');
-            if(!tr || tr.classList.contains('descrow')) return;
-
-            const existing = tbody.querySelector('tr.descrow');
-            if(existing) existing.remove();
-
-            if(tbody.__openKey === tr.dataset.key){
-              tbody.__openKey = null;
+            // ctrl/cmd click abre ticket
+            if(ev.ctrlKey || ev.metaKey){
+              const link = card.getAttribute('data-link');
+              if(link) window.open(link, '_blank', 'noopener');
               return;
             }
 
-            tbody.__openKey = tr.dataset.key;
+            const key = card.getAttribute('data-key');
 
-            const full = tr.getAttribute('data-full') || '';
-            const hits = (tr.getAttribute('data-hits') || '').split('|').filter(Boolean);
-            const hitsHtml = hits.length
-              ? hits.slice(0, 12).map(v => `<span class="chip small active">${esc(v)}</span>`).join('')
-              : `<span class="muted">Nenhum ID em comum.</span>`;
+            // toggle selection with ALT key? (optional) - aqui: clique normal seleciona/deseleciona
+            if(selected.has(key)){
+              selected.delete(key);
+              card.classList.remove('sel');
+            } else {
+              selected.add(key);
+              card.classList.add('sel');
+            }
+            refreshCommentBtn();
 
-            const descRow = document.createElement('tr');
-            descRow.className = 'descrow';
-            descRow.innerHTML = `
-              <td colspan="5">
-                <div class="muted">Comparar com ticket atual • ${esc(tr.dataset.key || '')}</div>
+            // expand/collapse descrição completa (se clicar duas vezes rápido pode confundir com seleção;
+            // aqui vamos expandir só se clicar no texto da descrição ou resumo com SHIFT)
+            if(ev.shiftKey){
+              const existing = card.querySelector('.expand');
+              if(existing){ existing.remove(); return; }
 
-                <div class="compare">
-                  <div class="box">
-                    <div class="title">IDs do ticket atual</div>
-                    <div class="list">${currentListHtml}</div>
+              // fecha outros expandidos
+              [...list.querySelectorAll('.expand')].forEach(e => e.remove());
+
+              const full = card.getAttribute('data-full') || '';
+              const currentIdsText = (card.getAttribute('data-current') || '').split('|').filter(Boolean);
+              const hitVals = (card.getAttribute('data-hitstext') || '').split('|').filter(Boolean);
+
+              const currentHtml = currentIdsText.length
+                ? currentIdsText.slice(0, 12).map(v => `<span class="idpill">${esc(v)}</span>`).join('')
+                : `<span class="muted">nenhum</span>`;
+
+              const hitsHtml = hitVals.length
+                ? hitVals.slice(0, 12).map(v => `<span class="idpill">${esc(v)}</span>`).join('')
+                : `<span class="muted">nenhum</span>`;
+
+              card.insertAdjacentHTML('beforeend', `
+                <div class="expand">
+                  <div class="title">Comparar com ticket atual</div>
+                  <div class="compare">
+                    <div class="box">
+                      <div class="title">IDs do ticket atual</div>
+                      <div class="ids">${currentHtml}</div>
+                    </div>
+                    <div class="box">
+                      <div class="title">IDs em comum (match)</div>
+                      <div class="ids">${hitsHtml}</div>
+                    </div>
                   </div>
-                  <div class="box">
-                    <div class="title">IDs em comum (match)</div>
-                    <div class="list">${hitsHtml}</div>
-                  </div>
+                  <div class="title">Descrição completa</div>
+                  <div class="fulldesc">${full || '<span class="muted">Sem descrição.</span>'}</div>
+                  <div class="muted" style="margin-top:8px">Dica: SHIFT+clique para expandir/fechar, Ctrl+clique abre o ticket.</div>
                 </div>
-
-                <div class="muted">Descrição completa</div>
-                <div class="fulldesc">${full || '<span class="muted">Sem descrição.</span>'}</div>
-              </td>
-            `;
-            tr.insertAdjacentElement('afterend', descRow);
+              `);
+            }
           });
+
+          commentBtn.addEventListener('click', async () => {
+            if(selected.size === 0) return;
+
+            commentBtn.disabled = true;
+            const oldText = commentBtn.textContent;
+            commentBtn.textContent = 'Comentando...';
+
+            try{
+              const selectedCards = [...list.querySelectorAll('.card.sel')];
+              const lines = selectedCards.map(c => {
+                const key = c.getAttribute('data-key');
+                const link = `${location.origin}/browse/${key}`;
+                const hits = (c.getAttribute('data-hitstext') || '').split('|').filter(Boolean);
+                const hitsShow = hits.slice(0, 6).join(', ');
+                return `- ${key} (${link})${hitsShow ? ` | IDs: ${hitsShow}` : ''}`;
+              });
+
+              const body =
+`Possíveis duplicados na mesma localidade (Assets):
+Ticket atual: ${issueKey}
+
+Tickets relacionados:
+${lines.join('\n')}`;
+
+              await addComment(issueKey, body);
+
+              commentBtn.textContent = 'Comentado!';
+              setTimeout(() => { commentBtn.textContent = `Inserir comentário (${selected.size})`; }, 1200);
+
+            }catch(e){
+              alert('Falha ao comentar: ' + (e.message || e));
+              commentBtn.textContent = oldText;
+            }finally{
+              commentBtn.disabled = false;
+            }
+          });
+
+          refreshCommentBtn();
         }, 0);
 
       }catch(e){
@@ -697,7 +842,6 @@
     document.body.appendChild(b);
   }
 
-  // Jira é SPA: garante botão quando houver issueKey
   const tick = () => {
     const key = getIssueKey();
     if(key) ensureButton();
