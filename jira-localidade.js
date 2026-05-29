@@ -15,7 +15,7 @@
   const ORDER_BY = 'updated DESC';
 
   const DESC_PREVIEW_LEN = 240;
-  const DUP_LABEL_MAX_TOKENS = 3; // <-- FIX: definido
+  const DUP_LABEL_MAX_TOKENS = 3;
 
   const IDS = {
     style: 'ml_loc_style_bm',
@@ -202,25 +202,37 @@
     };
   };
 
-  async function getIssueFields(issueKey, fields) {
-    const url = `${location.origin}/rest/api/3/issue/${issueKey}?fields=${encodeURIComponent(fields.join(','))}`;
-    const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
-    if(!r.ok) throw new Error(`HTTP ${r.status} ao ler campos do ticket`);
-    return r.json();
+  // ---- ADF comment with paragraphs ----
+  function textToAdfParagraphs(text) {
+    const lines = String(text || '').split(/\r?\n/);
+    const content = lines.map(line => {
+      const t = line === '' ? ' ' : line; // evita parágrafo vazio inválido
+      return { type: "paragraph", content: [{ type: "text", text: t }] };
+    });
+    return { type: "doc", version: 1, content };
   }
 
   async function addComment(issueKey, bodyText) {
     const url = `${location.origin}/rest/api/3/issue/${issueKey}/comment`;
-    const payload = { body: bodyText };
+    const payload = { body: textToAdfParagraphs(bodyText) };
+
     const r = await fetch(url, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Accept':'application/json', 'Content-Type':'application/json' },
       body: JSON.stringify(payload)
     });
+
     const txt = await r.text().catch(()=> '');
-    if(!r.ok) throw new Error(`HTTP ${r.status} ao comentar: ${txt.slice(0,200)}`);
+    if(!r.ok) throw new Error(`HTTP ${r.status} ao comentar: ${txt.slice(0,300)}`);
     return JSON.parse(txt);
+  }
+
+  async function getIssueFields(issueKey, fields) {
+    const url = `${location.origin}/rest/api/3/issue/${issueKey}?fields=${encodeURIComponent(fields.join(','))}`;
+    const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
+    if(!r.ok) throw new Error(`HTTP ${r.status} ao ler campos do ticket`);
+    return r.json();
   }
 
   function descriptionToText(desc){
@@ -450,7 +462,7 @@
     const hitVals = hits.map(h => h.value);
     const hitAttr = hitVals.join('|');
 
-    const labelTokens = hitVals.slice(0, DUP_LABEL_MAX_TOKENS).join(', '); // <-- usa const corrigida
+    const labelTokens = hitVals.slice(0, DUP_LABEL_MAX_TOKENS).join(', ');
     const dupLabel = score ? `match: ${labelTokens || 'IDs'}` : '';
 
     const badges = [
