@@ -17,7 +17,7 @@
   const DESC_PREVIEW_LEN = 240;
   const DUP_LABEL_MAX_TOKENS = 3;
 
-  // Cache (ms)
+  // Cache
   const CACHE_TTL_MS = 2 * 60 * 1000;
 
   const IDS = {
@@ -27,7 +27,7 @@
     btn: 'ml_loc_btn_bm'
   };
 
-  // --- global cache ---
+  // global cache
   window.ML_LOC_CACHE = window.ML_LOC_CACHE || { byObject: {} };
   const cacheGet = (objectId) => {
     const e = window.ML_LOC_CACHE.byObject[String(objectId)];
@@ -83,18 +83,15 @@
       #${IDS.modal} .warn{color:#ffe2a8;background:#2a2418;border:1px solid #5a4a22;padding:10px;border-radius:8px;margin:12px 16px;}
       #${IDS.modal} .meta{opacity:.85;font-size:12px;margin-top:6px;word-break:break-word}
       #${IDS.modal} code{white-space:pre-wrap}
-
       #${IDS.modal} .topbar{position:sticky; top:0; z-index:3; background:#1d1f23; border-bottom:1px solid #2c2f36; padding:12px 16px;}
       #${IDS.modal} .toprow{display:flex; gap:12px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;}
       #${IDS.modal} .counts{display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:12px; opacity:.9;}
       #${IDS.modal} .countpill{background:#22252b;border:1px solid #2c2f36;border-radius:999px;padding:2px 10px;}
-
       #${IDS.modal} .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
       #${IDS.modal} .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:#22252b;border:1px solid #2c2f36;color:#e6e6e6;font-size:12px;cursor:pointer;user-select:none;}
       #${IDS.modal} .chip:hover{border-color:#3b82f6}
       #${IDS.modal} .chip.active{background:#17335f;border-color:#2c6bed}
       #${IDS.modal} .chip.clear{background:#2a1d1d;border-color:#5a2a2a}
-
       #${IDS.modal} .list{padding:12px 16px 16px 16px}
       #${IDS.modal} .card{border:1px solid #2c2f36;border-radius:12px;padding:10px 12px;margin-bottom:10px;background:#16181c;}
       #${IDS.modal} .card:hover{border-color:#3b82f6}
@@ -119,7 +116,6 @@
       #${IDS.modal} .disabled{opacity:.55; cursor:not-allowed}
       #${IDS.modal} .detailsBtn{background:#22252b;border:1px solid #2c2f36}
       #${IDS.modal} .detailsBtn:hover{border-color:#3b82f6}
-
       #${IDS.modal} .expand{margin-top:10px;background:#121417;border:1px solid #2c2f36;border-radius:10px;padding:10px;}
       #${IDS.modal} .expand .title{font-weight:900;font-size:12px;opacity:.9;margin-bottom:6px}
       #${IDS.modal} .fulldesc{white-space:pre-wrap; line-height:1.35; font-size:13px; opacity:.95;}
@@ -130,13 +126,9 @@
     document.head.appendChild(st);
   };
 
-  const removeModal = () => {
+  const openModal = (title, subtitle) => {
     document.getElementById(IDS.modal)?.remove();
     document.getElementById(IDS.overlay)?.remove();
-  };
-
-  const openModal = (title, subtitle) => {
-    removeModal();
     ensureStyle();
 
     const overlay = document.createElement('div');
@@ -158,7 +150,7 @@
       <div class="b" id="ml_loc_body">Carregando…</div>
     `;
 
-    const close = () => removeModal();
+    const close = () => { modal.remove(); overlay.remove(); };
     overlay.addEventListener('click', close);
     modal.querySelector('#ml_loc_close').addEventListener('click', close);
 
@@ -187,20 +179,17 @@
       body: textToAdfParagraphs(bodyText),
       properties: [{ key: "sd.public.comment", value: { internal: true } }]
     };
-
     const r = await fetch(url, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Accept':'application/json', 'Content-Type':'application/json' },
       body: JSON.stringify(payload)
     });
-
     const txt = await r.text().catch(()=> '');
     if(!r.ok) throw new Error(`HTTP ${r.status} ao comentar: ${txt.slice(0,300)}`);
     return JSON.parse(txt);
   }
 
-  // Link duplicate: outward duplicates inward => inward shows "is duplicated by"
   async function linkDuplicate(currentKey, duplicateKey) {
     const url = `${location.origin}/rest/api/3/issueLink`;
     const payload = {
@@ -208,14 +197,12 @@
       outwardIssue: { key: currentKey },
       inwardIssue: { key: duplicateKey }
     };
-
     const r = await fetch(url, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Accept':'application/json', 'Content-Type':'application/json' },
       body: JSON.stringify(payload)
     });
-
     const txt = await r.text().catch(()=> '');
     if(!r.ok) throw new Error(`HTTP ${r.status} ao vincular: ${txt.slice(0,300)}`);
     return true;
@@ -248,6 +235,63 @@
     }
   }
 
+  // --- Assets connected tickets ---
+  async function getConnectedTicketsPage(workspaceId, objectId, startAt){
+    const url =
+      `${location.origin}/gateway/api/jsm/assets/workspace/${encodeURIComponent(workspaceId)}` +
+      `/v1/objectconnectedtickets/${encodeURIComponent(objectId)}/paginatedtickets` +
+      `?hideResolved=${HIDE_RESOLVED ? 'true' : 'false'}` +
+      `&limit=${PAGE_SIZE}` +
+      `&startAt=${startAt}`;
+
+    const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
+    if(!r.ok) throw new Error(`HTTP ${r.status} ao consultar paginatedtickets`);
+    return r.json();
+  }
+
+  function extractIssueKeysFromConnectedTickets(data){
+    const keys = new Set();
+    const walk = (x) => {
+      if(x == null) return;
+      if(Array.isArray(x)){ x.forEach(walk); return; }
+      if(typeof x === 'object'){
+        for(const [k,v] of Object.entries(x)){
+          if((k === 'issueKey' || k === 'key') && typeof v === 'string' && /^[A-Z][A-Z0-9_]+-\d+$/.test(v)){
+            keys.add(v);
+          } else {
+            walk(v);
+          }
+        }
+      }
+    };
+    walk(data);
+
+    if(keys.size === 0){
+      const s = JSON.stringify(data);
+      for(const m of s.matchAll(/"issueKey"\s*:\s*"([A-Z][A-Z0-9_]+-\d+)"/g)) keys.add(m[1]);
+      for(const m of s.matchAll(/"key"\s*:\s*"([A-Z][A-Z0-9_]+-\d+)"/g)) keys.add(m[1]);
+    }
+    return [...keys];
+  }
+
+  async function getConnectedTicketsKeys(workspaceId, objectId){
+    const cached = cacheGet(objectId);
+    if (cached && cached.keys) return cached.keys;
+
+    let allKeys = [];
+    for(let page=0; page<MAX_PAGES; page++){
+      const startAt = page * PAGE_SIZE;
+      const data = await getConnectedTicketsPage(workspaceId, objectId, startAt);
+      const keys = extractIssueKeysFromConnectedTickets(data);
+      allKeys.push(...keys);
+      if(keys.length < PAGE_SIZE) break;
+    }
+    allKeys = [...new Set(allKeys)];
+    cacheSet(objectId, { ...(cached || {}), keys: allKeys });
+    return allKeys;
+  }
+
+  // --- Identifiers (including QTY) ---
   function normalizeForQty(s){
     return String(s || '')
       .toLowerCase()
@@ -277,8 +321,6 @@
     for(const it of out) if(!byVal.has(it.value)) byVal.set(it.value, it);
     return [...byVal.values()];
   }
-
-  function normalizeToken(t){ return String(t).trim(); }
 
   function isPrivateIp(ip){
     const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
@@ -334,11 +376,10 @@
 
     const byVal = new Map();
     for(const it of found){
-      const v = normalizeToken(it.value);
+      const v = it.value.trim();
       const prev = byVal.get(v);
-      if(!prev || it.weight > prev.weight) byVal.set(v, { ...it, value: v });
+      if(!prev || it.weight > prev.weight) byVal.set(v, it);
     }
-
     return [...byVal.values()].sort((a,b)=> b.weight - a.weight || a.value.localeCompare(b.value));
   }
 
@@ -351,10 +392,6 @@
       if(cur.has(k)) hits.push(cur.get(k));
     }
     return hits;
-  }
-
-  function scoreHits(hits){
-    return hits.reduce((acc, x) => acc + (x.weight || 1), 0);
   }
 
   function isStrongHit(hit){
@@ -377,22 +414,25 @@
     return { objectId: String(objectId), workspaceId: String(workspaceId) };
   }
 
-  async function getConnectedTicketsKeys(workspaceId, objectId){
-    // cache keys
-    const cached = cacheGet(objectId);
-    if (cached && cached.keys) return cached.keys;
-
-    let allKeys = [];
-    for(let page=0; page<MAX_PAGES; page++){
-      const startAt = page * PAGE_SIZE;
-      const data = await getConnectedTicketsPage(workspaceId, objectId, startAt);
-      const keys = extractIssueKeysFromConnectedTickets(data);
-      allKeys.push(...keys);
-      if(keys.length < PAGE_SIZE) break;
-    }
-    allKeys = uniq(allKeys);
-    cacheSet(objectId, { ...(cached || {}), keys: allKeys });
-    return allKeys;
+  async function searchByJql(jql){
+    const url = `${location.origin}/rest/api/3/search/jql`;
+    const payload = {
+      jql,
+      maxResults: MAX_RESULTS,
+      fields: [
+        "summary","description","assignee","issuetype","project","updated",
+        `customfield_${CF_RES_TEAM}`,
+      ]
+    };
+    const r = await fetch(url, {
+      method:'POST',
+      credentials:'same-origin',
+      headers:{ 'Accept':'application/json', 'Content-Type':'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const txt = await r.text().catch(()=> '');
+    if(!r.ok) throw new Error(`HTTP ${r.status} no search/jql: ${txt.slice(0,250)}`);
+    return JSON.parse(txt);
   }
 
   async function searchIssuesWithCache(objectId, jql){
@@ -444,7 +484,6 @@
 
     const hitVals = hits.map(h => h.value);
     const hitAttr = hitVals.join('|');
-
     const labelTokens = hitVals.slice(0, DUP_LABEL_MAX_TOKENS).join(', ');
     const dupLabel = score ? `match: ${labelTokens || 'IDs'}` : '';
 
@@ -519,7 +558,6 @@
         modal.setBody(`<div class="meta" style="padding:12px 16px">Buscando tickets vinculados…</div>`);
 
         let allKeys = await getConnectedTicketsKeys(workspaceId, objectId);
-
         allKeys = allKeys
           .filter(k => PROJECTS.includes(k.split('-')[0]))
           .filter(k => k !== issueKey);
@@ -533,17 +571,13 @@
         const proj = PROJECTS.map(p => `"${p}"`).join(',');
 
         const jql =
-          `project in (${proj}) ` +
-          `AND key in (${quotedKeys}) ` +
-          `AND ${OPEN_FILTER} ` +
-          `ORDER BY ${ORDER_BY}`;
+          `project in (${proj}) AND key in (${quotedKeys}) AND ${OPEN_FILTER} ORDER BY ${ORDER_BY}`;
 
         const issuesUrl = `${location.origin}/issues/?jql=${encodeURIComponent(jql)}`;
 
         modal.setBody(`<div class="meta" style="padding:12px 16px">Buscando detalhes…</div>`);
 
         const issues = await searchIssuesWithCache(objectId, jql);
-
         if(!issues.length){
           modal.setBody(`<div class="warn">Nenhum ticket aberto encontrado para esta localidade.</div>`);
           return;
@@ -553,13 +587,11 @@
           const f = issue.fields || {};
           const descText = descriptionToText(f.description);
           const otherText = `${f.summary || ''}\n${descText}`;
-
           const otherIds = extractIdentifiersFromText(otherText);
           const hits = intersectByExtraction(currentIds, otherIds);
           const score = scoreHits(hits);
           const strongMatch = hits.some(isStrongHit);
           const ipOnlyMatch = isIpOnly(hits);
-
           return { issue, hits, score, strongMatch, ipOnlyMatch, descText };
         }).sort((a,b) => (b.score - a.score) || String(b.issue.fields?.updated||'').localeCompare(String(a.issue.fields?.updated||'')));
 
@@ -585,7 +617,7 @@
                 <button id="ml_loc_linkdup" class="disabled danger">Vincular duplicado (0)</button>
               </div>
             </div>
-            <div class="meta">Clique em um ID para filtrar. Clique no card para selecionar. “Vincular duplicado” cria link Duplicate (selecionados).</div>
+            <div class="meta">Clique em um ID para filtrar. Clique no card para selecionar. “Vincular duplicado” cria link Duplicate.</div>
             <div class="chips" id="ml_loc_chips">${chipsHtml}</div>
           </div>
         `;
@@ -614,24 +646,12 @@
             commentBtn.textContent = `Obs interna (${selected.size})`;
             linkBtn.textContent = `Vincular duplicado (${selected.size})`;
 
-            const setEnabled = (btn, enabled) => {
-              if(enabled){
-                btn.classList.remove('disabled');
-                btn.classList.add('primary');
-                btn.disabled = false;
-              } else {
-                btn.classList.add('disabled');
-                btn.classList.remove('primary');
-                btn.disabled = false;
-              }
-            };
-            setEnabled(commentBtn, selected.size > 0);
             if(selected.size > 0){
+              commentBtn.classList.remove('disabled'); commentBtn.classList.add('primary');
               linkBtn.classList.remove('disabled');
-              linkBtn.disabled = false;
             } else {
+              commentBtn.classList.add('disabled'); commentBtn.classList.remove('primary');
               linkBtn.classList.add('disabled');
-              linkBtn.disabled = false;
             }
           };
 
@@ -742,19 +762,16 @@ ${lines.join('\n')}`;
 
               commentBtn.textContent = 'OK!';
               setTimeout(() => { commentBtn.textContent = oldText; }, 900);
-
-            }catch(e){
+            } catch (e) {
               alert('Falha ao comentar: ' + (e.message || e));
               commentBtn.textContent = oldText;
-            }finally{
+            } finally {
               commentBtn.disabled = false;
-              refreshButtons();
             }
           });
 
           linkBtn.addEventListener('click', async () => {
             if(selected.size === 0) return;
-
             const selectedKeys = [...selected];
             const ok = confirm(`Vincular ${selectedKeys.length} ticket(s) como duplicado do ticket atual (${issueKey})?\n\nTipo: Duplicate (is duplicated by)`);
             if(!ok) return;
@@ -764,19 +781,16 @@ ${lines.join('\n')}`;
             linkBtn.textContent = 'Vinculando...';
 
             try{
-              // cria links em série (menos risco de rate limit)
               for(const k of selectedKeys){
                 await linkDuplicate(issueKey, k);
               }
               linkBtn.textContent = 'Vinculado!';
               setTimeout(() => { linkBtn.textContent = oldText; }, 900);
-
-            }catch(e){
+            } catch (e) {
               alert('Falha ao vincular: ' + (e.message || e));
               linkBtn.textContent = oldText;
-            }finally{
+            } finally {
               linkBtn.disabled = false;
-              refreshButtons();
             }
           });
 
