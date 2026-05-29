@@ -1,8 +1,8 @@
 (function () {
   'use strict';
 
-  const CF_ASSET = 18388; // IS Ubicación - cf[18388]
-  const CF_RES_TEAM = 15613; // Resolution team IS (Dropdown)
+  const CF_ASSET = 18388;
+  const CF_RES_TEAM = 15613;
 
   const PROJECTS = ['IS', 'ISS', 'SSHP'];
 
@@ -59,15 +59,9 @@
         border-radius:12px; z-index:9999999; box-shadow:0 10px 30px rgba(0,0,0,.45);
         font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       }
-      #${IDS.modal} .h{
-        display:flex;justify-content:space-between;gap:12px;
-        padding:14px 16px;border-bottom:1px solid #2c2f36;
-      }
+      #${IDS.modal} .h{display:flex;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid #2c2f36;}
       #${IDS.modal} .b{padding:0}
-      #${IDS.modal} button{
-        background:#2c2f36;color:#fff;border:0;border-radius:8px;
-        padding:8px 10px;cursor:pointer;font-weight:900;
-      }
+      #${IDS.modal} button{background:#2c2f36;color:#fff;border:0;border-radius:8px;padding:8px 10px;cursor:pointer;font-weight:900;}
       #${IDS.modal} a{color:#7ab7ff;text-decoration:none;}
       #${IDS.modal} a:hover{text-decoration:underline;}
       #${IDS.modal} .err{color:#ffb4b4;background:#2a1d1d;border:1px solid #5a2a2a;padding:10px;border-radius:8px;margin:12px 16px;}
@@ -75,69 +69,34 @@
       #${IDS.modal} .meta{opacity:.85;font-size:12px;margin-top:6px;word-break:break-word}
       #${IDS.modal} code{white-space:pre-wrap}
 
-      #${IDS.modal} .topbar{
-        position:sticky; top:0; z-index:3;
-        background:#1d1f23;
-        border-bottom:1px solid #2c2f36;
-        padding:12px 16px;
-      }
-      #${IDS.modal} .toprow{
-        display:flex; gap:12px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;
-      }
-      #${IDS.modal} .counts{
-        display:flex; gap:10px; flex-wrap:wrap; align-items:center;
-        font-size:12px; opacity:.9;
-      }
-      #${IDS.modal} .countpill{
-        background:#22252b;border:1px solid #2c2f36;border-radius:999px;
-        padding:2px 10px;
-      }
+      #${IDS.modal} .topbar{position:sticky; top:0; z-index:3; background:#1d1f23; border-bottom:1px solid #2c2f36; padding:12px 16px;}
+      #${IDS.modal} .toprow{display:flex; gap:12px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;}
+      #${IDS.modal} .counts{display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:12px; opacity:.9;}
+      #${IDS.modal} .countpill{background:#22252b;border:1px solid #2c2f36;border-radius:999px;padding:2px 10px;}
 
       #${IDS.modal} .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-      #${IDS.modal} .chip{
-        display:inline-flex;align-items:center;gap:6px;
-        padding:4px 10px;border-radius:999px;
-        background:#22252b;border:1px solid #2c2f36;color:#e6e6e6;
-        font-size:12px;cursor:pointer;user-select:none;
-      }
+      #${IDS.modal} .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:#22252b;border:1px solid #2c2f36;color:#e6e6e6;font-size:12px;cursor:pointer;user-select:none;}
       #${IDS.modal} .chip:hover{border-color:#3b82f6}
       #${IDS.modal} .chip.active{background:#17335f;border-color:#2c6bed}
       #${IDS.modal} .chip.clear{background:#2a1d1d;border-color:#5a2a2a}
 
       #${IDS.modal} .list{padding:12px 16px 16px 16px}
-      #${IDS.modal} .card{
-        border:1px solid #2c2f36; border-radius:12px;
-        padding:10px 12px; margin-bottom:10px;
-        background:#16181c;
-      }
+      #${IDS.modal} .card{border:1px solid #2c2f36;border-radius:12px;padding:10px 12px;margin-bottom:10px;background:#16181c;}
       #${IDS.modal} .card:hover{border-color:#3b82f6}
       #${IDS.modal} .card.sel{border-color:#2c6bed; box-shadow:0 0 0 2px rgba(44,107,237,.15) inset;}
-      #${IDS.modal} .line1{
-        display:flex; gap:10px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;
-      }
+      #${IDS.modal} .line1{display:flex; gap:10px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;}
       #${IDS.modal} .kblock{min-width:240px}
       #${IDS.modal} .key{font-weight:950; font-size:14px}
       #${IDS.modal} .summary{font-size:14px; font-weight:700}
       #${IDS.modal} .badges{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
-      #${IDS.modal} .badge{
-        display:inline-block; padding:2px 10px; border-radius:999px;
-        background:#22252b; border:1px solid #2c2f36; font-size:12px; opacity:.95;
-      }
+      #${IDS.modal} .badge{display:inline-block; padding:2px 10px; border-radius:999px;background:#22252b; border:1px solid #2c2f36; font-size:12px; opacity:.95;}
       #${IDS.modal} .badge.dup{background:#3a2f11;border-color:#6b5a1d;color:#ffe2a8;font-weight:800}
       #${IDS.modal} .badge.strong{background:#193b1a;border-color:#2f6b2f;color:#c9f7c9;font-weight:800}
       #${IDS.modal} .badge.ip{background:#1f2a44;border-color:#2c6bed;color:#cfe3ff;font-weight:800}
-      #${IDS.modal} .line2{
-        margin-top:8px;
-        display:flex; gap:10px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;
-      }
+      #${IDS.modal} .line2{margin-top:8px;display:flex; gap:10px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;}
       #${IDS.modal} .desc{opacity:.92; font-size:13px; max-width:760px}
       #${IDS.modal} .ids{display:flex; gap:6px; flex-wrap:wrap; align-items:center}
-      #${IDS.modal} .idpill{
-        padding:1px 8px;border-radius:999px;
-        background:rgba(255,226,168,.10);
-        border:1px solid rgba(255,226,168,.22);
-        font-size:12px; opacity:.95;
-      }
+      #${IDS.modal} .idpill{padding:1px 8px;border-radius:999px;background:rgba(255,226,168,.10);border:1px solid rgba(255,226,168,.22);font-size:12px; opacity:.95;}
       #${IDS.modal} .muted{opacity:.7; font-size:12px}
       #${IDS.modal} .actions{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
       #${IDS.modal} .primary{background:#2c6bed}
@@ -145,13 +104,7 @@
       #${IDS.modal} .detailsBtn{background:#22252b;border:1px solid #2c2f36}
       #${IDS.modal} .detailsBtn:hover{border-color:#3b82f6}
 
-      #${IDS.modal} .expand{
-        margin-top:10px;
-        background:#121417;
-        border:1px solid #2c2f36;
-        border-radius:10px;
-        padding:10px;
-      }
+      #${IDS.modal} .expand{margin-top:10px;background:#121417;border:1px solid #2c2f36;border-radius:10px;padding:10px;}
       #${IDS.modal} .expand .title{font-weight:900;font-size:12px;opacity:.9;margin-bottom:6px}
       #${IDS.modal} .fulldesc{white-space:pre-wrap; line-height:1.35; font-size:13px; opacity:.95;}
       #${IDS.modal} .compare{display:grid; grid-template-columns:1fr; gap:10px; margin-bottom:10px;}
@@ -261,7 +214,7 @@
   function normalizeForQty(s){
     return String(s || '')
       .toLowerCase()
-      .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // remove acentos
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
       .replace(/[\(\)\[\]\{\},;:!?"'`]/g,' ')
       .replace(/\s+/g,' ')
       .trim();
@@ -269,7 +222,6 @@
 
   function extractQtyTokens(text){
     const t = normalizeForQty(text);
-
     const patterns = [
       { type: 'CAMERA', re: /\b(\d{1,3})\s+(?:camera|cameras)\b/g },
       { type: 'PRINTER', re: /\b(\d{1,3})\s+(?:impressora|impressoras)\b/g },
@@ -283,11 +235,10 @@
     for(const p of patterns){
       for(const m of t.matchAll(p.re)){
         const n = m[1];
-        out.push({ type: `QTY:${p.type}`, value: `QTY:${p.type}=${n}`, weight: 4 });
+        out.push({ type: `QTY:${p.type}`, value: `QTY:${p.type}=${n}`, weight: 5 });
       }
     }
 
-    // dedup
     const byVal = new Map();
     for(const it of out){
       if(!byVal.has(it.value)) byVal.set(it.value, it);
@@ -312,40 +263,33 @@
     const t = String(text || '');
     const found = [];
 
-    // QTY tokens
     found.push(...extractQtyTokens(t));
 
-    // IPs
     const ipRe = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
     for(const m of t.matchAll(ipRe)){
       const ip = m[0];
       found.push({ type:'ip', value: ip, weight: isPrivateIp(ip) ? 4 : 3 });
     }
 
-    // MAC
     const macRe = /\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b/g;
     for(const m of t.matchAll(macRe)){
       found.push({ type:'mac', value: m[0].toUpperCase().replace(/-/g,':'), weight: 6 });
     }
 
-    // ZEB/ZPL
     const zebzplRe = /\b(ZEB|ZPL)\s*[-_:]?\s*(\d{3,})\b/gi;
     for(const m of t.matchAll(zebzplRe)){
       found.push({ type: m[1].toUpperCase(), value: `${m[1].toUpperCase()}${m[2]}`, weight: 7 });
     }
 
-    // SELB
     const selbRe = /\bSELB\b/gi;
     if(selbRe.test(t)) found.push({ type:'SELB', value:'SELB', weight: 2 });
 
-    // Serial por label
     const serialLabelRe = /\b(?:S\/N|SN|N\/S|SERIAL(?:\s*NUMBER)?)[\s:#-]*([A-Z0-9]{6,24})\b/gi;
     for(const m of t.matchAll(serialLabelRe)){
       const s = m[1].toUpperCase();
       if(s.length >= 8) found.push({ type:'serial', value: s, weight: 7 });
     }
 
-    // Token forte
     const strongTokenRe = /\b[A-Z0-9]{10,24}\b/g;
     const up = t.toUpperCase();
     for(const m of up.matchAll(strongTokenRe)){
@@ -357,7 +301,6 @@
       found.push({ type:'serial?', value: tok, weight: 3 });
     }
 
-    // dedup por value (mantém maior weight)
     const byVal = new Map();
     for(const it of found){
       const v = normalizeToken(it.value);
@@ -365,17 +308,17 @@
       if(!prev || it.weight > prev.weight) byVal.set(v, { ...it, value: v });
     }
 
-    return [...byVal.values()]
-      .sort((a,b)=> b.weight - a.weight || a.value.localeCompare(b.value));
+    return [...byVal.values()].sort((a,b)=> b.weight - a.weight || a.value.localeCompare(b.value));
   }
 
-  function intersectIdentifiers(currentIds, otherText){
-    if(!currentIds.length) return [];
-    const other = String(otherText || '').toUpperCase();
+  // Interseção por "value" (não por substring)
+  function intersectByExtraction(currentIds, otherIds){
+    if(!currentIds.length || !otherIds.length) return [];
+    const cur = new Map(currentIds.map(x => [x.value.toUpperCase(), x]));
     const hits = [];
-    for(const it of currentIds){
-      const needle = it.value.toUpperCase();
-      if(needle && other.includes(needle)) hits.push(it);
+    for(const it of otherIds){
+      const k = it.value.toUpperCase();
+      if(cur.has(k)) hits.push(cur.get(k));
     }
     return hits;
   }
@@ -579,12 +522,9 @@
         const currentText = `${summaryCurrent}\n${descCurrent}`.trim();
 
         const currentIds = extractIdentifiersFromText(currentText);
-        const idsLabel = currentIds.length
-          ? currentIds.slice(0, 12).map(x => x.value).join(', ')
-          : '—';
+        const idsLabel = currentIds.length ? currentIds.slice(0, 12).map(x => x.value).join(', ') : '—';
 
         const { objectId, workspaceId } = asset;
-
         modal.setSubtitle(`Localidade (objectId): ${objectId} • Atual: ${issueKey} • IDs: ${idsLabel}`);
 
         modal.setBody(`<div class="meta" style="padding:12px 16px">Buscando tickets vinculados…</div>`);
@@ -594,9 +534,7 @@
           const startAt = page * PAGE_SIZE;
           const data = await getConnectedTicketsPage(workspaceId, objectId, startAt);
           const keys = extractIssueKeysFromConnectedTickets(data);
-
           allKeys.push(...keys);
-
           if(keys.length < PAGE_SIZE) break;
         }
 
@@ -633,11 +571,14 @@
         const items = issues.map(issue => {
           const f = issue.fields || {};
           const descText = descriptionToText(f.description);
-          const combined = `${f.summary || ''}\n${descText}`;
-          const hits = intersectIdentifiers(currentIds, combined);
+          const otherText = `${f.summary || ''}\n${descText}`;
+
+          const otherIds = extractIdentifiersFromText(otherText); // <-- EXTRAÇÃO NO OUTRO TICKET
+          const hits = intersectByExtraction(currentIds, otherIds); // <-- INTERSEÇÃO POR VALUE
           const score = scoreHits(hits);
           const strongMatch = hits.some(isStrongHit);
           const ipOnlyMatch = isIpOnly(hits);
+
           return { issue, hits, score, strongMatch, ipOnlyMatch, descText };
         }).sort((a,b) => (b.score - a.score) || String(b.issue.fields?.updated||'').localeCompare(String(a.issue.fields?.updated||'')));
 
@@ -661,10 +602,8 @@
                 <button id="ml_loc_comment" class="disabled">Inserir comentário (0)</button>
               </div>
             </div>
-            <div class="meta">Clique em um ID para filtrar a lista (e clique no card para selecionar tickets). Use “Detalhes” para ver a descrição completa.</div>
-            <div class="chips" id="ml_loc_chips">
-              ${chipsHtml}
-            </div>
+            <div class="meta">Clique em um ID para filtrar a lista. Clique no card para selecionar e “Detalhes” para ver a descrição completa.</div>
+            <div class="chips" id="ml_loc_chips">${chipsHtml}</div>
           </div>
         `;
 
@@ -674,9 +613,7 @@
           ${topbar}
           <div class="list" id="ml_loc_list">
             ${listHtml}
-            <div class="meta" style="margin-top:10px">
-              JQL: <code>${esc(jql)}</code>
-            </div>
+            <div class="meta" style="margin-top:10px">JQL: <code>${esc(jql)}</code></div>
           </div>
         `);
 
