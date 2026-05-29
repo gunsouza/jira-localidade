@@ -17,11 +17,26 @@
   const DESC_PREVIEW_LEN = 240;
   const DUP_LABEL_MAX_TOKENS = 3;
 
+  // Cache (ms)
+  const CACHE_TTL_MS = 2 * 60 * 1000;
+
   const IDS = {
     style: 'ml_loc_style_bm',
     overlay: 'ml_loc_overlay_bm',
     modal: 'ml_loc_modal_bm',
     btn: 'ml_loc_btn_bm'
+  };
+
+  // --- global cache ---
+  window.ML_LOC_CACHE = window.ML_LOC_CACHE || { byObject: {} };
+  const cacheGet = (objectId) => {
+    const e = window.ML_LOC_CACHE.byObject[String(objectId)];
+    if (!e) return null;
+    if (Date.now() - e.ts > CACHE_TTL_MS) return null;
+    return e;
+  };
+  const cacheSet = (objectId, data) => {
+    window.ML_LOC_CACHE.byObject[String(objectId)] = { ts: Date.now(), ...data };
   };
 
   const esc = (s) => String(s ?? '')
@@ -100,6 +115,7 @@
       #${IDS.modal} .muted{opacity:.7; font-size:12px}
       #${IDS.modal} .actions{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
       #${IDS.modal} .primary{background:#2c6bed}
+      #${IDS.modal} .danger{background:#7a1f1f}
       #${IDS.modal} .disabled{opacity:.55; cursor:not-allowed}
       #${IDS.modal} .detailsBtn{background:#22252b;border:1px solid #2c2f36}
       #${IDS.modal} .detailsBtn:hover{border-color:#3b82f6}
@@ -184,6 +200,27 @@
     return JSON.parse(txt);
   }
 
+  // Link duplicate: outward duplicates inward => inward shows "is duplicated by"
+  async function linkDuplicate(currentKey, duplicateKey) {
+    const url = `${location.origin}/rest/api/3/issueLink`;
+    const payload = {
+      type: { name: "Duplicate" },
+      outwardIssue: { key: currentKey },
+      inwardIssue: { key: duplicateKey }
+    };
+
+    const r = await fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Accept':'application/json', 'Content-Type':'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const txt = await r.text().catch(()=> '');
+    if(!r.ok) throw new Error(`HTTP ${r.status} ao vincular: ${txt.slice(0,300)}`);
+    return true;
+  }
+
   async function getIssueFields(issueKey, fields) {
     const url = `${location.origin}/rest/api/3/issue/${issueKey}?fields=${encodeURIComponent(fields.join(','))}`;
     const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
@@ -230,23 +267,17 @@
       { type: 'LEITOR', re: /\b(\d{1,3})\s+(?:leitor|leitores)\b/g },
       { type: 'AP', re: /\b(\d{1,3})\s+(?:ap|aps|access\s+point|access\s+points)\b/g },
     ];
-
     const out = [];
     for(const p of patterns){
       for(const m of t.matchAll(p.re)){
-        const n = m[1];
-        out.push({ type: `QTY:${p.type}`, value: `QTY:${p.type}=${n}`, weight: 5 });
+        out.push({ type: `QTY:${p.type}`, value: `QTY:${p.type}=${m[1]}`, weight: 5 });
       }
     }
-
     const byVal = new Map();
-    for(const it of out){
-      if(!byVal.has(it.value)) byVal.set(it.value, it);
-    }
+    for(const it of out) if(!byVal.has(it.value)) byVal.set(it.value, it);
     return [...byVal.values()];
   }
 
-  function uniq(arr){ return [...new Set(arr)]; }
   function normalizeToken(t){ return String(t).trim(); }
 
   function isPrivateIp(ip){
@@ -311,7 +342,6 @@
     return [...byVal.values()].sort((a,b)=> b.weight - a.weight || a.value.localeCompare(b.value));
   }
 
-  // Interseção por "value" (não por substring)
   function intersectByExtraction(currentIds, otherIds){
     if(!currentIds.length || !otherIds.length) return [];
     const cur = new Map(currentIds.map(x => [x.value.toUpperCase(), x]));
@@ -347,76 +377,31 @@
     return { objectId: String(objectId), workspaceId: String(workspaceId) };
   }
 
-  async function getConnectedTicketsPage(workspaceId, objectId, startAt){
-    const url =
-      `${location.origin}/gateway/api/jsm/assets/workspace/${encodeURIComponent(workspaceId)}` +
-      `/v1/objectconnectedtickets/${encodeURIComponent(objectId)}/paginatedtickets` +
-      `?hideResolved=${HIDE_RESOLVED ? 'true' : 'false'}` +
-      `&limit=${PAGE_SIZE}` +
-      `&startAt=${startAt}`;
+  async function getConnectedTicketsKeys(workspaceId, objectId){
+    // cache keys
+    const cached = cacheGet(objectId);
+    if (cached && cached.keys) return cached.keys;
 
-    const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
-    if(!r.ok) throw new Error(`HTTP ${r.status} ao consultar paginatedtickets`);
-    return r.json();
-  }
-
-  function extractIssueKeysFromConnectedTickets(data){
-    const keys = new Set();
-    const walk = (x) => {
-      if(x == null) return;
-      if(Array.isArray(x)){ x.forEach(walk); return; }
-      if(typeof x === 'object'){
-        for(const [k,v] of Object.entries(x)){
-          if((k === 'issueKey' || k === 'key') && typeof v === 'string' && /^[A-Z][A-Z0-9_]+-\d+$/.test(v)){
-            keys.add(v);
-          } else {
-            walk(v);
-          }
-        }
-      }
-    };
-    walk(data);
-
-    if(keys.size === 0){
-      const s = JSON.stringify(data);
-      for(const m of s.matchAll(/"issueKey"\s*:\s*"([A-Z][A-Z0-9_]+-\d+)"/g)) keys.add(m[1]);
-      for(const m of s.matchAll(/"key"\s*:\s*"([A-Z][A-Z0-9_]+-\d+)"/g)) keys.add(m[1]);
+    let allKeys = [];
+    for(let page=0; page<MAX_PAGES; page++){
+      const startAt = page * PAGE_SIZE;
+      const data = await getConnectedTicketsPage(workspaceId, objectId, startAt);
+      const keys = extractIssueKeysFromConnectedTickets(data);
+      allKeys.push(...keys);
+      if(keys.length < PAGE_SIZE) break;
     }
-    return [...keys];
+    allKeys = uniq(allKeys);
+    cacheSet(objectId, { ...(cached || {}), keys: allKeys });
+    return allKeys;
   }
 
-  async function searchByJql(jql){
-    const url = `${location.origin}/rest/api/3/search/jql`;
-    const payload = {
-      jql,
-      maxResults: MAX_RESULTS,
-      fields: [
-        "summary",
-        "description",
-        "assignee",
-        "issuetype",
-        "project",
-        "updated",
-        `customfield_${CF_RES_TEAM}`,
-      ]
-    };
-
-    const r = await fetch(url, {
-      method:'POST',
-      credentials:'same-origin',
-      headers:{ 'Accept':'application/json', 'Content-Type':'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    const txt = await r.text().catch(()=> '');
-    if(!r.ok) throw new Error(`HTTP ${r.status} no search/jql: ${txt.slice(0,250)}`);
-    return JSON.parse(txt);
-  }
-
-  function formatPreview(text){
-    const t = String(text || '').trim();
-    if(!t) return '';
-    return t.length > DESC_PREVIEW_LEN ? t.slice(0, DESC_PREVIEW_LEN) + '…' : t;
+  async function searchIssuesWithCache(objectId, jql){
+    const cached = cacheGet(objectId);
+    if (cached && cached.jql === jql && cached.issues) return cached.issues;
+    const data = await searchByJql(jql);
+    const issues = data.issues || [];
+    cacheSet(objectId, { ...(cached || {}), jql, issues });
+    return issues;
   }
 
   function computeCounts(items){
@@ -440,18 +425,23 @@
     }
   }
 
+  function formatPreview(text){
+    const t = String(text || '').trim();
+    if(!t) return '';
+    return t.length > DESC_PREVIEW_LEN ? t.slice(0, DESC_PREVIEW_LEN) + '…' : t;
+  }
+
   function renderIssueCard(item){
     const { issue, hits, score, strongMatch, ipOnlyMatch } = item;
     const f = issue.fields || {};
     const key = issue.key;
     const link = `${location.origin}/browse/${key}`;
-
     const preview = formatPreview(item.descText);
 
     const rt = f[`customfield_${CF_RES_TEAM}`];
     const resTeam = (rt && (rt.value || rt.name)) ? (rt.value || rt.name) : (rt ? String(rt) : '—');
-
     const assignee = f.assignee?.displayName || '—';
+
     const hitVals = hits.map(h => h.value);
     const hitAttr = hitVals.join('|');
 
@@ -490,7 +480,6 @@
           </div>
           <div class="badges">${badges}</div>
         </div>
-
         <div class="line2">
           <div class="desc">${preview ? esc(preview) : '<span class="muted">sem descrição</span>'}</div>
           <div class="ids">${idsHtml}</div>
@@ -529,16 +518,9 @@
 
         modal.setBody(`<div class="meta" style="padding:12px 16px">Buscando tickets vinculados…</div>`);
 
-        let allKeys = [];
-        for(let page=0; page<MAX_PAGES; page++){
-          const startAt = page * PAGE_SIZE;
-          const data = await getConnectedTicketsPage(workspaceId, objectId, startAt);
-          const keys = extractIssueKeysFromConnectedTickets(data);
-          allKeys.push(...keys);
-          if(keys.length < PAGE_SIZE) break;
-        }
+        let allKeys = await getConnectedTicketsKeys(workspaceId, objectId);
 
-        allKeys = uniq(allKeys)
+        allKeys = allKeys
           .filter(k => PROJECTS.includes(k.split('-')[0]))
           .filter(k => k !== issueKey);
 
@@ -560,8 +542,7 @@
 
         modal.setBody(`<div class="meta" style="padding:12px 16px">Buscando detalhes…</div>`);
 
-        const data = await searchByJql(jql);
-        const issues = data.issues || [];
+        const issues = await searchIssuesWithCache(objectId, jql);
 
         if(!issues.length){
           modal.setBody(`<div class="warn">Nenhum ticket aberto encontrado para esta localidade.</div>`);
@@ -573,8 +554,8 @@
           const descText = descriptionToText(f.description);
           const otherText = `${f.summary || ''}\n${descText}`;
 
-          const otherIds = extractIdentifiersFromText(otherText); // <-- EXTRAÇÃO NO OUTRO TICKET
-          const hits = intersectByExtraction(currentIds, otherIds); // <-- INTERSEÇÃO POR VALUE
+          const otherIds = extractIdentifiersFromText(otherText);
+          const hits = intersectByExtraction(currentIds, otherIds);
           const score = scoreHits(hits);
           const strongMatch = hits.some(isStrongHit);
           const ipOnlyMatch = isIpOnly(hits);
@@ -596,13 +577,15 @@
                 <span class="countpill">Com match: <b>${counts.withMatch}</b></span>
                 <span class="countpill">Match forte: <b>${counts.strong}</b></span>
                 <span class="countpill">Só IP: <b>${counts.ipOnly}</b></span>
+                <span class="countpill">Cache: <b>on</b></span>
               </div>
               <div class="actions">
                 <a href="${esc(issuesUrl)}" target="_blank" rel="noopener">Abrir busca no Jira</a>
-                <button id="ml_loc_comment" class="disabled">Inserir comentário (0)</button>
+                <button id="ml_loc_comment" class="disabled">Obs interna (0)</button>
+                <button id="ml_loc_linkdup" class="disabled danger">Vincular duplicado (0)</button>
               </div>
             </div>
-            <div class="meta">Clique em um ID para filtrar a lista. Clique no card para selecionar e “Detalhes” para ver a descrição completa.</div>
+            <div class="meta">Clique em um ID para filtrar. Clique no card para selecionar. “Vincular duplicado” cria link Duplicate (selecionados).</div>
             <div class="chips" id="ml_loc_chips">${chipsHtml}</div>
           </div>
         `;
@@ -621,19 +604,34 @@
           const chipWrap = document.getElementById('ml_loc_chips');
           const list = document.getElementById('ml_loc_list');
           const commentBtn = document.getElementById('ml_loc_comment');
-          if(!chipWrap || !list || !commentBtn) return;
+          const linkBtn = document.getElementById('ml_loc_linkdup');
+          if(!chipWrap || !list || !commentBtn || !linkBtn) return;
 
           let activeFilter = '';
           const selected = new Set();
 
-          const refreshCommentBtn = () => {
-            commentBtn.textContent = `Inserir comentário (${selected.size})`;
-            if(selected.size === 0){
-              commentBtn.classList.add('disabled');
-              commentBtn.classList.remove('primary');
+          const refreshButtons = () => {
+            commentBtn.textContent = `Obs interna (${selected.size})`;
+            linkBtn.textContent = `Vincular duplicado (${selected.size})`;
+
+            const setEnabled = (btn, enabled) => {
+              if(enabled){
+                btn.classList.remove('disabled');
+                btn.classList.add('primary');
+                btn.disabled = false;
+              } else {
+                btn.classList.add('disabled');
+                btn.classList.remove('primary');
+                btn.disabled = false;
+              }
+            };
+            setEnabled(commentBtn, selected.size > 0);
+            if(selected.size > 0){
+              linkBtn.classList.remove('disabled');
+              linkBtn.disabled = false;
             } else {
-              commentBtn.classList.remove('disabled');
-              commentBtn.classList.add('primary');
+              linkBtn.classList.add('disabled');
+              linkBtn.disabled = false;
             }
           };
 
@@ -651,7 +649,6 @@
             const el = ev.target.closest('[data-chip]');
             if(!el) return;
             const v = el.getAttribute('data-chip') || '';
-
             activeFilter = (activeFilter === v) ? '' : v;
 
             [...chipWrap.querySelectorAll('.chip')].forEach(c => c.classList.remove('active'));
@@ -675,7 +672,6 @@
 
               const existing = card.querySelector('.expand');
               if(existing){ existing.remove(); return; }
-
               [...list.querySelectorAll('.expand')].forEach(e => e.remove());
 
               const full = card.getAttribute('data-full') || '';
@@ -691,22 +687,14 @@
 
               card.insertAdjacentHTML('beforeend', `
                 <div class="expand">
-                  <div class="title">Comparar com ticket atual</div>
-                  <div class="compare">
-                    <div class="box">
-                      <div class="title">IDs do ticket atual</div>
-                      <div class="ids">${currentHtml}</div>
-                    </div>
-                    <div class="box">
-                      <div class="title">IDs em comum (match)</div>
-                      <div class="ids">${hitsHtml}</div>
-                    </div>
-                  </div>
-                  <div class="title">Descrição completa</div>
+                  <div class="title">IDs do ticket atual</div>
+                  <div class="ids">${currentHtml}</div>
+                  <div class="title" style="margin-top:10px">IDs em comum</div>
+                  <div class="ids">${hitsHtml}</div>
+                  <div class="title" style="margin-top:10px">Descrição completa</div>
                   <div class="fulldesc">${full || '<span class="muted">Sem descrição.</span>'}</div>
                 </div>
               `);
-
               return;
             }
 
@@ -724,12 +712,11 @@
               selected.add(key);
               card.classList.add('sel');
             }
-            refreshCommentBtn();
+            refreshButtons();
           });
 
           commentBtn.addEventListener('click', async () => {
             if(selected.size === 0) return;
-
             commentBtn.disabled = true;
             const oldText = commentBtn.textContent;
             commentBtn.textContent = 'Comentando...';
@@ -753,18 +740,47 @@ ${lines.join('\n')}`;
 
               await addInternalComment(issueKey, body);
 
-              commentBtn.textContent = 'Comentado!';
-              setTimeout(() => { commentBtn.textContent = `Inserir comentário (${selected.size})`; }, 1200);
+              commentBtn.textContent = 'OK!';
+              setTimeout(() => { commentBtn.textContent = oldText; }, 900);
 
             }catch(e){
               alert('Falha ao comentar: ' + (e.message || e));
               commentBtn.textContent = oldText;
             }finally{
               commentBtn.disabled = false;
+              refreshButtons();
             }
           });
 
-          refreshCommentBtn();
+          linkBtn.addEventListener('click', async () => {
+            if(selected.size === 0) return;
+
+            const selectedKeys = [...selected];
+            const ok = confirm(`Vincular ${selectedKeys.length} ticket(s) como duplicado do ticket atual (${issueKey})?\n\nTipo: Duplicate (is duplicated by)`);
+            if(!ok) return;
+
+            linkBtn.disabled = true;
+            const oldText = linkBtn.textContent;
+            linkBtn.textContent = 'Vinculando...';
+
+            try{
+              // cria links em série (menos risco de rate limit)
+              for(const k of selectedKeys){
+                await linkDuplicate(issueKey, k);
+              }
+              linkBtn.textContent = 'Vinculado!';
+              setTimeout(() => { linkBtn.textContent = oldText; }, 900);
+
+            }catch(e){
+              alert('Falha ao vincular: ' + (e.message || e));
+              linkBtn.textContent = oldText;
+            }finally{
+              linkBtn.disabled = false;
+              refreshButtons();
+            }
+          });
+
+          refreshButtons();
         }, 0);
 
       }catch(e){
