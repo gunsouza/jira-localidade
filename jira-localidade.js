@@ -5,7 +5,7 @@
   // CONFIG
   // =========================
   const CF_ASSET = 18388;
-  const CF_RES_TEAM = 15613;
+  const CF_RES_TEAM = 15613; // Resolution team IS (Dropdown)
 
   const PROJECTS = ['IS', 'ISS', 'SSHP'];
 
@@ -22,11 +22,25 @@
 
   const CACHE_TTL_MS = 2 * 60 * 1000;
 
+  const DERIVE_TRANSITION_NAME = 'Derive the other team';
+  const DERIVE_COMMENT_DEFAULT = 'Ticket sendo derivado para fila correta de atendimento.';
+
+  const DERIVE_TEAMS_ALLOWLIST = [
+    "IS-SHIP-NATS-N1",
+    "IS-SHIP-OPS",
+    "IS-EXT-SIMPRESS",
+    "IS-SHIP-FIELDSERVICE",
+    "IS-SHIP-NETWORK"
+  ];
+
   const IDS = {
     style: 'ml_loc_style_bm',
     overlay: 'ml_loc_overlay_bm',
     modal: 'ml_loc_modal_bm',
-    btn: 'ml_loc_btn_bm'
+    btn: 'ml_loc_btn_bm',
+    // derive modal
+    dOverlay: 'ml_loc_d_overlay',
+    dModal: 'ml_loc_d_modal'
   };
 
   // =========================
@@ -77,6 +91,7 @@
         font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       }
       #${IDS.btn}:hover{filter:brightness(1.05)}
+
       #${IDS.overlay}{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999998;}
       #${IDS.modal}{
         position:fixed; top:6vh; left:50%; transform:translateX(-50%);
@@ -99,7 +114,6 @@
       #${IDS.modal} .toprow{display:flex; gap:12px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;}
       #${IDS.modal} .counts{display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:12px; opacity:.9;}
       #${IDS.modal} .countpill{background:#22252b;border:1px solid #2c2f36;border-radius:999px;padding:2px 10px;}
-
       #${IDS.modal} .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
       #${IDS.modal} .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:#22252b;border:1px solid #2c2f36;color:#e6e6e6;font-size:12px;cursor:pointer;user-select:none;}
       #${IDS.modal} .chip:hover{border-color:#3b82f6}
@@ -134,172 +148,173 @@
       #${IDS.modal} .expand{margin-top:10px;background:#121417;border:1px solid #2c2f36;border-radius:10px;padding:10px;}
       #${IDS.modal} .expand .title{font-weight:900;font-size:12px;opacity:.9;margin-bottom:6px}
       #${IDS.modal} .fulldesc{white-space:pre-wrap; line-height:1.35; font-size:13px; opacity:.95;}
+
+      /* Derive modal */
+      #${IDS.dOverlay}{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10000000;}
+      #${IDS.dModal}{
+        position:fixed; top:12vh; left:50%; transform:translateX(-50%);
+        width:min(720px,92vw); max-height:76vh; overflow:auto;
+        background:#1d1f23; color:#e6e6e6; border:1px solid #333;
+        border-radius:12px; z-index:10000001; box-shadow:0 10px 30px rgba(0,0,0,.45);
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      }
+      #${IDS.dModal} .dh{display:flex;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid #2c2f36;}
+      #${IDS.dModal} .db{padding:12px 16px 16px;}
+      #${IDS.dModal} textarea{
+        width:100%; min-height:90px; resize:vertical;
+        background:#121417; color:#e6e6e6; border:1px solid #2c2f36;
+        border-radius:10px; padding:10px; font-family:inherit; font-size:13px;
+      }
+      #${IDS.dModal} .teamgrid{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;}
+      #${IDS.dModal} .teambtn{background:#22252b;border:1px solid #2c2f36;border-radius:999px;padding:6px 10px;cursor:pointer;font-weight:800;}
+      #${IDS.dModal} .teambtn:hover{border-color:#3b82f6}
+      #${IDS.dModal} .teambtn.active{background:#17335f;border-color:#2c6bed}
+      #${IDS.dModal} .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:flex-end;margin-top:12px;}
+      #${IDS.dModal} .btnPrimary{background:#2c6bed}
+      #${IDS.dModal} .btnSecondary{background:#2c2f36}
     `;
     document.head.appendChild(st);
   };
 
-  const openModal = (title, subtitle) => {
-    document.getElementById(IDS.modal)?.remove();
-    document.getElementById(IDS.overlay)?.remove();
-    ensureStyle();
+  function openDeriveModal({ teams, onSubmit }) {
+    document.getElementById(IDS.dModal)?.remove();
+    document.getElementById(IDS.dOverlay)?.remove();
 
     const overlay = document.createElement('div');
-    overlay.id = IDS.overlay;
+    overlay.id = IDS.dOverlay;
 
     const modal = document.createElement('div');
-    modal.id = IDS.modal;
+    modal.id = IDS.dModal;
+
     modal.innerHTML = `
-      <div class="h">
+      <div class="dh">
         <div>
-          <div style="font-size:16px;font-weight:950">${esc(title)}</div>
-          <div class="meta" id="ml_loc_sub">${esc(subtitle || '')}</div>
+          <div style="font-size:16px;font-weight:950">Derivar para outro time</div>
+          <div class="meta">Selecione o time e confirme.</div>
         </div>
         <div style="display:flex;gap:8px">
-          <button id="ml_loc_reload">Recarregar</button>
-          <button id="ml_loc_close">Fechar</button>
+          <button id="ml_d_close" class="btnSecondary">Fechar</button>
         </div>
       </div>
-      <div class="b" id="ml_loc_body">Carregando…</div>
+      <div class="db">
+        <div style="font-weight:900;margin-bottom:6px">Times</div>
+        <div class="teamgrid" id="ml_d_teams"></div>
+
+        <div style="font-weight:900;margin:12px 0 6px">Comentário (observação interna)</div>
+        <textarea id="ml_d_comment">${DERIVE_COMMENT_DEFAULT}</textarea>
+
+        <div class="row">
+          <button id="ml_d_cancel" class="btnSecondary">Cancelar</button>
+          <button id="ml_d_submit" class="btnPrimary">Derivar</button>
+        </div>
+      </div>
     `;
 
     const close = () => { modal.remove(); overlay.remove(); };
     overlay.addEventListener('click', close);
-    modal.querySelector('#ml_loc_close').addEventListener('click', close);
+    modal.querySelector('#ml_d_close').addEventListener('click', close);
+    modal.querySelector('#ml_d_cancel').addEventListener('click', close);
+
+    const teamsWrap = modal.querySelector('#ml_d_teams');
+    let selected = null;
+
+    teams.forEach(t => {
+      const b = document.createElement('button');
+      b.className = 'teambtn';
+      b.textContent = t.value;
+      b.onclick = () => {
+        selected = t;
+        [...teamsWrap.querySelectorAll('.teambtn')].forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+      };
+      teamsWrap.appendChild(b);
+    });
+
+    modal.querySelector('#ml_d_submit').addEventListener('click', async () => {
+      if(!selected){
+        alert('Selecione um time.');
+        return;
+      }
+      const comment = modal.querySelector('#ml_d_comment').value || DERIVE_COMMENT_DEFAULT;
+      await onSubmit({ team: selected, comment });
+      close();
+    });
 
     document.body.appendChild(overlay);
     document.body.appendChild(modal);
-
-    return {
-      setBody: (html) => { document.getElementById('ml_loc_body').innerHTML = html; },
-      setSubtitle: (t) => { document.getElementById('ml_loc_sub').textContent = t; },
-      onReload: (fn) => { document.getElementById('ml_loc_reload').onclick = fn; }
-    };
-  };
-
-  function textToAdfParagraphs(text) {
-    const lines = String(text || '').split(/\r?\n/);
-    const content = lines.map(line => {
-      const t = line === '' ? ' ' : line;
-      return { type: "paragraph", content: [{ type: "text", text: t }] };
-    });
-    return { type: "doc", version: 1, content };
   }
 
-  async function addInternalComment(issueKey, bodyText) {
-    const url = `${location.origin}/rest/api/3/issue/${issueKey}/comment`;
-    const payload = {
-      body: textToAdfParagraphs(bodyText),
-      properties: [{ key: "sd.public.comment", value: { internal: true } }]
-    };
-    const r = await fetch(url, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Accept':'application/json', 'Content-Type':'application/json' },
-      body: JSON.stringify(payload)
-    });
+  // =========================
+  // JIRA API (derive)
+  // =========================
+  async function jiraGetTransitions(issueKey) {
+    const url = `${location.origin}/rest/api/3/issue/${issueKey}/transitions?expand=transitions.fields`;
+    const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
     const txt = await r.text().catch(()=> '');
-    if(!r.ok) throw new Error(`HTTP ${r.status} ao comentar: ${txt.slice(0,300)}`);
+    if(!r.ok) throw new Error(`HTTP ${r.status} ao buscar transitions: ${txt.slice(0,250)}`);
     return JSON.parse(txt);
   }
 
-  async function linkDuplicate(currentKey, duplicateKey) {
-    const url = `${location.origin}/rest/api/3/issueLink`;
+  function pickDeriveTransition(transitionsResponse) {
+    const transitions = transitionsResponse.transitions || [];
+    return transitions.find(t => (t.name || '').trim() === DERIVE_TRANSITION_NAME) || null;
+  }
+
+  function getAllowedResolutionTeams(transition) {
+    const fields = transition?.fields || {};
+    const cf = fields[`customfield_${CF_RES_TEAM}`];
+    const allowed = cf?.allowedValues || [];
+    // allowedValues: [{id, value}] para select
+    return allowed;
+  }
+
+  function filterTeamsAllowlist(allowed) {
+    const allow = new Set(DERIVE_TEAMS_ALLOWLIST.map(x => x.trim()));
+    return allowed.filter(opt => allow.has(String(opt.value).trim()));
+  }
+
+  function adfFromTextParagraphs(text) {
+    const lines = String(text || '').split(/\r?\n/);
+    const content = lines.map(line => ({
+      type: "paragraph",
+      content: [{ type: "text", text: line === '' ? ' ' : line }]
+    }));
+    return { type: "doc", version: 1, content };
+  }
+
+  async function jiraDoDerive(issueKey, transitionId, teamOptionId, internalCommentText) {
+    const url = `${location.origin}/rest/api/3/issue/${issueKey}/transitions`;
+
     const payload = {
-      type: { name: "Duplicate" },
-      outwardIssue: { key: currentKey },
-      inwardIssue: { key: duplicateKey }
+      transition: { id: String(transitionId) },
+      fields: {
+        [`customfield_${CF_RES_TEAM}`]: { id: String(teamOptionId) }
+      },
+      update: {
+        comment: [{
+          add: {
+            body: adfFromTextParagraphs(internalCommentText),
+            properties: [{ key: "sd.public.comment", value: { internal: true } }]
+          }
+        }]
+      }
     };
+
     const r = await fetch(url, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Accept':'application/json', 'Content-Type':'application/json' },
+      method:'POST',
+      credentials:'same-origin',
+      headers:{ 'Accept':'application/json', 'Content-Type':'application/json' },
       body: JSON.stringify(payload)
     });
+
     const txt = await r.text().catch(()=> '');
-    if(!r.ok) throw new Error(`HTTP ${r.status} ao vincular: ${txt.slice(0,300)}`);
+    if(!r.ok) throw new Error(`HTTP ${r.status} ao derivar: ${txt.slice(0,300)}`);
     return true;
   }
 
-  async function getIssueFields(issueKey, fields) {
-    const url = `${location.origin}/rest/api/3/issue/${issueKey}?fields=${encodeURIComponent(fields.join(','))}`;
-    const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
-    if(!r.ok) throw new Error(`HTTP ${r.status} ao ler campos do ticket`);
-    return r.json();
-  }
-
-  function descriptionToText(desc){
-    if(!desc) return '';
-    if(typeof desc === 'string') return desc.replace(/\s+/g,' ').trim();
-    try{
-      let out = '';
-      const walk = (n) => {
-        if(!n) return;
-        if(Array.isArray(n)) return n.forEach(walk);
-        if(typeof n === 'object'){
-          if(n.type === 'text' && typeof n.text === 'string') out += n.text + ' ';
-          if(n.content) walk(n.content);
-        }
-      };
-      walk(desc);
-      return out.replace(/\s+/g,' ').trim();
-    }catch{
-      return '';
-    }
-  }
-
-  // ---- Assets paging ----
-  async function getConnectedTicketsPage(workspaceId, objectId, startAt){
-    const url =
-      `${location.origin}/gateway/api/jsm/assets/workspace/${encodeURIComponent(workspaceId)}` +
-      `/v1/objectconnectedtickets/${encodeURIComponent(objectId)}/paginatedtickets` +
-      `?hideResolved=${HIDE_RESOLVED ? 'true' : 'false'}` +
-      `&limit=${PAGE_SIZE}` +
-      `&startAt=${startAt}`;
-    const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
-    if(!r.ok) throw new Error(`HTTP ${r.status} ao consultar paginatedtickets`);
-    return r.json();
-  }
-
-  function extractIssueKeysFromConnectedTickets(data){
-    const keys = new Set();
-    const walk = (x) => {
-      if(x == null) return;
-      if(Array.isArray(x)) return x.forEach(walk);
-      if(typeof x === 'object'){
-        for(const [k,v] of Object.entries(x)){
-          if((k === 'issueKey' || k === 'key') && typeof v === 'string' && /^[A-Z][A-Z0-9_]+-\d+$/.test(v)) keys.add(v);
-          else walk(v);
-        }
-      }
-    };
-    walk(data);
-
-    if(keys.size === 0){
-      const s = JSON.stringify(data);
-      for(const m of s.matchAll(/"issueKey"\s*:\s*"([A-Z][A-Z0-9_]+-\d+)"/g)) keys.add(m[1]);
-      for(const m of s.matchAll(/"key"\s*:\s*"([A-Z][A-Z0-9_]+-\d+)"/g)) keys.add(m[1]);
-    }
-    return [...keys];
-  }
-
-  async function getConnectedTicketsKeys(workspaceId, objectId){
-    const cached = cacheGet(objectId);
-    if (cached && cached.keys) return cached.keys;
-
-    let allKeys = [];
-    for(let page=0; page<MAX_PAGES; page++){
-      const startAt = page * PAGE_SIZE;
-      const data = await getConnectedTicketsPage(workspaceId, objectId, startAt);
-      const keys = extractIssueKeysFromConnectedTickets(data);
-      allKeys.push(...keys);
-      if(keys.length < PAGE_SIZE) break;
-    }
-    allKeys = uniq(allKeys);
-    cacheSet(objectId, { ...(cached || {}), keys: allKeys });
-    return allKeys;
-  }
-
-  // ---- QTY + IDs extraction ----
+  // =========================
+  // DUPLICATES TOOLING (working version)
+  // =========================
   function normalizeForQty(s){
     return String(s || '')
       .toLowerCase()
@@ -325,7 +340,9 @@
         out.push({ type: `QTY:${p.type}`, value: `QTY:${p.type}=${m[1]}`, weight: 5 });
       }
     }
-    return uniq(out.map(o => o.value)).map(v => out.find(o => o.value === v));
+    const byVal = new Map();
+    for(const it of out) if(!byVal.has(it.value)) byVal.set(it.value, it);
+    return [...byVal.values()];
   }
 
   function isPrivateIp(ip){
@@ -366,7 +383,6 @@
       if(s.length >= 8) found.push({ type:'serial', value: s, weight: 7 });
     }
 
-    // dedup by value keep max weight
     const byVal = new Map();
     for(const it of found){
       const v = it.value.trim();
@@ -387,7 +403,6 @@
     return hits;
   }
 
-  // >>> FIX: scoreHits exists
   function scoreHits(hits){
     return hits.reduce((acc, x) => acc + (x.weight || 1), 0);
   }
@@ -396,7 +411,6 @@
     const t = String(hit.type || '').toUpperCase();
     return (t === 'MAC' || t === 'ZEB' || t === 'ZPL' || t === 'SERIAL');
   }
-
   function isIpOnly(hits){
     return hits.length > 0 && hits.every(h => h.type === 'ip');
   }
@@ -408,7 +422,7 @@
     const objectId = obj?.objectId;
     const workspaceId = obj?.workspaceId;
     if(!objectId || !workspaceId){
-      throw new Error(`customfield_${CF_ASSET} sem objectId/workspaceId (formato inesperado).`);
+      throw new Error(`customfield_${CF_ASSET} sem objectId/workspaceId.`);
     }
     return { objectId: String(objectId), workspaceId: String(workspaceId) };
   }
@@ -522,10 +536,7 @@
     `;
   }
 
-  // =========================
-  // MAIN
-  // =========================
-  async function run(){
+  async function runDuplicates(){
     const issueKey = getIssueKey();
     if(!issueKey){
       alert('Abra um ticket (/browse/XXX-123) ou /queues/issue/XXX-123 para usar.');
@@ -602,11 +613,12 @@
               </div>
               <div class="actions">
                 <a href="${esc(issuesUrl)}" target="_blank" rel="noopener">Abrir busca no Jira</a>
+                <button id="ml_loc_derive" class="primary">Derivar</button>
                 <button id="ml_loc_comment" class="disabled">Obs interna (0)</button>
                 <button id="ml_loc_linkdup" class="disabled danger">Vincular duplicado (0)</button>
               </div>
             </div>
-            <div class="meta">Clique em um ID para filtrar. Clique no card para selecionar. “Vincular duplicado” cria link Duplicate.</div>
+            <div class="meta">Clique em um ID para filtrar. Clique no card para selecionar. “Derivar” abre as filas allowlist.</div>
             <div class="chips" id="ml_loc_chips">${chipsHtml}</div>
           </div>
         `;
@@ -624,9 +636,10 @@
         setTimeout(() => {
           const chipWrap = document.getElementById('ml_loc_chips');
           const list = document.getElementById('ml_loc_list');
+          const deriveBtn = document.getElementById('ml_loc_derive');
           const commentBtn = document.getElementById('ml_loc_comment');
           const linkBtn = document.getElementById('ml_loc_linkdup');
-          if(!chipWrap || !list || !commentBtn || !linkBtn) return;
+          if(!chipWrap || !list || !deriveBtn || !commentBtn || !linkBtn) return;
 
           let activeFilter = '';
           const selected = new Set();
@@ -667,6 +680,30 @@
 
             updateClearChip();
             applyFilterToCards(list, activeFilter);
+          });
+
+          deriveBtn.addEventListener('click', async () => {
+            // build derive modal from transitions
+            const tr = await jiraGetTransitions(issueKey);
+            const deriveTr = pickDeriveTransition(tr);
+            if(!deriveTr){
+              alert(`Transição "${DERIVE_TRANSITION_NAME}" não encontrada para este ticket.`);
+              return;
+            }
+            const allowed = getAllowedResolutionTeams(deriveTr);
+            const teams = filterTeamsAllowlist(allowed);
+            if(!teams.length){
+              alert('Nenhum time allowlist disponível nesta transição (verifique nomes).');
+              return;
+            }
+
+            openDeriveModal({
+              teams,
+              onSubmit: async ({ team, comment }) => {
+                await jiraDoDerive(issueKey, deriveTr.id, team.id, comment || DERIVE_COMMENT_DEFAULT);
+                alert('Derivado com sucesso.');
+              }
+            });
           });
 
           list.addEventListener('click', (ev) => {
@@ -786,7 +823,7 @@ ${lines.join('\n')}`;
     b.id = IDS.btn;
     b.textContent = 'Localidade';
     b.title = 'Listar tickets abertos da mesma localidade';
-    b.addEventListener('click', run);
+    b.addEventListener('click', runDuplicates);
     document.body.appendChild(b);
   }
 
