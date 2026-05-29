@@ -1,6 +1,9 @@
 (function () {
   'use strict';
 
+  // =========================
+  // CONFIG
+  // =========================
   const CF_ASSET = 18388;
   const CF_RES_TEAM = 15613;
 
@@ -17,7 +20,6 @@
   const DESC_PREVIEW_LEN = 240;
   const DUP_LABEL_MAX_TOKENS = 3;
 
-  // Cache
   const CACHE_TTL_MS = 2 * 60 * 1000;
 
   const IDS = {
@@ -27,18 +29,25 @@
     btn: 'ml_loc_btn_bm'
   };
 
-  // global cache
+  // =========================
+  // CACHE
+  // =========================
   window.ML_LOC_CACHE = window.ML_LOC_CACHE || { byObject: {} };
+
   const cacheGet = (objectId) => {
     const e = window.ML_LOC_CACHE.byObject[String(objectId)];
     if (!e) return null;
     if (Date.now() - e.ts > CACHE_TTL_MS) return null;
     return e;
   };
+
   const cacheSet = (objectId, data) => {
     window.ML_LOC_CACHE.byObject[String(objectId)] = { ts: Date.now(), ...data };
   };
 
+  // =========================
+  // HELPERS
+  // =========================
   const esc = (s) => String(s ?? '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -52,6 +61,8 @@
     if (m) return m[1];
     return '';
   };
+
+  const uniq = (arr) => [...new Set(arr)];
 
   const ensureStyle = () => {
     if (document.getElementById(IDS.style)) return;
@@ -83,15 +94,18 @@
       #${IDS.modal} .warn{color:#ffe2a8;background:#2a2418;border:1px solid #5a4a22;padding:10px;border-radius:8px;margin:12px 16px;}
       #${IDS.modal} .meta{opacity:.85;font-size:12px;margin-top:6px;word-break:break-word}
       #${IDS.modal} code{white-space:pre-wrap}
+
       #${IDS.modal} .topbar{position:sticky; top:0; z-index:3; background:#1d1f23; border-bottom:1px solid #2c2f36; padding:12px 16px;}
       #${IDS.modal} .toprow{display:flex; gap:12px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;}
       #${IDS.modal} .counts{display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:12px; opacity:.9;}
       #${IDS.modal} .countpill{background:#22252b;border:1px solid #2c2f36;border-radius:999px;padding:2px 10px;}
+
       #${IDS.modal} .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
       #${IDS.modal} .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:#22252b;border:1px solid #2c2f36;color:#e6e6e6;font-size:12px;cursor:pointer;user-select:none;}
       #${IDS.modal} .chip:hover{border-color:#3b82f6}
       #${IDS.modal} .chip.active{background:#17335f;border-color:#2c6bed}
       #${IDS.modal} .chip.clear{background:#2a1d1d;border-color:#5a2a2a}
+
       #${IDS.modal} .list{padding:12px 16px 16px 16px}
       #${IDS.modal} .card{border:1px solid #2c2f36;border-radius:12px;padding:10px 12px;margin-bottom:10px;background:#16181c;}
       #${IDS.modal} .card:hover{border-color:#3b82f6}
@@ -116,12 +130,10 @@
       #${IDS.modal} .disabled{opacity:.55; cursor:not-allowed}
       #${IDS.modal} .detailsBtn{background:#22252b;border:1px solid #2c2f36}
       #${IDS.modal} .detailsBtn:hover{border-color:#3b82f6}
+
       #${IDS.modal} .expand{margin-top:10px;background:#121417;border:1px solid #2c2f36;border-radius:10px;padding:10px;}
       #${IDS.modal} .expand .title{font-weight:900;font-size:12px;opacity:.9;margin-bottom:6px}
       #${IDS.modal} .fulldesc{white-space:pre-wrap; line-height:1.35; font-size:13px; opacity:.95;}
-      #${IDS.modal} .compare{display:grid; grid-template-columns:1fr; gap:10px; margin-bottom:10px;}
-      #${IDS.modal} .box{background:#0f1114; border:1px solid #2c2f36; border-radius:10px; padding:10px;}
-      #${IDS.modal} .box .title{font-weight:900;font-size:12px;opacity:.9;margin-bottom:6px}
     `;
     document.head.appendChild(st);
   };
@@ -235,7 +247,7 @@
     }
   }
 
-  // --- Assets connected tickets ---
+  // ---- Assets paging ----
   async function getConnectedTicketsPage(workspaceId, objectId, startAt){
     const url =
       `${location.origin}/gateway/api/jsm/assets/workspace/${encodeURIComponent(workspaceId)}` +
@@ -243,7 +255,6 @@
       `?hideResolved=${HIDE_RESOLVED ? 'true' : 'false'}` +
       `&limit=${PAGE_SIZE}` +
       `&startAt=${startAt}`;
-
     const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
     if(!r.ok) throw new Error(`HTTP ${r.status} ao consultar paginatedtickets`);
     return r.json();
@@ -253,14 +264,11 @@
     const keys = new Set();
     const walk = (x) => {
       if(x == null) return;
-      if(Array.isArray(x)){ x.forEach(walk); return; }
+      if(Array.isArray(x)) return x.forEach(walk);
       if(typeof x === 'object'){
         for(const [k,v] of Object.entries(x)){
-          if((k === 'issueKey' || k === 'key') && typeof v === 'string' && /^[A-Z][A-Z0-9_]+-\d+$/.test(v)){
-            keys.add(v);
-          } else {
-            walk(v);
-          }
+          if((k === 'issueKey' || k === 'key') && typeof v === 'string' && /^[A-Z][A-Z0-9_]+-\d+$/.test(v)) keys.add(v);
+          else walk(v);
         }
       }
     };
@@ -286,12 +294,12 @@
       allKeys.push(...keys);
       if(keys.length < PAGE_SIZE) break;
     }
-    allKeys = [...new Set(allKeys)];
+    allKeys = uniq(allKeys);
     cacheSet(objectId, { ...(cached || {}), keys: allKeys });
     return allKeys;
   }
 
-  // --- Identifiers (including QTY) ---
+  // ---- QTY + IDs extraction ----
   function normalizeForQty(s){
     return String(s || '')
       .toLowerCase()
@@ -317,9 +325,7 @@
         out.push({ type: `QTY:${p.type}`, value: `QTY:${p.type}=${m[1]}`, weight: 5 });
       }
     }
-    const byVal = new Map();
-    for(const it of out) if(!byVal.has(it.value)) byVal.set(it.value, it);
-    return [...byVal.values()];
+    return uniq(out.map(o => o.value)).map(v => out.find(o => o.value === v));
   }
 
   function isPrivateIp(ip){
@@ -354,26 +360,13 @@
       found.push({ type: m[1].toUpperCase(), value: `${m[1].toUpperCase()}${m[2]}`, weight: 7 });
     }
 
-    const selbRe = /\bSELB\b/gi;
-    if(selbRe.test(t)) found.push({ type:'SELB', value:'SELB', weight: 2 });
-
     const serialLabelRe = /\b(?:S\/N|SN|N\/S|SERIAL(?:\s*NUMBER)?)[\s:#-]*([A-Z0-9]{6,24})\b/gi;
     for(const m of t.matchAll(serialLabelRe)){
       const s = m[1].toUpperCase();
       if(s.length >= 8) found.push({ type:'serial', value: s, weight: 7 });
     }
 
-    const strongTokenRe = /\b[A-Z0-9]{10,24}\b/g;
-    const up = t.toUpperCase();
-    for(const m of up.matchAll(strongTokenRe)){
-      const tok = m[0];
-      if(/^\d+$/.test(tok)) continue;
-      if((tok.match(/[A-Z]/g) || []).length < 2) continue;
-      if((tok.match(/\d/g) || []).length < 2) continue;
-      if(/^[0-9A-F]{12}$/.test(tok)) continue;
-      found.push({ type:'serial?', value: tok, weight: 3 });
-    }
-
+    // dedup by value keep max weight
     const byVal = new Map();
     for(const it of found){
       const v = it.value.trim();
@@ -394,10 +387,16 @@
     return hits;
   }
 
+  // >>> FIX: scoreHits exists
+  function scoreHits(hits){
+    return hits.reduce((acc, x) => acc + (x.weight || 1), 0);
+  }
+
   function isStrongHit(hit){
     const t = String(hit.type || '').toUpperCase();
-    return (t === 'MAC' || t === 'ZEB' || t === 'ZPL' || t === 'SERIAL' || t === 'SERIAL?');
+    return (t === 'MAC' || t === 'ZEB' || t === 'ZPL' || t === 'SERIAL');
   }
+
   function isIpOnly(hits){
     return hits.length > 0 && hits.every(h => h.type === 'ip');
   }
@@ -419,10 +418,7 @@
     const payload = {
       jql,
       maxResults: MAX_RESULTS,
-      fields: [
-        "summary","description","assignee","issuetype","project","updated",
-        `customfield_${CF_RES_TEAM}`,
-      ]
+      fields: ["summary","description","assignee","issuetype","project","updated", `customfield_${CF_RES_TEAM}`]
     };
     const r = await fetch(url, {
       method:'POST',
@@ -460,8 +456,7 @@
       const hits = (card.getAttribute('data-hits') || '').split('|').filter(Boolean);
       const show = !filterValue || hits.includes(filterValue);
       card.style.display = show ? '' : 'none';
-      const exp = card.querySelector('.expand');
-      if(exp) exp.remove();
+      card.querySelector('.expand')?.remove();
     }
   }
 
@@ -527,6 +522,9 @@
     `;
   }
 
+  // =========================
+  // MAIN
+  // =========================
   async function run(){
     const issueKey = getIssueKey();
     if(!issueKey){
@@ -558,9 +556,7 @@
         modal.setBody(`<div class="meta" style="padding:12px 16px">Buscando tickets vinculados…</div>`);
 
         let allKeys = await getConnectedTicketsKeys(workspaceId, objectId);
-        allKeys = allKeys
-          .filter(k => PROJECTS.includes(k.split('-')[0]))
-          .filter(k => k !== issueKey);
+        allKeys = allKeys.filter(k => PROJECTS.includes(k.split('-')[0])).filter(k => k !== issueKey);
 
         if(!allKeys.length){
           modal.setBody(`<div class="warn">Nenhum ticket (IS/ISS/SSHP) encontrado nos vinculados para este asset.</div>`);
@@ -569,21 +565,14 @@
 
         const quotedKeys = allKeys.slice(0, 400).map(k => `"${k}"`).join(',');
         const proj = PROJECTS.map(p => `"${p}"`).join(',');
-
-        const jql =
-          `project in (${proj}) AND key in (${quotedKeys}) AND ${OPEN_FILTER} ORDER BY ${ORDER_BY}`;
-
+        const jql = `project in (${proj}) AND key in (${quotedKeys}) AND ${OPEN_FILTER} ORDER BY ${ORDER_BY}`;
         const issuesUrl = `${location.origin}/issues/?jql=${encodeURIComponent(jql)}`;
 
         modal.setBody(`<div class="meta" style="padding:12px 16px">Buscando detalhes…</div>`);
 
         const issues = await searchIssuesWithCache(objectId, jql);
-        if(!issues.length){
-          modal.setBody(`<div class="warn">Nenhum ticket aberto encontrado para esta localidade.</div>`);
-          return;
-        }
 
-        const items = issues.map(issue => {
+        const items = (issues || []).map(issue => {
           const f = issue.fields || {};
           const descText = descriptionToText(f.description);
           const otherText = `${f.summary || ''}\n${descText}`;
@@ -645,7 +634,6 @@
           const refreshButtons = () => {
             commentBtn.textContent = `Obs interna (${selected.size})`;
             linkBtn.textContent = `Vincular duplicado (${selected.size})`;
-
             if(selected.size > 0){
               commentBtn.classList.remove('disabled'); commentBtn.classList.add('primary');
               linkBtn.classList.remove('disabled');
@@ -689,29 +677,14 @@
             if(detailsBtn){
               ev.preventDefault();
               ev.stopPropagation();
-
               const existing = card.querySelector('.expand');
               if(existing){ existing.remove(); return; }
               [...list.querySelectorAll('.expand')].forEach(e => e.remove());
 
               const full = card.getAttribute('data-full') || '';
-              const hitVals = (card.getAttribute('data-hitstext') || '').split('|').filter(Boolean);
-
-              const currentHtml = currentIds.length
-                ? currentIds.slice(0, 12).map(it => `<span class="idpill">${esc(it.value)}</span>`).join('')
-                : `<span class="muted">nenhum</span>`;
-
-              const hitsHtml = hitVals.length
-                ? hitVals.slice(0, 12).map(v => `<span class="idpill">${esc(v)}</span>`).join('')
-                : `<span class="muted">nenhum</span>`;
-
               card.insertAdjacentHTML('beforeend', `
                 <div class="expand">
-                  <div class="title">IDs do ticket atual</div>
-                  <div class="ids">${currentHtml}</div>
-                  <div class="title" style="margin-top:10px">IDs em comum</div>
-                  <div class="ids">${hitsHtml}</div>
-                  <div class="title" style="margin-top:10px">Descrição completa</div>
+                  <div class="title">Descrição completa</div>
                   <div class="fulldesc">${full || '<span class="muted">Sem descrição.</span>'}</div>
                 </div>
               `);
