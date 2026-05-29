@@ -212,14 +212,11 @@
     return { type: "doc", version: 1, content };
   }
 
-  // Comentário interno (JSM): sd.public.comment -> internal: true
   async function addInternalComment(issueKey, bodyText) {
     const url = `${location.origin}/rest/api/3/issue/${issueKey}/comment`;
     const payload = {
       body: textToAdfParagraphs(bodyText),
-      properties: [
-        { key: "sd.public.comment", value: { internal: true } }
-      ]
+      properties: [{ key: "sd.public.comment", value: { internal: true } }]
     };
 
     const r = await fetch(url, {
@@ -261,6 +258,43 @@
     }
   }
 
+  function normalizeForQty(s){
+    return String(s || '')
+      .toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // remove acentos
+      .replace(/[\(\)\[\]\{\},;:!?"'`]/g,' ')
+      .replace(/\s+/g,' ')
+      .trim();
+  }
+
+  function extractQtyTokens(text){
+    const t = normalizeForQty(text);
+
+    const patterns = [
+      { type: 'CAMERA', re: /\b(\d{1,3})\s+(?:camera|cameras)\b/g },
+      { type: 'PRINTER', re: /\b(\d{1,3})\s+(?:impressora|impressoras)\b/g },
+      { type: 'HANDHELD', re: /\b(\d{1,3})\s+(?:handheld|handhelds)\b/g },
+      { type: 'NOTEBOOK', re: /\b(\d{1,3})\s+(?:notebook|notebooks)\b/g },
+      { type: 'LEITOR', re: /\b(\d{1,3})\s+(?:leitor|leitores)\b/g },
+      { type: 'AP', re: /\b(\d{1,3})\s+(?:ap|aps|access\s+point|access\s+points)\b/g },
+    ];
+
+    const out = [];
+    for(const p of patterns){
+      for(const m of t.matchAll(p.re)){
+        const n = m[1];
+        out.push({ type: `QTY:${p.type}`, value: `QTY:${p.type}=${n}`, weight: 4 });
+      }
+    }
+
+    // dedup
+    const byVal = new Map();
+    for(const it of out){
+      if(!byVal.has(it.value)) byVal.set(it.value, it);
+    }
+    return [...byVal.values()];
+  }
+
   function uniq(arr){ return [...new Set(arr)]; }
   function normalizeToken(t){ return String(t).trim(); }
 
@@ -278,31 +312,40 @@
     const t = String(text || '');
     const found = [];
 
+    // QTY tokens
+    found.push(...extractQtyTokens(t));
+
+    // IPs
     const ipRe = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
     for(const m of t.matchAll(ipRe)){
       const ip = m[0];
       found.push({ type:'ip', value: ip, weight: isPrivateIp(ip) ? 4 : 3 });
     }
 
+    // MAC
     const macRe = /\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b/g;
     for(const m of t.matchAll(macRe)){
       found.push({ type:'mac', value: m[0].toUpperCase().replace(/-/g,':'), weight: 6 });
     }
 
+    // ZEB/ZPL
     const zebzplRe = /\b(ZEB|ZPL)\s*[-_:]?\s*(\d{3,})\b/gi;
     for(const m of t.matchAll(zebzplRe)){
       found.push({ type: m[1].toUpperCase(), value: `${m[1].toUpperCase()}${m[2]}`, weight: 7 });
     }
 
+    // SELB
     const selbRe = /\bSELB\b/gi;
     if(selbRe.test(t)) found.push({ type:'SELB', value:'SELB', weight: 2 });
 
+    // Serial por label
     const serialLabelRe = /\b(?:S\/N|SN|N\/S|SERIAL(?:\s*NUMBER)?)[\s:#-]*([A-Z0-9]{6,24})\b/gi;
     for(const m of t.matchAll(serialLabelRe)){
       const s = m[1].toUpperCase();
       if(s.length >= 8) found.push({ type:'serial', value: s, weight: 7 });
     }
 
+    // Token forte
     const strongTokenRe = /\b[A-Z0-9]{10,24}\b/g;
     const up = t.toUpperCase();
     for(const m of up.matchAll(strongTokenRe)){
@@ -314,6 +357,7 @@
       found.push({ type:'serial?', value: tok, weight: 3 });
     }
 
+    // dedup por value (mantém maior weight)
     const byVal = new Map();
     for(const it of found){
       const v = normalizeToken(it.value);
@@ -536,7 +580,7 @@
 
         const currentIds = extractIdentifiersFromText(currentText);
         const idsLabel = currentIds.length
-          ? currentIds.slice(0, 10).map(x => x.value).join(', ')
+          ? currentIds.slice(0, 12).map(x => x.value).join(', ')
           : '—';
 
         const { objectId, workspaceId } = asset;
@@ -617,7 +661,7 @@
                 <button id="ml_loc_comment" class="disabled">Inserir comentário (0)</button>
               </div>
             </div>
-            <div class="meta">Clique em um ID para filtrar a lista (e clique no card para selecionar tickets). Use o botão “Detalhes” para abrir a descrição completa.</div>
+            <div class="meta">Clique em um ID para filtrar a lista (e clique no card para selecionar tickets). Use “Detalhes” para ver a descrição completa.</div>
             <div class="chips" id="ml_loc_chips">
               ${chipsHtml}
             </div>
