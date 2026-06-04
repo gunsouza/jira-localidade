@@ -103,10 +103,14 @@
     return allOk;
   }
 
-  // Cache simples por sessao do GET issue (eviTar refetch a cada _tick).
+  // Cache de issue (evita refetch a cada _tick). TTL curto pra dados sempre frescos:
+  // se o usuario muda o Object Type ou outro field pela UI do Jira, o chip refleete em
+  // no maximo CONF_CACHE_TTL_MS (15s atualmente).
   const _CONF_ISSUE_CACHE = new Map();
-  async function _confGetIssueData(issueKey){
-    if(_CONF_ISSUE_CACHE.has(issueKey)) return _CONF_ISSUE_CACHE.get(issueKey);
+  const CONF_CACHE_TTL_MS = 15 * 1000;
+  async function _confGetIssueData(issueKey, opts){
+    const forceRefresh = !!(opts && opts.forceRefresh);
+    if(!forceRefresh && _CONF_ISSUE_CACHE.has(issueKey)) return _CONF_ISSUE_CACHE.get(issueKey);
     const p = (async () => {
       try{
         return await getIssueAllFields(issueKey);
@@ -116,8 +120,7 @@
       }
     })();
     _CONF_ISSUE_CACHE.set(issueKey, p);
-    // limpa cache em ~3min pra nao guardar pra sempre
-    setTimeout(() => _CONF_ISSUE_CACHE.delete(issueKey), 3 * 60 * 1000);
+    setTimeout(() => _CONF_ISSUE_CACHE.delete(issueKey), CONF_CACHE_TTL_MS);
     return p;
   }
 
@@ -245,9 +248,14 @@
     document.body.appendChild(wrap);
   }
 
-  // Limpa cache de issue (uso publico, ex: apos o usuario salvar settings).
-  function clearConfluenceIssueCache(){
-    _CONF_ISSUE_CACHE.clear();
+  // Limpa cache de issue. Sem argumento limpa tudo; com issueKey limpa so essa chave.
+  // Tambem reseta o _CONF_LAST_RENDERED pra forcar re-render do chip no proximo _tick.
+  function clearConfluenceIssueCache(issueKey){
+    if(issueKey){
+      _CONF_ISSUE_CACHE.delete(issueKey);
+    } else {
+      _CONF_ISSUE_CACHE.clear();
+    }
     _CONF_LAST_RENDERED = { key: null, sig: null };
   }
 

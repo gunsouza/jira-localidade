@@ -586,7 +586,10 @@
       if(!relevantRules.length){
         return { templateKey: ISS_TASK_MODEL_ISSUE, overrides: {}, source: 'default', rule: null };
       }
-      const issueData = await _confGetIssueData(sourceIssueKey);
+      // IMPORTANTE: forceRefresh=true pra garantir dados FRESCOS do ticket no momento
+      // da criacao. Se o usuario mudou o Object Type recentemente, queremos ler o estado
+      // atual pra mapear pro Service correto (nao usar o cache stale do chip).
+      const issueData = await _confGetIssueData(sourceIssueKey, { forceRefresh: true });
       if(!issueData){
         console.log(`[jira-localidade][iss-config] sem dados de ${sourceIssueKey}, usando default`);
         return { templateKey: ISS_TASK_MODEL_ISSUE, overrides: {}, source: 'default-fallback', rule: null };
