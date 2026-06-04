@@ -90,6 +90,7 @@
       #${IDS.modal} .h, #${IDS.dModal} .dh, #${IDS.sModal} .sh, .mlCapModal .ch {
         display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
         padding: 18px 22px;
+        flex-shrink: 0; /* nao encolhe quando o modal fica cheio */
         background: linear-gradient(180deg, var(--ml-bg-2), var(--ml-bg-1) 90%);
         border-bottom: 1px solid var(--ml-border);
         flex-shrink: 0;
@@ -395,6 +396,7 @@
       #${IDS.sModal} .ml-s-tabs {
         display: flex; flex-wrap: wrap; gap: 2px;
         padding: 0 18px;
+        flex-shrink: 0; /* nao deixa o flex layout comprimir as abas */
         background: var(--ml-bg-1);
         border-bottom: 1px solid var(--ml-border);
         overflow-x: auto; scrollbar-width: thin;

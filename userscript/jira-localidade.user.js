@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jira Localidade
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.20.4
+// @version      1.21.0
 // @description  Adiciona o botao flutuante "Localidade" aos tickets do Jira: lista duplicados pela mesma localidade (Assets / IS Ubicacion), permite vincular como duplicado, comentar como observacao interna em lote e derivar para outros times.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -810,6 +810,7 @@
       #${IDS.modal} .h, #${IDS.dModal} .dh, #${IDS.sModal} .sh, .mlCapModal .ch {
         display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
         padding: 18px 22px;
+        flex-shrink: 0; /* nao encolhe quando o modal fica cheio */
         background: linear-gradient(180deg, var(--ml-bg-2), var(--ml-bg-1) 90%);
         border-bottom: 1px solid var(--ml-border);
         flex-shrink: 0;
@@ -1115,6 +1116,7 @@
       #${IDS.sModal} .ml-s-tabs {
         display: flex; flex-wrap: wrap; gap: 2px;
         padding: 0 18px;
+        flex-shrink: 0; /* nao deixa o flex layout comprimir as abas */
         background: var(--ml-bg-1);
         border-bottom: 1px solid var(--ml-border);
         overflow-x: auto; scrollbar-width: thin;
@@ -5931,7 +5933,12 @@ ${rule.match.map(c => `          { field: ${JSON.stringify(c.field)}, value: ${J
                   <br/>Ex: cadastra <code>/ola</code> &rarr; <code>Ola, tudo bem?</code>. Ao digitar <code>/ola </code> vira <code>Ola, tudo bem?</code>.
                 </div>
                 <div id="ml_s_snip_list"></div>
-                <button id="ml_s_snip_add" class="ghost" style="margin-top: 8px;">+ Adicionar snippet</button>
+                <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center;">
+                  <button id="ml_s_snip_add" class="ghost">+ Adicionar snippet</button>
+                  <button id="ml_s_snip_import_tb" class="ghost" title="Importa em massa de um JSON (gerado pelo Text Blaze Scraper ou TSV/CSV manual)">
+                    &#x2B07; Importar do Text Blaze
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -6160,6 +6167,20 @@ ${rule.match.map(c => `          { field: ${JSON.stringify(c.field)}, value: ${J
     };
     (Array.isArray(cur.COMMENT_SNIPPETS) ? cur.COMMENT_SNIPPETS : []).forEach(renderSnipRow);
     if(snipAdd) snipAdd.onclick = (e) => { e.preventDefault(); renderSnipRow({}); };
+
+    // ---- Importar Text Blaze (ou TSV manual) ----
+    const snipImportTb = modal.querySelector('#ml_s_snip_import_tb');
+    if(snipImportTb){
+      snipImportTb.onclick = (e) => {
+        e.preventDefault();
+        openTextBlazeImportModal((parsed) => {
+          // Adiciona ao final das linhas existentes (usuario decide salvar)
+          parsed.forEach(s => renderSnipRow(s));
+          // Scrolla pro fim da lista pra mostrar que adicionou
+          snipList.lastElementChild?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        });
+      };
+    }
 
     // ---- Listas dinamicas: Acoes de Status ----
     const statusList = modal.querySelector('#ml_s_status_list');
@@ -6551,6 +6572,203 @@ ${rule.match.map(c => `          { field: ${JSON.stringify(c.field)}, value: ${J
         importFile.value = '';
       }
     });
+  }
+
+  // =========================
+  // IMPORT TEXT BLAZE: modal pra colar JSON (gerado pelo scraper) ou TSV/CSV manual
+  // =========================
+  function openTextBlazeImportModal(onConfirm){
+    document.getElementById('ml_tb_import_overlay')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'ml_tb_import_overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10000050;';
+
+    const modal = document.createElement('div');
+    modal.id = 'ml_tb_import_modal';
+    modal.style.cssText = [
+      'position:fixed','top:8vh','left:50%','transform:translateX(-50%)',
+      'width:min(720px,94vw)','max-height:84vh','overflow:hidden',
+      'background:var(--ml-bg-1)','color:var(--ml-text)',
+      'border:1px solid var(--ml-border)','border-radius:var(--ml-radius)',
+      'z-index:10000051','display:flex','flex-direction:column'
+    ].join(';');
+
+    modal.innerHTML = `
+      <div class="sh" style="flex-shrink:0;">
+        <div>
+          <div class="title">&#x2B07; Importar snippets do Text Blaze</div>
+          <div class="meta">Cole o JSON gerado pelo scraper, ou uma lista manual.</div>
+        </div>
+        <button id="ml_tb_close">Fechar</button>
+      </div>
+      <div class="sb" style="flex:1;overflow-y:auto;">
+        <div class="ml-s-tab-hint" style="margin-bottom:14px;">
+          <b>3 jeitos de gerar a entrada:</b><br/>
+          1) <b>Bookmarklet/Userscript</b> (recomendado): instale o <code>tools/textblaze-scraper.user.js</code> no Tampermonkey,
+             abra <a href="https://dashboard.blaze.today/" target="_blank">dashboard.blaze.today</a>, clique no botao roxo
+             "Capturar snippets" e cole aqui o JSON gerado.<br/>
+          2) <b>JSON manual</b>: array no formato <code>[{"command":"/ola","name":"Saudacao","text":"Ola, tudo bem?"}]</code>.<br/>
+          3) <b>Lista simples</b>: uma linha por snippet no formato <code>/comando | nome | texto</code> (separador <code>|</code> ou <code>tab</code>).
+        </div>
+
+        <label>Conteudo:</label>
+        <textarea id="ml_tb_input" placeholder='Cole aqui...
+
+Exemplos:
+[{"command":"/ola","name":"Saudacao","text":"Ola, tudo bem?"}]
+
+ou
+
+/ola | Saudacao | Ola, tudo bem?
+/obg | Agradecimento | Obrigado pelo retorno!' style="width:100%;min-height:200px;font-family:var(--ml-mono,monospace);font-size:12px;"></textarea>
+
+        <div id="ml_tb_preview" style="margin-top:14px;display:none;">
+          <div style="font-size:12px;font-weight:700;color:var(--ml-text-mut);margin-bottom:6px;">
+            Preview: <span id="ml_tb_count">0</span> snippets sera(o) adicionado(s)
+          </div>
+          <div id="ml_tb_preview_list" style="max-height:240px;overflow-y:auto;background:var(--ml-bg-0);border:1px solid var(--ml-border);border-radius:6px;padding:8px;font-size:12px;"></div>
+          <div style="margin-top:8px;font-size:11px;color:var(--ml-text-mut);">
+            <b>Importante:</b> os snippets sao adicionados ao final da lista atual. Voce ainda precisa clicar <b>"Salvar"</b>
+            no modal de Configuracoes pra persistir.
+          </div>
+        </div>
+
+        <div id="ml_tb_err" style="display:none;margin-top:12px;color:#ffd8d8;background:var(--ml-red-soft);border:1px solid var(--ml-red);padding:10px 12px;border-radius:6px;font-size:12px;"></div>
+
+        <div class="actions" style="margin-top:18px;">
+          <button id="ml_tb_cancel" class="ghost">Cancelar</button>
+          <button id="ml_tb_validate">Validar</button>
+          <button id="ml_tb_import" class="primary" disabled style="opacity:.5;">Importar</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+    document.body.appendChild(modal);
+
+    const close = () => { overlay.remove(); modal.remove(); };
+    overlay.onclick = close;
+    modal.querySelector('#ml_tb_close').onclick = close;
+    modal.querySelector('#ml_tb_cancel').onclick = close;
+
+    const input = modal.querySelector('#ml_tb_input');
+    const errBox = modal.querySelector('#ml_tb_err');
+    const previewBox = modal.querySelector('#ml_tb_preview');
+    const previewList = modal.querySelector('#ml_tb_preview_list');
+    const previewCount = modal.querySelector('#ml_tb_count');
+    const importBtn = modal.querySelector('#ml_tb_import');
+
+    let parsed = [];
+
+    const showErr = (msg) => { errBox.textContent = msg; errBox.style.display = 'block'; };
+    const hideErr = () => { errBox.style.display = 'none'; };
+    const setImportEnabled = (on) => {
+      importBtn.disabled = !on;
+      importBtn.style.opacity = on ? '' : '.5';
+      importBtn.style.cursor = on ? '' : 'not-allowed';
+    };
+
+    const validate = () => {
+      hideErr();
+      const raw = (input.value || '').trim();
+      if(!raw){ showErr('Cole algum conteudo primeiro.'); previewBox.style.display='none'; setImportEnabled(false); return; }
+
+      parsed = parseTextBlazeInput(raw);
+      if(!parsed.length){
+        showErr('Nao consegui interpretar nada. Confira o formato (veja exemplos acima).');
+        previewBox.style.display = 'none';
+        setImportEnabled(false);
+        return;
+      }
+      previewCount.textContent = parsed.length;
+      previewList.innerHTML = parsed.map(s => `
+        <div style="padding:6px 8px;border-bottom:1px solid var(--ml-border);">
+          <code style="color:var(--ml-blue);">${esc(s.command || '(sem cmd)')}</code>
+          <b style="margin-left:8px;">${esc(s.name || '(sem nome)')}</b>
+          <div style="color:var(--ml-text-mut);font-size:11px;margin-top:2px;white-space:pre-wrap;">${esc((s.text || '').slice(0, 160))}${s.text && s.text.length > 160 ? '...' : ''}</div>
+        </div>
+      `).join('');
+      previewBox.style.display = 'block';
+      setImportEnabled(true);
+    };
+
+    modal.querySelector('#ml_tb_validate').onclick = validate;
+    input.addEventListener('input', () => { hideErr(); setImportEnabled(false); previewBox.style.display='none'; });
+
+    importBtn.onclick = () => {
+      if(!parsed.length) return;
+      try{ onConfirm(parsed); }catch(e){ showErr('Erro ao adicionar: ' + (e.message || e)); return; }
+      close();
+    };
+  }
+
+  // Parser flexivel: tenta JSON primeiro, depois TSV/pipe.
+  function parseTextBlazeInput(raw){
+    // Tentativa 1: JSON puro (array ou {snippets: [...]})
+    try{
+      const j = JSON.parse(raw);
+      const arr = Array.isArray(j) ? j : (Array.isArray(j?.snippets) ? j.snippets : null);
+      if(arr){
+        return arr.map(normalizeSnippet).filter(s => s.command || s.name || s.text);
+      }
+    }catch(_){ /* nao eh json, segue */ }
+
+    // Tentativa 2: linhas com separador pipe ou tab
+    const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const out = [];
+    for(const line of lines){
+      // Separadores aceitos (em ordem de prioridade): tab, pipe duplo, pipe simples
+      let parts;
+      if(line.includes('\t')) parts = line.split('\t');
+      else if(line.includes('||')) parts = line.split('||');
+      else if(line.includes('|')) parts = line.split('|');
+      else parts = [line]; // 1 campo so = vira o texto
+
+      parts = parts.map(p => p.trim());
+
+      // Layouts aceitos:
+      // 3 campos: cmd | nome | texto    (ordem padrao)
+      // 2 campos: cmd | texto           (sem nome -> usa cmd como nome)
+      // 1 campo:  texto                 (sem cmd nem nome)
+      let command = '', name = '', text = '';
+      if(parts.length >= 3){
+        command = parts[0]; name = parts[1]; text = parts.slice(2).join(' | ');
+      }else if(parts.length === 2){
+        command = parts[0]; text = parts[1];
+      }else{
+        text = parts[0];
+      }
+
+      // Se o primeiro campo nao comeca com / e parece texto longo, tenta swap: pode ser "nome | texto"
+      if(parts.length === 2 && !/^\//.test(command) && command.length > 30){
+        text = parts.join(' '); command = '';
+      }
+      // Auto-prefixa / no command
+      if(command && !command.startsWith('/')) command = '/' + command;
+      if(command) command = command.replace(/\s+/g, '');
+
+      const norm = normalizeSnippet({ command, name, text });
+      if(norm.command || norm.text) out.push(norm);
+    }
+    return out;
+  }
+
+  function normalizeSnippet(s){
+    s = s || {};
+    let command = String(s.command || s.shortcut || s.cmd || '').trim();
+    let name    = String(s.name || s.label || s.title || '').trim();
+    let text    = String(s.text || s.content || s.body || s.snippet || '').trim();
+
+    if(command && !command.startsWith('/')) command = '/' + command;
+    command = command.replace(/\s+/g, '');
+
+    // Fallback de nome: usa o command sem /
+    if(!name && command) name = command.replace(/^\//, '');
+    // Fallback final: primeira palavra do texto
+    if(!name && text) name = text.split(/\s+/).slice(0, 3).join(' ').slice(0, 40);
+
+    return { command, name, text };
   }
   // =========================
   // BACKUP REMINDER
