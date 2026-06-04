@@ -100,6 +100,45 @@
     return (editor.innerText || editor.textContent || '').trim();
   }
 
+  function extractMainContentFallback(){
+    const sidebarWidth = 320;
+    const rightPanelStart = Math.max(window.innerWidth - 320, 700);
+    const candidates = Array.from(document.querySelectorAll('div, article, section, p'));
+    let best = null;
+    let bestScore = 0;
+    for(const el of candidates){
+      const rect = el.getBoundingClientRect();
+      if(rect.width < 200 || rect.height < 30) continue;
+      if(rect.left < sidebarWidth) continue;
+      if(rect.right > rightPanelStart + 200) continue;
+      const txt = (el.innerText || '').trim();
+      if(!txt || txt.length < 20 || txt.length > 8000) continue;
+      const hasInnerCandidate = Array.from(el.children).some(c => {
+        const t = (c.innerText || '').trim();
+        return t && t.length > txt.length * 0.85;
+      });
+      if(hasInnerCandidate) continue;
+      const score = txt.length;
+      if(score > bestScore){ bestScore = score; best = el; }
+    }
+    if(!best) return '';
+    const txt = (best.innerText || '').trim();
+    LOG(`fallback main content: ${txt.length} chars (score=${bestScore})`);
+    return txt;
+  }
+
+  async function tryEnterEditMode(){
+    const editBtns = Array.from(document.querySelectorAll('button, [role="button"], [role="tab"]'))
+      .filter(b => {
+        const txt = (b.textContent || '').trim();
+        return /^edit$/i.test(txt) && b.offsetWidth > 0 && b.offsetHeight > 0;
+      });
+    if(editBtns.length){
+      try{ editBtns[0].click(); await delay(300); return true; }catch(_){}
+    }
+    return false;
+  }
+
   async function delay(ms){ return new Promise(r => setTimeout(r, ms)); }
 
   async function openAndReadSnippet(row){
@@ -114,8 +153,19 @@
       if(e && extractEditorText(e) !== beforeText){ editor = e; break; }
     }
     if(!editor) editor = findEditor();
-    if(!editor){ LOG('nao achou editor apos clicar'); return null; }
-    return extractEditorText(editor);
+    let text = editor ? extractEditorText(editor) : '';
+    if(!text || text.length < 5){
+      const entered = await tryEnterEditMode();
+      if(entered){
+        await delay(200);
+        editor = findEditor();
+        text = editor ? extractEditorText(editor) : '';
+      }
+    }
+    if(!text || text.length < 5){
+      text = extractMainContentFallback();
+    }
+    return text;
   }
 
   function escapeHtml(s){

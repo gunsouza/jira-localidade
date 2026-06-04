@@ -1,14 +1,17 @@
 // ==UserScript==
 // @name         Text Blaze -> Jira Localidade (Snippet Scraper)
-// @namespace    https://github.com/mlibre-iss/jira-localidade
-// @version      1.0.0
+// @namespace    https://github.com/gunsouza/jira-localidade
+// @version      1.1.0
 // @description  Captura snippets do dashboard do Text Blaze e gera JSON pra importar no plugin Jira Localidade
-// @author       Gustavo
+// @author       gunsouza
 // @match        https://dashboard.blaze.today/*
 // @match        https://blaze.today/*
 // @match        https://app.blaze.today/*
 // @run-at       document-idle
 // @grant        none
+// @updateURL    https://raw.githubusercontent.com/gunsouza/jira-localidade/main/tools/textblaze-scraper.user.js
+// @downloadURL  https://raw.githubusercontent.com/gunsouza/jira-localidade/main/tools/textblaze-scraper.user.js
+// @homepageURL  https://github.com/gunsouza/jira-localidade
 // ==/UserScript==
 
 /*
@@ -141,25 +144,70 @@
   function extractEditorText(editor){
     if(!editor) return '';
     if(editor.tagName === 'TEXTAREA') return editor.value || '';
-    // Preserva quebras de linha simulando innerText
     return (editor.innerText || editor.textContent || '').trim();
+  }
+
+  // Fallback pra snippets BUSINESS / dynamic logic onde nao ha contenteditable
+  // acessivel: pega o maior bloco de texto visivel na area central da pagina
+  // (excluindo sidebar a esquerda e painel direito).
+  function extractMainContentFallback(){
+    const sidebarWidth = 320; // largura tipica da sidebar TB
+    const rightPanelStart = Math.max(window.innerWidth - 320, 700);
+    const candidates = Array.from(document.querySelectorAll('div, article, section, p'));
+    let best = null;
+    let bestScore = 0;
+    for(const el of candidates){
+      const rect = el.getBoundingClientRect();
+      // Filtros geometricos: deve estar visivel e na area central
+      if(rect.width < 200 || rect.height < 30) continue;
+      if(rect.left < sidebarWidth) continue;
+      if(rect.right > rightPanelStart + 200) continue;
+      // Pula elementos que tem filhos com mesmo texto (pega o mais especifico)
+      const txt = (el.innerText || '').trim();
+      if(!txt || txt.length < 20 || txt.length > 8000) continue;
+      // Evita pegar containers que contem outros candidatos (preferir o mais especifico/folha)
+      const hasInnerCandidate = Array.from(el.children).some(c => {
+        const t = (c.innerText || '').trim();
+        return t && t.length > txt.length * 0.85;
+      });
+      if(hasInnerCandidate) continue;
+      // Score: prefere texto longo (mais provavel ser o conteudo real)
+      const score = txt.length;
+      if(score > bestScore){ bestScore = score; best = el; }
+    }
+    if(!best) return '';
+    const txt = (best.innerText || '').trim();
+    LOG(`fallback main content: ${txt.length} chars (score=${bestScore})`);
+    return txt;
+  }
+
+  // Tenta forcar o modo Edit (em vez de Preview). Snippets BUSINESS abrem em
+  // Preview por default e o "editor" nao fica acessivel pelo DOM.
+  async function tryEnterEditMode(){
+    const editBtns = Array.from(document.querySelectorAll('button, [role="button"], [role="tab"]'))
+      .filter(b => {
+        const txt = (b.textContent || '').trim();
+        return /^edit$/i.test(txt) && b.offsetWidth > 0 && b.offsetHeight > 0;
+      });
+    if(editBtns.length){
+      try{
+        editBtns[0].click();
+        await delay(300);
+        return true;
+      }catch(_){}
+    }
+    return false;
   }
 
   async function delay(ms){ return new Promise(r => setTimeout(r, ms)); }
 
   // Tenta abrir um snippet, ler o conteudo e voltar.
   async function openAndReadSnippet(row){
-    // Procura elemento clicavel dentro da linha
     const clickTarget = row.matches('a') ? row : (row.querySelector('a') || row);
-
-    // Snapshot do editor atual (pra detectar mudanca)
     const beforeEditor = findEditor();
     const beforeText = beforeEditor ? extractEditorText(beforeEditor) : null;
 
-    // Clica
-    try{
-      clickTarget.click();
-    }catch(e){ LOG('falha ao clicar', e); return null; }
+    try{ clickTarget.click(); }catch(e){ LOG('falha ao clicar', e); return null; }
 
     // Espera ate o editor aparecer/mudar (max 1500ms)
     let editor = null;
@@ -171,9 +219,25 @@
       }
     }
     if(!editor) editor = findEditor();
-    if(!editor){ LOG('nao achou editor apos clicar'); return null; }
 
-    return extractEditorText(editor);
+    let text = editor ? extractEditorText(editor) : '';
+
+    // Se nao achou texto util, tenta entrar em modo Edit (snippets BUSINESS)
+    if(!text || text.length < 5){
+      const entered = await tryEnterEditMode();
+      if(entered){
+        await delay(200);
+        editor = findEditor();
+        text = editor ? extractEditorText(editor) : '';
+      }
+    }
+
+    // Ultimo recurso: pega do preview/main content visivel na area central
+    if(!text || text.length < 5){
+      text = extractMainContentFallback();
+    }
+
+    return text;
   }
 
   function showResultPanel(snippets){
