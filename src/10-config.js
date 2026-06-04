@@ -90,21 +90,35 @@
     //   {
     //     label, url, icon?, color?,
     //     match: [{ field, value, mode? }, ...],
-    //     issTemplate?: 'ISS-XXXXX'    // opcional - explicado abaixo
+    //     // OPCIONAIS pra criacao de ISS:
+    //     issTemplate?:        'ISS-XXXXX',     // template-based (mais robusto)
+    //     issService?:         'CCTV',          // value-based (mais simples, ver abaixo)
+    //     issDemanda?:         'Analisis',      // override do default
+    //     issResolutionTeam?:  'IS-SHIP-...'    // override do default
     //   }
     //   - field: nome humano ("Object Type") ou customfield_XXXX
     //   - value: comparacao case-insensitive + ignora acentos/hifens
     //   - mode:  'exact' (default) | 'contains'
     //   - match e AND entre criterios. Multiplas regras podem matchar (mostra varios chips).
     //
-    // issTemplate (opcional, novidade da v1.20.2):
+    // Criacao de ISS por categoria SE (novidade da v1.20.2+):
     //   Quando o usuario clica em "Criar ISS" (via Derivar ou outro fluxo) a partir
-    //   de um chamado que MATCHA esta regra, o plugin usa o ticket aqui referenciado
-    //   como TEMPLATE (copia Demanda, Service, Resolution Team).
-    //   Ex: regra "Botao de Panico" tem issTemplate=ISS-19469, entao a ISS criada vem
-    //   com Service=Control Acceso, Demand=Analisis (que sao os valores de ISS-19469).
-    //   Se nenhuma regra com issTemplate casar, usa ISS_TASK_MODEL_ISSUE default.
-    //   PRIMEIRA regra que casa vence (ordem importa).
+    //   de um chamado que MATCHA esta regra, o plugin usa os campos issXxx pra preencher
+    //   a tarefa ISS. PRIMEIRA regra que casa vence (ordem importa).
+    //
+    //   Duas formas de mapear:
+    //   1) issTemplate='ISS-XXXX' (template-based): o plugin LE o ticket referenciado e
+    //      copia Demanda, Service, ResTeam dele. Mais robusto pra Jiras com validadores
+    //      customizados que rejeitam strings. Requer 1 ticket-modelo por categoria.
+    //   2) issService='CCTV' (value-based): o plugin usa o nome direto como string.
+    //      Mais simples (sem precisar criar tickets-modelo), mas pode falhar em alguns
+    //      Jiras se houver validators rigidos.
+    //
+    //   Pode combinar: se a regra tem AMBOS issTemplate e issService, template vence.
+    //   Se nenhuma regra casar, usa ISS_TASK_MODEL_ISSUE / ISS_TASK_*_VALUE default.
+    //
+    //   Ex - Botao de Panico: issTemplate=ISS-19469 -> cria ISS com Service=Control Acceso
+    //   Ex - Camera:          issService='CCTV'     -> cria ISS com Service=CCTV
     //
     // Pra adicionar uma nova regra:
     //   1) No Jira, abra um ticket exemplo
@@ -130,6 +144,31 @@
         // Pra Botao de Panico: Service = "Control Acceso", Demand = "Analisis", ResTeam = SHIP-NATS-N1.
         issTemplate: 'ISS-19469'
       },
+      // ---- REGRAS DE MAPPING ISS (noChip=true: nao mostram chip lateral) ----
+      // Servem apenas pra resolver "qual Service usar quando criar ISS" baseado no
+      // Object Type do ticket origem. Sao avaliadas DEPOIS da regra de Botao de Panico
+      // (que tem template proprio), entao se um ticket bate em ambos, o template vence.
+      //
+      // IMPORTANTE: a ORDEM importa. Primeira regra que casa = vence. Por isso "Botao
+      // de Panico" (com template) vem antes desses mappings genericos.
+      {
+        label: 'ISS Mapping: Control Acceso',
+        noChip: true,
+        match: [
+          { field: 'Object Type', value: ['Alarma', 'Detector de Metales', 'Lector biometrico', 'Torniquete - Molinete'] }
+        ],
+        issService: 'Control Acceso'
+      },
+      {
+        label: 'ISS Mapping: CCTV',
+        noChip: true,
+        match: [
+          { field: 'Object Type', value: ['Camara - CCTV', 'Desktop - CCTV', 'Video Wall'] }
+        ],
+        issService: 'CCTV'
+      },
+      // ---- FIM mapping ISS ----
+
       {
         // PYMES = Pesar Y Medir (cubadores de Mercado Envios).
         // Ha 2 fornecedoras (Sick e Toledo). Como o ticket nao distingue automaticamente,
@@ -314,25 +353,41 @@
     const overrides = (SETTINGS.CONFLUENCE_URL_OVERRIDES && typeof SETTINGS.CONFLUENCE_URL_OVERRIDES === 'object')
       ? SETTINGS.CONFLUENCE_URL_OVERRIDES : {};
     return base
-      .filter(r => r && typeof r === 'object' && r.url && Array.isArray(r.match) && r.match.length)
+      // Aceita regras "noChip" (sem url) que existem so pra mapping ISS, alem das normais.
+      .filter(r => r && typeof r === 'object' && (r.url || r.noChip) && Array.isArray(r.match) && r.match.length)
       .map(r => {
         const overrideUrl = String(overrides[r.label] || '').trim();
         const out = {
           label: String(r.label || 'Tshoot').trim(),
           icon:  String(r.icon || '').trim(),
           color: String(r.color || '').trim(), // default '' -> dourado padrao
-          url:   overrideUrl || String(r.url).trim(),
+          url:   overrideUrl || String(r.url || '').trim(),
+          noChip: r.noChip === true,
           match: r.match
             .filter(c => c && c.field && c.value != null)
             .map(c => ({
               field: String(c.field).trim(),
-              value: String(c.value).trim(),
+              // value pode ser string ou array de strings (OR semantics).
+              value: Array.isArray(c.value) ? c.value.map(v => String(v).trim()).filter(Boolean) : String(c.value).trim(),
               mode:  (c.mode === 'contains' ? 'contains' : 'exact')
             }))
         };
-        // Opcional: template ISS-XXXX para criar tarefa com Demanda/Service/ResTeam pre-resolvidos
+        // Opcional: configuracao de criacao de ISS por categoria SE.
+        // - issTemplate: 'ISS-XXXX' (template-based, mais robusto pra validators)
+        // - issService:  'CCTV', 'Control Acceso', etc (value-based, mais simples)
+        // - issDemanda:  override do default 'Analisis' (opcional)
+        // - issResolutionTeam: override do default 'IS-SHIP-NATS-N1' (opcional)
         if(r.issTemplate && typeof r.issTemplate === 'string'){
           out.issTemplate = r.issTemplate.trim().toUpperCase();
+        }
+        if(r.issService && typeof r.issService === 'string'){
+          out.issService = r.issService.trim();
+        }
+        if(r.issDemanda && typeof r.issDemanda === 'string'){
+          out.issDemanda = r.issDemanda.trim();
+        }
+        if(r.issResolutionTeam && typeof r.issResolutionTeam === 'string'){
+          out.issResolutionTeam = r.issResolutionTeam.trim();
         }
         return out;
       })

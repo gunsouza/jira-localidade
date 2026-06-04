@@ -120,21 +120,35 @@
     //   {
     //     label, url, icon?, color?,
     //     match: [{ field, value, mode? }, ...],
-    //     issTemplate?: 'ISS-XXXXX'    // opcional - explicado abaixo
+    //     // OPCIONAIS pra criacao de ISS:
+    //     issTemplate?:        'ISS-XXXXX',     // template-based (mais robusto)
+    //     issService?:         'CCTV',          // value-based (mais simples, ver abaixo)
+    //     issDemanda?:         'Analisis',      // override do default
+    //     issResolutionTeam?:  'IS-SHIP-...'    // override do default
     //   }
     //   - field: nome humano ("Object Type") ou customfield_XXXX
     //   - value: comparacao case-insensitive + ignora acentos/hifens
     //   - mode:  'exact' (default) | 'contains'
     //   - match e AND entre criterios. Multiplas regras podem matchar (mostra varios chips).
     //
-    // issTemplate (opcional, novidade da v1.20.2):
+    // Criacao de ISS por categoria SE (novidade da v1.20.2+):
     //   Quando o usuario clica em "Criar ISS" (via Derivar ou outro fluxo) a partir
-    //   de um chamado que MATCHA esta regra, o plugin usa o ticket aqui referenciado
-    //   como TEMPLATE (copia Demanda, Service, Resolution Team).
-    //   Ex: regra "Botao de Panico" tem issTemplate=ISS-19469, entao a ISS criada vem
-    //   com Service=Control Acceso, Demand=Analisis (que sao os valores de ISS-19469).
-    //   Se nenhuma regra com issTemplate casar, usa ISS_TASK_MODEL_ISSUE default.
-    //   PRIMEIRA regra que casa vence (ordem importa).
+    //   de um chamado que MATCHA esta regra, o plugin usa os campos issXxx pra preencher
+    //   a tarefa ISS. PRIMEIRA regra que casa vence (ordem importa).
+    //
+    //   Duas formas de mapear:
+    //   1) issTemplate='ISS-XXXX' (template-based): o plugin LE o ticket referenciado e
+    //      copia Demanda, Service, ResTeam dele. Mais robusto pra Jiras com validadores
+    //      customizados que rejeitam strings. Requer 1 ticket-modelo por categoria.
+    //   2) issService='CCTV' (value-based): o plugin usa o nome direto como string.
+    //      Mais simples (sem precisar criar tickets-modelo), mas pode falhar em alguns
+    //      Jiras se houver validators rigidos.
+    //
+    //   Pode combinar: se a regra tem AMBOS issTemplate e issService, template vence.
+    //   Se nenhuma regra casar, usa ISS_TASK_MODEL_ISSUE / ISS_TASK_*_VALUE default.
+    //
+    //   Ex - Botao de Panico: issTemplate=ISS-19469 -> cria ISS com Service=Control Acceso
+    //   Ex - Camera:          issService='CCTV'     -> cria ISS com Service=CCTV
     //
     // Pra adicionar uma nova regra:
     //   1) No Jira, abra um ticket exemplo
@@ -160,6 +174,31 @@
         // Pra Botao de Panico: Service = "Control Acceso", Demand = "Analisis", ResTeam = SHIP-NATS-N1.
         issTemplate: 'ISS-19469'
       },
+      // ---- REGRAS DE MAPPING ISS (noChip=true: nao mostram chip lateral) ----
+      // Servem apenas pra resolver "qual Service usar quando criar ISS" baseado no
+      // Object Type do ticket origem. Sao avaliadas DEPOIS da regra de Botao de Panico
+      // (que tem template proprio), entao se um ticket bate em ambos, o template vence.
+      //
+      // IMPORTANTE: a ORDEM importa. Primeira regra que casa = vence. Por isso "Botao
+      // de Panico" (com template) vem antes desses mappings genericos.
+      {
+        label: 'ISS Mapping: Control Acceso',
+        noChip: true,
+        match: [
+          { field: 'Object Type', value: ['Alarma', 'Detector de Metales', 'Lector biometrico', 'Torniquete - Molinete'] }
+        ],
+        issService: 'Control Acceso'
+      },
+      {
+        label: 'ISS Mapping: CCTV',
+        noChip: true,
+        match: [
+          { field: 'Object Type', value: ['Camara - CCTV', 'Desktop - CCTV', 'Video Wall'] }
+        ],
+        issService: 'CCTV'
+      },
+      // ---- FIM mapping ISS ----
+
       {
         // PYMES = Pesar Y Medir (cubadores de Mercado Envios).
         // Ha 2 fornecedoras (Sick e Toledo). Como o ticket nao distingue automaticamente,
@@ -344,25 +383,41 @@
     const overrides = (SETTINGS.CONFLUENCE_URL_OVERRIDES && typeof SETTINGS.CONFLUENCE_URL_OVERRIDES === 'object')
       ? SETTINGS.CONFLUENCE_URL_OVERRIDES : {};
     return base
-      .filter(r => r && typeof r === 'object' && r.url && Array.isArray(r.match) && r.match.length)
+      // Aceita regras "noChip" (sem url) que existem so pra mapping ISS, alem das normais.
+      .filter(r => r && typeof r === 'object' && (r.url || r.noChip) && Array.isArray(r.match) && r.match.length)
       .map(r => {
         const overrideUrl = String(overrides[r.label] || '').trim();
         const out = {
           label: String(r.label || 'Tshoot').trim(),
           icon:  String(r.icon || '').trim(),
           color: String(r.color || '').trim(), // default '' -> dourado padrao
-          url:   overrideUrl || String(r.url).trim(),
+          url:   overrideUrl || String(r.url || '').trim(),
+          noChip: r.noChip === true,
           match: r.match
             .filter(c => c && c.field && c.value != null)
             .map(c => ({
               field: String(c.field).trim(),
-              value: String(c.value).trim(),
+              // value pode ser string ou array de strings (OR semantics).
+              value: Array.isArray(c.value) ? c.value.map(v => String(v).trim()).filter(Boolean) : String(c.value).trim(),
               mode:  (c.mode === 'contains' ? 'contains' : 'exact')
             }))
         };
-        // Opcional: template ISS-XXXX para criar tarefa com Demanda/Service/ResTeam pre-resolvidos
+        // Opcional: configuracao de criacao de ISS por categoria SE.
+        // - issTemplate: 'ISS-XXXX' (template-based, mais robusto pra validators)
+        // - issService:  'CCTV', 'Control Acceso', etc (value-based, mais simples)
+        // - issDemanda:  override do default 'Analisis' (opcional)
+        // - issResolutionTeam: override do default 'IS-SHIP-NATS-N1' (opcional)
         if(r.issTemplate && typeof r.issTemplate === 'string'){
           out.issTemplate = r.issTemplate.trim().toUpperCase();
+        }
+        if(r.issService && typeof r.issService === 'string'){
+          out.issService = r.issService.trim();
+        }
+        if(r.issDemanda && typeof r.issDemanda === 'string'){
+          out.issDemanda = r.issDemanda.trim();
+        }
+        if(r.issResolutionTeam && typeof r.issResolutionTeam === 'string'){
+          out.issResolutionTeam = r.issResolutionTeam.trim();
         }
         return out;
       })
@@ -2101,7 +2156,13 @@
             showDeriveSuccessToast(`Derivado + ISS ${newKey} criada${extrasTxt}. Aberta em nova aba.${tmplLine}`);
             scheduleReloadAfterDerive();
           }catch(e){
-            // Caso a ISS falhe mas o derive ja foi - importante alertar com modal pra nao perder
+            // Cancelamento (usuario fechou o prompt de Service) - apenas finaliza derive ok
+            if(String(e.message || '').includes('cancelada pelo usuario')){
+              showDeriveSuccessToast(`Derivado para ${team.value}.${unassignMsg}${unwatchMsg}\nCriacao da ISS cancelada (categoria nao identificada).`);
+              scheduleReloadAfterDerive();
+              return;
+            }
+            // Erro real - alerta com modal pra nao perder a info
             console.error('[jira-localidade][derive] derive OK mas ISS falhou:', e);
             alert(`Derivado com sucesso, MAS falhou ao criar tarefa ISS:\n\n${e.message || e}\n\nVoce pode criar a tarefa manualmente ou tentar novamente.`);
             scheduleReloadAfterDerive();
@@ -2682,45 +2743,196 @@
   // Orquestra a criacao completa da tarefa ISS a partir de um ticket de origem.
   // Retorna { newKey, linkType, attachmentsReport } em caso de sucesso. Lanca em caso de erro.
   // onProgress(stage:string) opcional para feedback de UI.
-  // Resolve qual ticket-modelo (ISS template) usar pra criar a tarefa, baseado nas
-  // regras Confluence. Se alguma rule der match no source E tiver `issTemplate`, ela
-  // vence (primeira que casa). Senao, usa ISS_TASK_MODEL_ISSUE default.
-  // Reutiliza a mesma logica de match das chips Confluence (_confRuleMatches).
-  async function _resolveEffectiveIssTemplate(sourceIssueKey){
+  // Resolve qual configuracao usar pra criar a tarefa ISS, baseado nas regras Confluence.
+  // Cada regra pode definir:
+  //   - issTemplate: 'ISS-XXXX' (template-based: copia Demanda, Service, ResTeam do ticket)
+  //   - issService:  'Nome do Service' (value-based: usa essa string direto, mais simples)
+  //   - issDemanda:  'Nome da Demanda' (opcional, default = ISS_TASK_DEMANDA_VALUE)
+  //   - issResolutionTeam: 'IS-SHIP-...' (opcional, default = ISS_TASK_RESOLUTION_TEAM)
+  //
+  // Primeira regra que matchar E tiver alguma config ISS vence. Se nenhuma matchar,
+  // PERGUNTA pro usuario qual Service usar (lista os Services conhecidos das regras).
+  //
+  // Retorna: { templateKey, overrides: { service?, demanda?, resTeam? }, source, rule }
+  async function _resolveEffectiveIssConfig(sourceIssueKey){
     try{
       const rules = Array.isArray(CONFLUENCE_RULES) ? CONFLUENCE_RULES : [];
-      const templatedRules = rules.filter(r => r && r.issTemplate);
-      if(!templatedRules.length){
-        return { templateKey: ISS_TASK_MODEL_ISSUE, source: 'default', rule: null };
+      const relevantRules = rules.filter(r => r && (r.issTemplate || r.issService || r.issDemanda || r.issResolutionTeam));
+      if(!relevantRules.length){
+        return { templateKey: ISS_TASK_MODEL_ISSUE, overrides: {}, source: 'default', rule: null };
       }
       const issueData = await _confGetIssueData(sourceIssueKey);
       if(!issueData){
-        console.log(`[jira-localidade][iss-template] sem dados de ${sourceIssueKey}, usando default ${ISS_TASK_MODEL_ISSUE}`);
-        return { templateKey: ISS_TASK_MODEL_ISSUE, source: 'default-fallback', rule: null };
+        console.log(`[jira-localidade][iss-config] sem dados de ${sourceIssueKey}, usando default`);
+        return { templateKey: ISS_TASK_MODEL_ISSUE, overrides: {}, source: 'default-fallback', rule: null };
       }
-      for(const r of templatedRules){
+      for(const r of relevantRules){
         if(_confRuleMatches(r, issueData, false)){
-          console.log(`[jira-localidade][iss-template] match na regra "${r.label}" -> usando template ${r.issTemplate}`);
-          return { templateKey: r.issTemplate, source: 'rule', rule: r };
+          const overrides = {};
+          if(r.issService) overrides.service = String(r.issService).trim();
+          if(r.issDemanda) overrides.demanda = String(r.issDemanda).trim();
+          if(r.issResolutionTeam) overrides.resTeam = String(r.issResolutionTeam).trim();
+          // Se a regra tem issTemplate, usa template-based (mais robusto).
+          // Senao, usa value-based (e ignora template default tambem -- o overrides
+          // ja contem o Service especifico dessa categoria).
+          const templateKey = r.issTemplate ? r.issTemplate : null;
+          console.log(`[jira-localidade][iss-config] match "${r.label}" -> ${templateKey ? `template=${templateKey}` : `service="${overrides.service || '?'}"`}`);
+          return { templateKey, overrides, source: 'rule', rule: r };
         }
       }
-      console.log(`[jira-localidade][iss-template] nenhuma regra com issTemplate casou em ${sourceIssueKey}, usando default ${ISS_TASK_MODEL_ISSUE}`);
-      return { templateKey: ISS_TASK_MODEL_ISSUE, source: 'default', rule: null };
+      // Nenhuma regra casou. Pergunta ao usuario qual Service usar.
+      console.log(`[jira-localidade][iss-config] nenhuma regra casou em ${sourceIssueKey}, perguntando ao usuario`);
+      const chosen = await _askUserForIssService(sourceIssueKey, relevantRules);
+      if(chosen === null){
+        throw new Error('Criacao de ISS cancelada pelo usuario.');
+      }
+      return {
+        templateKey: null, // sempre value-based quando vem do prompt (mais simples)
+        overrides: { service: chosen },
+        source: 'user-prompt',
+        rule: null
+      };
     }catch(e){
-      console.warn('[jira-localidade][iss-template] erro resolvendo template, usando default:', e);
-      return { templateKey: ISS_TASK_MODEL_ISSUE, source: 'default-error', rule: null };
+      // Erros de cancelamento devem propagar; outros caem no default
+      if(String(e.message || '').includes('cancelada pelo usuario')) throw e;
+      console.warn('[jira-localidade][iss-config] erro resolvendo config, usando default:', e);
+      return { templateKey: ISS_TASK_MODEL_ISSUE, overrides: {}, source: 'default-error', rule: null };
     }
+  }
+
+  // Modal sincrono (Promise) pedindo ao usuario qual Service usar quando o plugin
+  // nao consegue identificar a categoria automaticamente. Lista os Services unicos
+  // que aparecem nas regras CONFLUENCE_RULES como sugestao, mas tambem permite digitar.
+  function _askUserForIssService(sourceIssueKey, rules){
+    return new Promise((resolve) => {
+      // Coleta Services unicos das regras pra sugerir
+      const knownServices = [...new Set(
+        rules.map(r => r.issService).filter(Boolean)
+      )].sort();
+
+      document.getElementById('ml_iss_svc_overlay')?.remove();
+      document.getElementById('ml_iss_svc_modal')?.remove();
+
+      const overlay = document.createElement('div');
+      overlay.id = 'ml_iss_svc_overlay';
+      overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:2147483640;backdrop-filter:blur(2px);`;
+
+      const modal = document.createElement('div');
+      modal.id = 'ml_iss_svc_modal';
+      modal.style.cssText = `
+        position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+        z-index:2147483641;
+        background: var(--ml-bg, #161a26); color: var(--ml-text, #e6e9ef);
+        border:1px solid var(--ml-border, #2a2f40); border-radius:12px;
+        padding:22px; min-width:420px; max-width:520px;
+        box-shadow: 0 24px 50px rgba(0,0,0,.6);
+        font: 13px var(--ml-font, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+      `;
+
+      const optionsHtml = knownServices.length
+        ? knownServices.map(s => `
+          <button class="ml-svc-opt" data-svc="${s.replace(/"/g, '&quot;')}" style="
+            display:block; width:100%; text-align:left;
+            background: rgba(255,255,255,.04); color: var(--ml-text, #e6e9ef);
+            border: 1px solid var(--ml-border, #2a2f40);
+            padding: 10px 14px; border-radius: 8px; margin-bottom: 6px;
+            cursor: pointer; font: 600 13px var(--ml-font);
+            transition: background .15s, border-color .15s;
+          " onmouseover="this.style.background='rgba(79,140,255,.18)';this.style.borderColor='#4f8cff';"
+             onmouseout="this.style.background='rgba(255,255,255,.04)';this.style.borderColor='var(--ml-border, #2a2f40)';">
+            ${s}
+          </button>
+        `).join('')
+        : '<div style="color:var(--ml-text-dim);">Nenhum Service conhecido nas regras.</div>';
+
+      modal.innerHTML = `
+        <div style="margin-bottom:14px;">
+          <div style="font-size:15px;font-weight:700;margin-bottom:4px;">Categoria nao identificada automaticamente</div>
+          <div style="color:var(--ml-text-mut,#a8aebd);font-size:12.5px;">
+            Nao consegui identificar a categoria SE do ticket <b>${sourceIssueKey}</b> baseado nas regras configuradas.
+            Qual <b>Service</b> usar na ISS?
+          </div>
+        </div>
+
+        <div style="margin-bottom:14px;">${optionsHtml}</div>
+
+        <div style="margin-bottom:14px;">
+          <label style="display:block; font-size:11px; color:var(--ml-text-mut); margin-bottom:4px; text-transform:uppercase; letter-spacing:.5px;">
+            Ou digite outro Service:
+          </label>
+          <input type="text" id="ml_svc_custom" placeholder="Ex: CCTV, Control Acceso, ..." style="
+            width:100%; padding:8px 12px;
+            background: rgba(255,255,255,.05); color: var(--ml-text);
+            border: 1px solid var(--ml-border, #2a2f40); border-radius:6px;
+            font: 13px var(--ml-font);
+          " />
+        </div>
+
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button id="ml_svc_cancel" style="
+            background: transparent; color: var(--ml-text-mut);
+            border: 1px solid var(--ml-border, #2a2f40);
+            padding: 8px 14px; border-radius: 6px;
+            font: 500 12px var(--ml-font); cursor: pointer;
+          ">Cancelar</button>
+          <button id="ml_svc_confirm" style="
+            background: linear-gradient(180deg, #4f8cff, #2c5fc7);
+            color: #fff; border: 1px solid #2c5fc7;
+            padding: 8px 14px; border-radius: 6px;
+            font: 600 12px var(--ml-font); cursor: pointer;
+          ">Usar Service digitado</button>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+      document.body.appendChild(modal);
+
+      const cleanup = () => { modal.remove(); overlay.remove(); };
+
+      // Cliques nos botoes de sugestao = escolheu direto
+      modal.querySelectorAll('.ml-svc-opt').forEach(b => {
+        b.addEventListener('click', () => {
+          const svc = b.getAttribute('data-svc');
+          cleanup();
+          resolve(svc);
+        });
+      });
+
+      modal.querySelector('#ml_svc_confirm').addEventListener('click', () => {
+        const v = String(modal.querySelector('#ml_svc_custom').value || '').trim();
+        if(!v){
+          alert('Digite o nome do Service ou clique numa das opcoes acima.');
+          return;
+        }
+        cleanup();
+        resolve(v);
+      });
+
+      modal.querySelector('#ml_svc_cancel').addEventListener('click', () => {
+        cleanup();
+        resolve(null); // cancelado
+      });
+
+      overlay.addEventListener('click', () => {
+        cleanup();
+        resolve(null);
+      });
+
+      // Foco no input pra digitar direto
+      setTimeout(() => modal.querySelector('#ml_svc_custom')?.focus(), 50);
+    });
   }
 
   async function createIssTaskFromIssue(sourceIssueKey, onProgress){
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
 
-    // Decide o template baseado em regras Confluence (se alguma matchar e tiver issTemplate).
-    progress('Avaliando qual template ISS usar para este chamado...');
-    const tmpl = await _resolveEffectiveIssTemplate(sourceIssueKey);
+    // Decide template/overrides baseados em regras Confluence (mapeamento por categoria SE).
+    progress('Avaliando qual configuracao ISS usar para este chamado...');
+    const tmpl = await _resolveEffectiveIssConfig(sourceIssueKey);
     const effectiveTemplate = tmpl.templateKey;
+    const ruleOverrides = tmpl.overrides || {};
 
-    progress(`Lendo ticket origem, modelo (${effectiveTemplate || '(nenhum)'}) e schema de criacao...`);
+    progress(`Lendo ticket origem, modelo (${effectiveTemplate || '(value-based)'}) e schema de criacao...`);
     const baseTasks = [
       jiraGetMyself(),
       getIssueFullForCopy(sourceIssueKey),
@@ -2767,11 +2979,15 @@
       serviceVal = sanitizeCustomFieldValue(cfS);
       resTeamVal = sanitizeCustomFieldValue(cfR);
     } else {
-      // Fallback sem modelo: pode falhar em Jiras com validadores customizados.
-      // Recomendamos sempre configurar uma ISS modelo.
-      demandaVal = { value: ISS_TASK_DEMANDA_VALUE };
-      serviceVal = [{ value: ISS_TASK_SERVICE_VALUE }];
-      resTeamVal = { value: ISS_TASK_RESOLUTION_TEAM };
+      // Value-based: sem ticket-modelo, usa strings diretamente. Pode falhar em Jiras
+      // com validadores customizados. Overrides vindos das regras Confluence tem
+      // prioridade sobre os defaults globais.
+      const demandaValue = ruleOverrides.demanda || ISS_TASK_DEMANDA_VALUE;
+      const serviceValue = ruleOverrides.service || ISS_TASK_SERVICE_VALUE;
+      const resTeamValue = ruleOverrides.resTeam || ISS_TASK_RESOLUTION_TEAM;
+      demandaVal = { value: demandaValue };
+      serviceVal = [{ value: serviceValue }];
+      resTeamVal = { value: resTeamValue };
     }
 
     // Monta payload MINIMAL no formato exato que a UI do Jira envia (capturado via debug).
@@ -5065,12 +5281,18 @@
         continue;
       }
       const a = _confNorm(got);
-      const b = _confNorm(crit.value);
-      const ok = (crit.mode === 'contains') ? a.includes(b) : (a === b);
+      // value pode ser string OU array de strings (OR entre eles, igual SQL "IN").
+      const candidates = Array.isArray(crit.value)
+        ? crit.value.map(v => _confNorm(v))
+        : [_confNorm(crit.value)];
+      const ok = (crit.mode === 'contains')
+        ? candidates.some(b => a.includes(b))
+        : candidates.some(b => a === b);
       if(ok){
         log(`  [${rule.label}] OK ${crit.field} = "${got}"`);
       } else {
-        log(`  [${rule.label}] x criterio "${crit.field}" (${key}): esperado="${crit.value}" (${b}), obtido="${got}" (${a})`);
+        const expected = Array.isArray(crit.value) ? `[${crit.value.join(', ')}]` : crit.value;
+        log(`  [${rule.label}] x criterio "${crit.field}" (${key}): esperado=${expected}, obtido="${got}" (${a})`);
         allOk = false;
       }
     }
@@ -5109,7 +5331,9 @@
       return;
     }
 
-    const rules = Array.isArray(CONFLUENCE_RULES) ? CONFLUENCE_RULES : [];
+    // Filtra regras invisiveis (noChip=true). Essas existem so pra mapping ISS
+    // (ex: "Camera CCTV", "Detector de Metales") e nao tem link de troubleshooting.
+    const rules = (Array.isArray(CONFLUENCE_RULES) ? CONFLUENCE_RULES : []).filter(r => !r.noChip);
     if(!rules.length){
       existing?.remove();
       _CONF_LAST_RENDERED = { key: null, sig: null };

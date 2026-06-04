@@ -400,7 +400,13 @@
             showDeriveSuccessToast(`Derivado + ISS ${newKey} criada${extrasTxt}. Aberta em nova aba.${tmplLine}`);
             scheduleReloadAfterDerive();
           }catch(e){
-            // Caso a ISS falhe mas o derive ja foi - importante alertar com modal pra nao perder
+            // Cancelamento (usuario fechou o prompt de Service) - apenas finaliza derive ok
+            if(String(e.message || '').includes('cancelada pelo usuario')){
+              showDeriveSuccessToast(`Derivado para ${team.value}.${unassignMsg}${unwatchMsg}\nCriacao da ISS cancelada (categoria nao identificada).`);
+              scheduleReloadAfterDerive();
+              return;
+            }
+            // Erro real - alerta com modal pra nao perder a info
             console.error('[jira-localidade][derive] derive OK mas ISS falhou:', e);
             alert(`Derivado com sucesso, MAS falhou ao criar tarefa ISS:\n\n${e.message || e}\n\nVoce pode criar a tarefa manualmente ou tentar novamente.`);
             scheduleReloadAfterDerive();

@@ -85,12 +85,18 @@
         continue;
       }
       const a = _confNorm(got);
-      const b = _confNorm(crit.value);
-      const ok = (crit.mode === 'contains') ? a.includes(b) : (a === b);
+      // value pode ser string OU array de strings (OR entre eles, igual SQL "IN").
+      const candidates = Array.isArray(crit.value)
+        ? crit.value.map(v => _confNorm(v))
+        : [_confNorm(crit.value)];
+      const ok = (crit.mode === 'contains')
+        ? candidates.some(b => a.includes(b))
+        : candidates.some(b => a === b);
       if(ok){
         log(`  [${rule.label}] OK ${crit.field} = "${got}"`);
       } else {
-        log(`  [${rule.label}] x criterio "${crit.field}" (${key}): esperado="${crit.value}" (${b}), obtido="${got}" (${a})`);
+        const expected = Array.isArray(crit.value) ? `[${crit.value.join(', ')}]` : crit.value;
+        log(`  [${rule.label}] x criterio "${crit.field}" (${key}): esperado=${expected}, obtido="${got}" (${a})`);
         allOk = false;
       }
     }
@@ -129,7 +135,9 @@
       return;
     }
 
-    const rules = Array.isArray(CONFLUENCE_RULES) ? CONFLUENCE_RULES : [];
+    // Filtra regras invisiveis (noChip=true). Essas existem so pra mapping ISS
+    // (ex: "Camera CCTV", "Detector de Metales") e nao tem link de troubleshooting.
+    const rules = (Array.isArray(CONFLUENCE_RULES) ? CONFLUENCE_RULES : []).filter(r => !r.noChip);
     if(!rules.length){
       existing?.remove();
       _CONF_LAST_RENDERED = { key: null, sig: null };
