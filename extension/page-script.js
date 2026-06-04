@@ -6614,8 +6614,8 @@ ${rule.match.map(c => `          { field: ${JSON.stringify(c.field)}, value: ${J
           </button>
         </div>
 
-        <!-- Hint dinamico por tab -->
-        <div id="ml_tb_hint" style="background:${C.bg2};border-left:3px solid ${C.blue};border-radius:6px;padding:10px 12px;font-size:12px;color:${C.dim};line-height:1.5;margin-bottom:12px;"></div>
+        <!-- Hint dinamico por tab (sem background fixo pra nao brigar com cards internos) -->
+        <div id="ml_tb_hint" style="font-size:12px;color:${C.dim};line-height:1.5;margin-bottom:14px;"></div>
 
         <!-- Textarea unica -->
         <textarea id="ml_tb_input" spellcheck="false"
@@ -6670,25 +6670,65 @@ ${rule.match.map(c => `          { field: ${JSON.stringify(c.field)}, value: ${J
     // Conteudo por tab
     const TAB_CONTENT = {
       scraper: {
-        hint: `<b>Como usar (super rapido):</b><br/>
-               1) <b>Arraste o bot\u00e3o roxo abaixo</b> pra barra de favoritos do navegador (so 1 vez):<br/>
-               <div style="margin:8px 0 10px;">
-                 <a id="ml_tb_bookmarklet" href="${BOOKMARKLET_HREF.replace(/"/g, '&quot;')}" draggable="true"
-                    style="display:inline-block;background:#7c3aed;color:#fff;text-decoration:none;
-                           padding:8px 14px;border-radius:6px;font-weight:700;font-size:13px;cursor:grab;
-                           box-shadow:0 4px 10px rgba(124,58,237,.35);user-select:none;">
-                   \uD83D\uDCCB Capturar TB
-                 </a>
-                 <span style="margin-left:8px;font-size:11px;color:${C.dim};">\u2190 arraste isto pros favoritos</span>
-               </div>
-               2) Abra <a href="https://dashboard.blaze.today/" target="_blank" style="color:${C.blue};">dashboard.blaze.today</a> (logado) e a pasta que quer exportar.<br/>
-               3) Clique no bookmarklet "Capturar TB" no favoritos.<br/>
-               4) Ele varre, copia o JSON pro clipboard, \u2192 cole aqui embaixo.`,
+        hint: `
+          <div style="display:flex;align-items:center;gap:14px;padding:14px 16px;background:linear-gradient(135deg,#3b1e6e,#1e1340);border:1px solid #7c3aed;border-radius:10px;margin:-4px 0 14px;">
+            <div style="font-size:30px;animation:tb-arrow 1.2s ease-in-out infinite;">\u{1F449}</div>
+            <div style="flex:1;">
+              <div style="font-size:11px;font-weight:700;color:#c4b5fd;letter-spacing:.8px;margin-bottom:6px;">PASSO 1 \u2014 SE NAO TIVER FEITO AINDA</div>
+              <div style="font-size:13px;color:#fff;margin-bottom:8px;">
+                <b>Arraste</b> este bot\u00e3o pra <b>barra de favoritos</b> do navegador (segura e solta l\u00e1 em cima):
+              </div>
+              <a id="ml_tb_bookmarklet" href="${BOOKMARKLET_HREF.replace(/"/g, '&quot;')}" draggable="true"
+                 style="display:inline-block;background:#fff;color:#5b21b6;text-decoration:none;
+                        padding:10px 18px;border-radius:8px;font-weight:800;font-size:14px;cursor:grab;
+                        box-shadow:0 6px 16px rgba(0,0,0,.4);user-select:none;border:2px dashed #c4b5fd;">
+                \uD83D\uDCCB Capturar TB
+              </a>
+            </div>
+          </div>
+          <style>
+            @keyframes tb-arrow { 0%,100%{transform:translateX(0);} 50%{transform:translateX(6px);} }
+          </style>
+
+          <div style="font-size:12.5px;line-height:1.7;">
+            <b>PASSO 2 \u2014 Capturar os snippets:</b>
+            <ol style="margin:6px 0 0 18px;padding:0;">
+              <li>Abra <a href="https://dashboard.blaze.today/" target="_blank" style="color:${C.blue};">dashboard.blaze.today</a> (logado).</li>
+              <li>Clique no favorito <b>"\uD83D\uDCCB Capturar TB"</b> da sua barra de favoritos.</li>
+              <li>Aguarde a captura (toast roxo no canto). O JSON \u00e9 <b>copiado automaticamente</b> pro clipboard.</li>
+              <li>Volta aqui e <b>cole no campo abaixo</b> (Cmd/Ctrl+V) \u2192 Validar \u2192 Importar.</li>
+            </ol>
+          </div>
+
+          <details style="margin-top:12px;">
+            <summary style="cursor:pointer;font-size:11.5px;color:${C.dim};font-weight:600;">
+              \u2139\uFE0F N\u00e3o vejo a barra de favoritos / n\u00e3o consigo arrastar
+            </summary>
+            <div style="margin-top:8px;padding:10px 12px;background:${C.bg0};border:1px solid ${C.border};border-radius:6px;font-size:11.5px;color:${C.dim};line-height:1.6;">
+              <b style="color:${C.text};">Mostrar a barra de favoritos:</b><br/>
+              \u2022 Chrome / Edge / Brave: <kbd>Cmd+Shift+B</kbd> (Mac) ou <kbd>Ctrl+Shift+B</kbd> (Win/Linux)<br/>
+              \u2022 Firefox: bot\u00e3o direito na barra de abas \u2192 "Barra de favoritos" \u2192 "Sempre mostrar"<br/>
+              \u2022 Safari: menu <i>Visualizar</i> \u2192 <i>Mostrar Barra de Favoritos</i><br/><br/>
+
+              <b style="color:${C.text};">N\u00e3o consigo arrastar?</b><br/>
+              Use a aba <b>"Manual"</b> ao lado: voc\u00ea cola uma linha por snippet no formato
+              <code>/cmd | nome | texto</code> e funciona igual.<br/><br/>
+
+              <b style="color:${C.text};">N\u00e3o quero bookmarklet, prefiro userscript:</b><br/>
+              Instale <code>tools/textblaze-scraper.user.js</code> no Tampermonkey \u2014 ele coloca o
+              bot\u00e3o "Capturar snippets" direto na p\u00e1gina do dashboard do TB.
+            </div>
+          </details>`,
         placeholder: `Cole aqui o JSON gerado pelo bookmarklet. Exemplo:\n\n[\n  { "command": "/ola", "name": "Saudacao", "text": "Ola, tudo bem?" },\n  { "command": "/obg", "name": "Agradecimento", "text": "Obrigado pelo retorno!" }\n]`
       },
       manual: {
-        hint: `<b>Formato:</b> uma linha por snippet, separador <code>|</code> ou <kbd>Tab</kbd>.<br/>
-               Layout: <code>/comando | nome | texto</code> (ou s\u00f3 <code>/comando | texto</code>).`,
+        hint: `<div style="background:${C.bg2};border-left:3px solid ${C.blue};border-radius:6px;padding:10px 12px;line-height:1.6;">
+                 <b>Formato:</b> uma linha por snippet, separador <code>|</code> ou <kbd>Tab</kbd>.<br/>
+                 Layout aceito:<br/>
+                 \u2022 <code>/comando | nome | texto</code> (completo)<br/>
+                 \u2022 <code>/comando | texto</code> (sem nome \u2014 vira o pr\u00f3prio comando)<br/>
+                 \u2022 <code>texto</code> (s\u00f3 o texto, sem cmd)
+               </div>`,
         placeholder: `Cole uma linha por snippet. Exemplo:\n\n/ola | Saudacao | Ola, tudo bem?\n/obg | Agradecimento | Obrigado pelo retorno!\n/aguarda | Aguardando cliente | Aguardando retorno do cliente para prosseguir.`
       }
     };
