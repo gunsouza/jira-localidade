@@ -962,14 +962,29 @@
     const previewCount = modal.querySelector('#ml_tb_count');
     const importBtn = modal.querySelector('#ml_tb_import');
 
+    // Bookmarklet 1-liner que baixa o scraper do GitHub e executa
+    // (sempre puxa a versao mais recente - auto-update gratis)
+    const SCRAPER_URL = 'https://raw.githubusercontent.com/gunsouza/jira-localidade/main/tools/textblaze-scraper.bookmarklet.js';
+    const BOOKMARKLET_HREF = `javascript:(function(){var s=document.createElement('script');s.src='${SCRAPER_URL}?v='+Date.now();s.onerror=function(){alert('Erro: nao conseguiu baixar o scraper. Voce esta online?');};document.body.appendChild(s);})();void 0;`;
+
     // Conteudo por tab
     const TAB_CONTENT = {
       scraper: {
-        hint: `<b>Como obter o JSON:</b><br/>
-               1) Instale <code>tools/textblaze-scraper.user.js</code> no Tampermonkey.<br/>
-               2) Abra <a href="https://dashboard.blaze.today/" target="_blank" style="color:${C.blue};">dashboard.blaze.today</a> e clique no bot\u00e3o roxo "Capturar snippets" no canto superior direito.<br/>
-               3) O JSON \u00e9 copiado pro clipboard automaticamente \u2192 cole aqui.`,
-        placeholder: `Cole aqui o JSON gerado pelo scraper. Exemplo:\n\n[\n  { "command": "/ola", "name": "Saudacao", "text": "Ola, tudo bem?" },\n  { "command": "/obg", "name": "Agradecimento", "text": "Obrigado pelo retorno!" }\n]`
+        hint: `<b>Como usar (super rapido):</b><br/>
+               1) <b>Arraste o bot\u00e3o roxo abaixo</b> pra barra de favoritos do navegador (so 1 vez):<br/>
+               <div style="margin:8px 0 10px;">
+                 <a id="ml_tb_bookmarklet" href="${BOOKMARKLET_HREF.replace(/"/g, '&quot;')}" draggable="true"
+                    style="display:inline-block;background:#7c3aed;color:#fff;text-decoration:none;
+                           padding:8px 14px;border-radius:6px;font-weight:700;font-size:13px;cursor:grab;
+                           box-shadow:0 4px 10px rgba(124,58,237,.35);user-select:none;">
+                   \uD83D\uDCCB Capturar TB
+                 </a>
+                 <span style="margin-left:8px;font-size:11px;color:${C.dim};">\u2190 arraste isto pros favoritos</span>
+               </div>
+               2) Abra <a href="https://dashboard.blaze.today/" target="_blank" style="color:${C.blue};">dashboard.blaze.today</a> (logado) e a pasta que quer exportar.<br/>
+               3) Clique no bookmarklet "Capturar TB" no favoritos.<br/>
+               4) Ele varre, copia o JSON pro clipboard, \u2192 cole aqui embaixo.`,
+        placeholder: `Cole aqui o JSON gerado pelo bookmarklet. Exemplo:\n\n[\n  { "command": "/ola", "name": "Saudacao", "text": "Ola, tudo bem?" },\n  { "command": "/obg", "name": "Agradecimento", "text": "Obrigado pelo retorno!" }\n]`
       },
       manual: {
         hint: `<b>Formato:</b> uma linha por snippet, separador <code>|</code> ou <kbd>Tab</kbd>.<br/>
@@ -988,6 +1003,17 @@
       const tc = TAB_CONTENT[mode];
       hintBox.innerHTML = tc.hint;
       input.placeholder = tc.placeholder;
+      // Quando ativa a tab scraper, intercepta click no link do bookmarklet
+      // (so faz sentido se ele for ARRASTADO; clicar aqui no Jira nao tem efeito util)
+      if(mode === 'scraper'){
+        const link = hintBox.querySelector('#ml_tb_bookmarklet');
+        if(link){
+          link.addEventListener('click', (e) => {
+            e.preventDefault();
+            alert('\u2139\uFE0F Este bot\u00e3o serve pra ser ARRASTADO pra barra de favoritos.\n\nSe voc\u00ea clic\u00e1-lo aqui no Jira, ele tenta capturar snippets do Text Blaze - que n\u00e3o existe nesta p\u00e1gina.\n\nArraste pros favoritos primeiro. Depois abra dashboard.blaze.today e clique nele de l\u00e1.');
+          });
+        }
+      }
     };
     modal.querySelectorAll('.ml_tb_tab').forEach(t => {
       t.addEventListener('click', () => setTab(t.dataset.mode));
