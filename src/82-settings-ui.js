@@ -971,59 +971,61 @@
     const TB_SCRAPER_ENCODED = '__TB_SCRAPER_ENCODED__';
     const BOOKMARKLET_HREF = `javascript:(function(){try{(0,eval)(decodeURIComponent('${TB_SCRAPER_ENCODED}'));}catch(e){alert('Erro: '+e.message+'\\n\\nVoce esta no dashboard.blaze.today?');}})();void 0;`;
 
+    // URL do userscript do scraper no GitHub (Tampermonkey detecta e oferece instalar)
+    const USERSCRIPT_URL = 'https://raw.githubusercontent.com/gunsouza/jira-localidade/main/tools/textblaze-scraper.user.js';
+
     // Conteudo por tab
     const TAB_CONTENT = {
       scraper: {
         hint: `
-          <div style="display:flex;align-items:center;gap:14px;padding:14px 16px;background:linear-gradient(135deg,#3b1e6e,#1e1340);border:1px solid #7c3aed;border-radius:10px;margin:-4px 0 14px;">
-            <div style="font-size:30px;animation:tb-arrow 1.2s ease-in-out infinite;">\u{1F449}</div>
-            <div style="flex:1;">
-              <div style="font-size:11px;font-weight:700;color:#c4b5fd;letter-spacing:.8px;margin-bottom:6px;">PASSO 1 \u2014 SE NAO TIVER FEITO AINDA</div>
+          <!-- OPCAO A: Userscript Tampermonkey (RECOMENDADO pra blaze.today) -->
+          <div style="background:linear-gradient(135deg,#0f3a2a,#093520);border:1px solid #10b981;border-radius:10px;padding:14px 16px;margin:-4px 0 14px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+              <span style="background:#10b981;color:#053026;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:800;letter-spacing:.5px;">RECOMENDADO</span>
+              <span style="font-size:13px;color:#fff;font-weight:700;">Opc\u00e3o A \u2014 Instalar no Tampermonkey</span>
+            </div>
+            <div style="font-size:12.5px;color:#a7f3d0;line-height:1.55;margin-bottom:10px;">
+              O <b>dashboard.blaze.today</b> tem CSP restrita que <b>bloqueia bookmarklets</b> no Chrome moderno.
+              Use o userscript: como voc\u00ea j\u00e1 tem Tampermonkey instalado, basta 1 clique.
+            </div>
+            <a href="${USERSCRIPT_URL}" target="_blank"
+               style="display:inline-block;background:#10b981;color:#053026;text-decoration:none;
+                      padding:9px 16px;border-radius:6px;font-weight:800;font-size:13px;">
+              \u{1F4E5} Instalar no Tampermonkey
+            </a>
+            <div style="font-size:11px;color:${C.dim};margin-top:8px;">
+              \u279C Abre o arquivo no Tampermonkey, clique <b>"Instalar"</b>. Depois v\u00e1 ao dashboard.blaze.today e clique no bot\u00e3o roxo "Capturar snippets" que aparecer\u00e1 no canto superior direito.
+            </div>
+          </div>
+
+          <!-- OPCAO B: Bookmarklet (alternativa pra outros sites/casos) -->
+          <details style="margin-bottom:14px;">
+            <summary style="cursor:pointer;font-size:12px;color:${C.dim};font-weight:600;padding:6px 0;">
+              \u{1F4DA} Op\u00e7\u00e3o B \u2014 Bookmarklet (arrastar pros favoritos)
+            </summary>
+            <div style="margin-top:10px;padding:14px 16px;background:linear-gradient(135deg,#3b1e6e,#1e1340);border:1px solid #7c3aed;border-radius:10px;">
+              <div style="font-size:11.5px;color:#c4b5fd;line-height:1.5;margin-bottom:10px;">
+                <b>Aviso:</b> bookmarklets <b>n\u00e3o funcionam</b> em <code>blaze.today</code> por causa do CSP do site.
+                Use s\u00f3 se voc\u00ea quiser testar o scraper em outro site (ou tiver navegador antigo onde bookmarklets bypassam CSP).
+              </div>
               <div style="font-size:13px;color:#fff;margin-bottom:8px;">
-                <b>Arraste</b> este bot\u00e3o pra <b>barra de favoritos</b> do navegador (segura e solta l\u00e1 em cima):
+                <b>Arraste</b> este bot\u00e3o pra barra de favoritos:
               </div>
               <a id="ml_tb_bookmarklet" href="${BOOKMARKLET_HREF.replace(/"/g, '&quot;')}" draggable="true"
                  style="display:inline-block;background:#fff;color:#5b21b6;text-decoration:none;
-                        padding:10px 18px;border-radius:8px;font-weight:800;font-size:14px;cursor:grab;
+                        padding:8px 14px;border-radius:6px;font-weight:800;font-size:13px;cursor:grab;
                         box-shadow:0 6px 16px rgba(0,0,0,.4);user-select:none;border:2px dashed #c4b5fd;">
                 \uD83D\uDCCB Capturar TB
               </a>
             </div>
-          </div>
-          <style>
-            @keyframes tb-arrow { 0%,100%{transform:translateX(0);} 50%{transform:translateX(6px);} }
-          </style>
+          </details>
 
           <div style="font-size:12.5px;line-height:1.7;">
-            <b>PASSO 2 \u2014 Capturar os snippets:</b>
-            <ol style="margin:6px 0 0 18px;padding:0;">
-              <li>Abra <a href="https://dashboard.blaze.today/" target="_blank" style="color:${C.blue};">dashboard.blaze.today</a> (logado).</li>
-              <li>Clique no favorito <b>"\uD83D\uDCCB Capturar TB"</b> da sua barra de favoritos.</li>
-              <li>Aguarde a captura (toast roxo no canto). O JSON \u00e9 <b>copiado automaticamente</b> pro clipboard.</li>
-              <li>Volta aqui e <b>cole no campo abaixo</b> (Cmd/Ctrl+V) \u2192 Validar \u2192 Importar.</li>
-            </ol>
-          </div>
-
-          <details style="margin-top:12px;">
-            <summary style="cursor:pointer;font-size:11.5px;color:${C.dim};font-weight:600;">
-              \u2139\uFE0F N\u00e3o vejo a barra de favoritos / n\u00e3o consigo arrastar
-            </summary>
-            <div style="margin-top:8px;padding:10px 12px;background:${C.bg0};border:1px solid ${C.border};border-radius:6px;font-size:11.5px;color:${C.dim};line-height:1.6;">
-              <b style="color:${C.text};">Mostrar a barra de favoritos:</b><br/>
-              \u2022 Chrome / Edge / Brave: <kbd>Cmd+Shift+B</kbd> (Mac) ou <kbd>Ctrl+Shift+B</kbd> (Win/Linux)<br/>
-              \u2022 Firefox: bot\u00e3o direito na barra de abas \u2192 "Barra de favoritos" \u2192 "Sempre mostrar"<br/>
-              \u2022 Safari: menu <i>Visualizar</i> \u2192 <i>Mostrar Barra de Favoritos</i><br/><br/>
-
-              <b style="color:${C.text};">N\u00e3o consigo arrastar?</b><br/>
-              Use a aba <b>"Manual"</b> ao lado: voc\u00ea cola uma linha por snippet no formato
-              <code>/cmd | nome | texto</code> e funciona igual.<br/><br/>
-
-              <b style="color:${C.text};">N\u00e3o quero bookmarklet, prefiro userscript:</b><br/>
-              Instale <code>tools/textblaze-scraper.user.js</code> no Tampermonkey \u2014 ele coloca o
-              bot\u00e3o "Capturar snippets" direto na p\u00e1gina do dashboard do TB.
-            </div>
-          </details>`,
-        placeholder: `Cole aqui o JSON gerado pelo bookmarklet. Exemplo:\n\n[\n  { "command": "/ola", "name": "Saudacao", "text": "Ola, tudo bem?" },\n  { "command": "/obg", "name": "Agradecimento", "text": "Obrigado pelo retorno!" }\n]`
+            <b>Depois de capturar (qualquer op\u00e7\u00e3o):</b><br/>
+            \u279C O JSON \u00e9 <b>copiado automaticamente</b> pro clipboard.<br/>
+            \u279C Volta aqui e cole no campo abaixo (Cmd/Ctrl+V) \u2192 Validar \u2192 Importar.
+          </div>`,
+        placeholder: `Cole aqui o JSON gerado pelo scraper. Exemplo:\n\n[\n  { "command": "/ola", "name": "Saudacao", "text": "Ola, tudo bem?" },\n  { "command": "/obg", "name": "Agradecimento", "text": "Obrigado pelo retorno!" }\n]`
       },
       manual: {
         hint: `<div style="background:${C.bg2};border-left:3px solid ${C.blue};border-radius:6px;padding:10px 12px;line-height:1.6;">
