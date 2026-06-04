@@ -860,72 +860,89 @@
   }
 
   // =========================
-  // IMPORT TEXT BLAZE: modal pra colar JSON (gerado pelo scraper) ou TSV/CSV manual
+  // IMPORT TEXT BLAZE: modal autocontido pra colar JSON ou TSV manual
+  // (usa estilos inline pra nao depender do CSS do modal pai)
   // =========================
   function openTextBlazeImportModal(onConfirm){
     document.getElementById('ml_tb_import_overlay')?.remove();
+    document.getElementById('ml_tb_import_modal')?.remove();
+
+    // Tokens de cor (fallback se variaveis nao estiverem definidas)
+    const C = {
+      bg0:'#0a0e17', bg1:'#0f172a', bg2:'#1e293b',
+      border:'#2a3a55', text:'#e6ecf6', dim:'#9ca3af',
+      blue:'#5b8def', red:'#ef4444', redSoft:'#3b1620',
+      mono:'ui-monospace,SFMono-Regular,Menlo,monospace'
+    };
 
     const overlay = document.createElement('div');
     overlay.id = 'ml_tb_import_overlay';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10000050;';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10000060;';
 
     const modal = document.createElement('div');
     modal.id = 'ml_tb_import_modal';
     modal.style.cssText = [
       'position:fixed','top:8vh','left:50%','transform:translateX(-50%)',
-      'width:min(720px,94vw)','max-height:84vh','overflow:hidden',
-      'background:var(--ml-bg-1)','color:var(--ml-text)',
-      'border:1px solid var(--ml-border)','border-radius:var(--ml-radius)',
-      'z-index:10000051','display:flex','flex-direction:column'
+      'width:min(680px,94vw)','max-height:84vh',
+      `background:${C.bg1}`, `color:${C.text}`,
+      `border:1px solid ${C.border}`, 'border-radius:12px',
+      'z-index:10000061','display:flex','flex-direction:column',
+      'box-shadow:0 24px 60px rgba(0,0,0,.55)',
+      'font:13px/1.45 system-ui,-apple-system,sans-serif'
     ].join(';');
 
     modal.innerHTML = `
-      <div class="sh" style="flex-shrink:0;">
+      <!-- HEADER -->
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid ${C.border};flex-shrink:0;">
         <div>
-          <div class="title">&#x2B07; Importar snippets do Text Blaze</div>
-          <div class="meta">Cole o JSON gerado pelo scraper, ou uma lista manual.</div>
+          <div style="font-size:15px;font-weight:700;">&#x2B07; Importar snippets do Text Blaze</div>
+          <div style="font-size:12px;color:${C.dim};margin-top:3px;">Cole abaixo o JSON do scraper ou uma lista manual.</div>
         </div>
-        <button id="ml_tb_close">Fechar</button>
+        <button id="ml_tb_close" style="background:${C.bg2};color:${C.text};border:1px solid ${C.border};border-radius:6px;padding:6px 12px;font:600 12px system-ui;cursor:pointer;">Fechar</button>
       </div>
-      <div class="sb" style="flex:1;overflow-y:auto;">
-        <div class="ml-s-tab-hint" style="margin-bottom:14px;">
-          <b>3 jeitos de gerar a entrada:</b><br/>
-          1) <b>Bookmarklet/Userscript</b> (recomendado): instale o <code>tools/textblaze-scraper.user.js</code> no Tampermonkey,
-             abra <a href="https://dashboard.blaze.today/" target="_blank">dashboard.blaze.today</a>, clique no botao roxo
-             "Capturar snippets" e cole aqui o JSON gerado.<br/>
-          2) <b>JSON manual</b>: array no formato <code>[{"command":"/ola","name":"Saudacao","text":"Ola, tudo bem?"}]</code>.<br/>
-          3) <b>Lista simples</b>: uma linha por snippet no formato <code>/comando | nome | texto</code> (separador <code>|</code> ou <code>tab</code>).
+
+      <!-- BODY (rolavel) -->
+      <div style="flex:1;overflow-y:auto;padding:18px 20px;">
+
+        <!-- Tabs: Scraper / Manual -->
+        <div id="ml_tb_tabs" style="display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid ${C.border};">
+          <button data-mode="scraper" class="ml_tb_tab active" style="background:transparent;color:${C.text};border:0;border-bottom:2px solid ${C.blue};padding:8px 12px;font:600 12px system-ui;cursor:pointer;">
+            \uD83E\uDD16 Do Scraper (JSON)
+          </button>
+          <button data-mode="manual" class="ml_tb_tab" style="background:transparent;color:${C.dim};border:0;border-bottom:2px solid transparent;padding:8px 12px;font:600 12px system-ui;cursor:pointer;">
+            \u270F\uFE0F Manual (lista)
+          </button>
         </div>
 
-        <label>Conteudo:</label>
-        <textarea id="ml_tb_input" placeholder='Cole aqui...
+        <!-- Hint dinamico por tab -->
+        <div id="ml_tb_hint" style="background:${C.bg2};border-left:3px solid ${C.blue};border-radius:6px;padding:10px 12px;font-size:12px;color:${C.dim};line-height:1.5;margin-bottom:12px;"></div>
 
-Exemplos:
-[{"command":"/ola","name":"Saudacao","text":"Ola, tudo bem?"}]
+        <!-- Textarea unica -->
+        <textarea id="ml_tb_input" spellcheck="false"
+          style="width:100%;box-sizing:border-box;min-height:200px;max-height:340px;
+                 background:${C.bg0};color:${C.text};border:1px solid ${C.border};border-radius:8px;
+                 padding:10px 12px;font:12px ${C.mono};resize:vertical;"></textarea>
 
-ou
-
-/ola | Saudacao | Ola, tudo bem?
-/obg | Agradecimento | Obrigado pelo retorno!' style="width:100%;min-height:200px;font-family:var(--ml-mono,monospace);font-size:12px;"></textarea>
-
-        <div id="ml_tb_preview" style="margin-top:14px;display:none;">
-          <div style="font-size:12px;font-weight:700;color:var(--ml-text-mut);margin-bottom:6px;">
-            Preview: <span id="ml_tb_count">0</span> snippets sera(o) adicionado(s)
+        <!-- Preview (aparece depois do Validar) -->
+        <div id="ml_tb_preview" style="display:none;margin-top:14px;">
+          <div style="font-size:12px;font-weight:700;color:${C.text};margin-bottom:6px;">
+            \u2705 Preview: <span id="ml_tb_count">0</span> snippet(s) ser\u00e3o adicionados
           </div>
-          <div id="ml_tb_preview_list" style="max-height:240px;overflow-y:auto;background:var(--ml-bg-0);border:1px solid var(--ml-border);border-radius:6px;padding:8px;font-size:12px;"></div>
-          <div style="margin-top:8px;font-size:11px;color:var(--ml-text-mut);">
-            <b>Importante:</b> os snippets sao adicionados ao final da lista atual. Voce ainda precisa clicar <b>"Salvar"</b>
-            no modal de Configuracoes pra persistir.
+          <div id="ml_tb_preview_list" style="max-height:220px;overflow-y:auto;background:${C.bg0};border:1px solid ${C.border};border-radius:8px;"></div>
+          <div style="margin-top:8px;font-size:11px;color:${C.dim};">
+            <b>Lembre:</b> ap\u00f3s importar, ainda \u00e9 preciso clicar <b>"Salvar e recarregar p\u00e1gina"</b> nas Configura\u00e7\u00f5es.
           </div>
         </div>
 
-        <div id="ml_tb_err" style="display:none;margin-top:12px;color:#ffd8d8;background:var(--ml-red-soft);border:1px solid var(--ml-red);padding:10px 12px;border-radius:6px;font-size:12px;"></div>
+        <!-- Erro -->
+        <div id="ml_tb_err" style="display:none;margin-top:12px;color:#ffd8d8;background:${C.redSoft};border:1px solid ${C.red};padding:10px 12px;border-radius:8px;font-size:12px;"></div>
+      </div>
 
-        <div class="actions" style="margin-top:18px;">
-          <button id="ml_tb_cancel" class="ghost">Cancelar</button>
-          <button id="ml_tb_validate">Validar</button>
-          <button id="ml_tb_import" class="primary" disabled style="opacity:.5;">Importar</button>
-        </div>
+      <!-- FOOTER fixo -->
+      <div style="display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid ${C.border};background:${C.bg1};flex-shrink:0;">
+        <button id="ml_tb_cancel" style="background:${C.bg2};color:${C.text};border:1px solid ${C.border};border-radius:6px;padding:8px 14px;font:600 12px system-ui;cursor:pointer;">Cancelar</button>
+        <button id="ml_tb_validate" style="background:${C.bg2};color:${C.text};border:1px solid ${C.border};border-radius:6px;padding:8px 14px;font:600 12px system-ui;cursor:pointer;">Validar</button>
+        <button id="ml_tb_import" disabled style="background:${C.blue};color:#fff;border:0;border-radius:6px;padding:8px 14px;font:600 12px system-ui;cursor:not-allowed;opacity:.5;">Importar</button>
       </div>
     `;
 
@@ -938,40 +955,74 @@ ou
     modal.querySelector('#ml_tb_cancel').onclick = close;
 
     const input = modal.querySelector('#ml_tb_input');
+    const hintBox = modal.querySelector('#ml_tb_hint');
     const errBox = modal.querySelector('#ml_tb_err');
     const previewBox = modal.querySelector('#ml_tb_preview');
     const previewList = modal.querySelector('#ml_tb_preview_list');
     const previewCount = modal.querySelector('#ml_tb_count');
     const importBtn = modal.querySelector('#ml_tb_import');
 
-    let parsed = [];
+    // Conteudo por tab
+    const TAB_CONTENT = {
+      scraper: {
+        hint: `<b>Como obter o JSON:</b><br/>
+               1) Instale <code>tools/textblaze-scraper.user.js</code> no Tampermonkey.<br/>
+               2) Abra <a href="https://dashboard.blaze.today/" target="_blank" style="color:${C.blue};">dashboard.blaze.today</a> e clique no bot\u00e3o roxo "Capturar snippets" no canto superior direito.<br/>
+               3) O JSON \u00e9 copiado pro clipboard automaticamente \u2192 cole aqui.`,
+        placeholder: `Cole aqui o JSON gerado pelo scraper. Exemplo:\n\n[\n  { "command": "/ola", "name": "Saudacao", "text": "Ola, tudo bem?" },\n  { "command": "/obg", "name": "Agradecimento", "text": "Obrigado pelo retorno!" }\n]`
+      },
+      manual: {
+        hint: `<b>Formato:</b> uma linha por snippet, separador <code>|</code> ou <kbd>Tab</kbd>.<br/>
+               Layout: <code>/comando | nome | texto</code> (ou s\u00f3 <code>/comando | texto</code>).`,
+        placeholder: `Cole uma linha por snippet. Exemplo:\n\n/ola | Saudacao | Ola, tudo bem?\n/obg | Agradecimento | Obrigado pelo retorno!\n/aguarda | Aguardando cliente | Aguardando retorno do cliente para prosseguir.`
+      }
+    };
 
+    const setTab = (mode) => {
+      modal.querySelectorAll('.ml_tb_tab').forEach(t => {
+        const active = t.dataset.mode === mode;
+        t.style.color = active ? C.text : C.dim;
+        t.style.borderBottomColor = active ? C.blue : 'transparent';
+        t.classList.toggle('active', active);
+      });
+      const tc = TAB_CONTENT[mode];
+      hintBox.innerHTML = tc.hint;
+      input.placeholder = tc.placeholder;
+    };
+    modal.querySelectorAll('.ml_tb_tab').forEach(t => {
+      t.addEventListener('click', () => setTab(t.dataset.mode));
+    });
+    setTab('scraper');
+
+    let parsed = [];
     const showErr = (msg) => { errBox.textContent = msg; errBox.style.display = 'block'; };
     const hideErr = () => { errBox.style.display = 'none'; };
     const setImportEnabled = (on) => {
       importBtn.disabled = !on;
-      importBtn.style.opacity = on ? '' : '.5';
-      importBtn.style.cursor = on ? '' : 'not-allowed';
+      importBtn.style.opacity = on ? '1' : '.5';
+      importBtn.style.cursor = on ? 'pointer' : 'not-allowed';
     };
 
     const validate = () => {
       hideErr();
       const raw = (input.value || '').trim();
-      if(!raw){ showErr('Cole algum conteudo primeiro.'); previewBox.style.display='none'; setImportEnabled(false); return; }
-
+      if(!raw){
+        showErr('Cole algum conteudo no campo acima primeiro.');
+        previewBox.style.display='none'; setImportEnabled(false); return;
+      }
       parsed = parseTextBlazeInput(raw);
       if(!parsed.length){
-        showErr('Nao consegui interpretar nada. Confira o formato (veja exemplos acima).');
-        previewBox.style.display = 'none';
-        setImportEnabled(false);
-        return;
+        showErr('Nao consegui interpretar nada. Confira o formato (veja a dica acima).');
+        previewBox.style.display = 'none'; setImportEnabled(false); return;
       }
       previewCount.textContent = parsed.length;
-      previewList.innerHTML = parsed.map(s => `
-        <div style="padding:6px 8px;border-bottom:1px solid var(--ml-border);">
-          <code style="color:var(--ml-blue);">${esc(s.command || '(sem cmd)')}</code>
-          <b style="margin-left:8px;">${esc(s.name || '(sem nome)')}</b>
-          <div style="color:var(--ml-text-mut);font-size:11px;margin-top:2px;white-space:pre-wrap;">${esc((s.text || '').slice(0, 160))}${s.text && s.text.length > 160 ? '...' : ''}</div>
+      previewList.innerHTML = parsed.map((s, i) => `
+        <div style="padding:8px 10px;${i > 0 ? `border-top:1px solid ${C.border};` : ''}">
+          <div style="display:flex;gap:8px;align-items:baseline;margin-bottom:3px;">
+            <code style="color:${C.blue};font-family:${C.mono};font-size:12px;">${esc(s.command || '(sem cmd)')}</code>
+            <b style="font-size:12px;">${esc(s.name || '(sem nome)')}</b>
+          </div>
+          <div style="color:${C.dim};font-size:11px;white-space:pre-wrap;word-break:break-word;">${esc((s.text || '').slice(0, 180))}${s.text && s.text.length > 180 ? '...' : ''}</div>
         </div>
       `).join('');
       previewBox.style.display = 'block';
@@ -986,6 +1037,8 @@ ou
       try{ onConfirm(parsed); }catch(e){ showErr('Erro ao adicionar: ' + (e.message || e)); return; }
       close();
     };
+
+    setTimeout(() => input.focus(), 50);
   }
 
   // Parser flexivel: tenta JSON primeiro, depois TSV/pipe.
