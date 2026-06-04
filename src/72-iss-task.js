@@ -420,19 +420,133 @@
   }
 
   // Adiciona um comentario a uma issue. Usado como ultimo recurso para preservar a description original.
-  async function jiraAddComment(issueKey, adfDoc){
+  // opts.internal=true marca o comentario como observacao interna (sd.public.comment).
+  async function jiraAddComment(issueKey, adfDoc, opts){
     const url = `${location.origin}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`;
+    const body = { body: adfDoc };
+    if(opts && opts.internal){
+      body.properties = [{ key: 'sd.public.comment', value: { internal: true } }];
+    }
     const r = await fetch(url, {
       method:'POST',
       credentials:'same-origin',
       headers:{ 'Accept':'application/json', 'Content-Type':'application/json' },
-      body: JSON.stringify({ body: adfDoc })
+      body: JSON.stringify(body)
     });
     if(!r.ok){
       const t = await r.text().catch(()=>'');
       throw new Error(`HTTP ${r.status} ao adicionar comment: ${t.slice(0,200)}`);
     }
     return true;
+  }
+
+  // Pagina todos os comentarios de uma issue. Endpoint: /rest/api/3/issue/{key}/comment
+  // Retorna array de { id, author, body (ADF), created, jsdPublic }.
+  // Ordena cronologicamente (mais antigo primeiro) pra preservar a leitura natural.
+  async function getAllIssueComments(issueKey){
+    const all = [];
+    const PAGE = 100;
+    let startAt = 0;
+    // Salvaguarda: maximo 20 paginas (= 2000 comments) pra nao travar
+    for(let page = 0; page < 20; page++){
+      const url = `${location.origin}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment?startAt=${startAt}&maxResults=${PAGE}&orderBy=created`;
+      const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
+      const txt = await r.text().catch(()=>'');
+      if(!r.ok) throw new Error(`HTTP ${r.status} ao ler comments: ${txt.slice(0,200)}`);
+      const j = JSON.parse(txt);
+      const arr = Array.isArray(j.comments) ? j.comments : [];
+      all.push(...arr);
+      const total = Number(j.total) || all.length;
+      startAt += arr.length;
+      if(arr.length < PAGE || startAt >= total) break;
+    }
+    return all;
+  }
+
+  // Formata data ISO para "DD/MM/YYYY HH:MM" no fuso local.
+  function _formatCommentDate(iso){
+    try{
+      const d = new Date(iso);
+      if(isNaN(d.getTime())) return String(iso || '');
+      const dd = String(d.getDate()).padStart(2,'0');
+      const mm = String(d.getMonth()+1).padStart(2,'0');
+      const yyyy = d.getFullYear();
+      const hh = String(d.getHours()).padStart(2,'0');
+      const mi = String(d.getMinutes()).padStart(2,'0');
+      return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
+    }catch{ return String(iso || ''); }
+  }
+
+  // Monta UM documento ADF que contem o digest de todos os comentarios.
+  // Formato (compacto e legivel):
+  //
+  //   Heading h3: "Comentarios herdados de IS-XXX (N total)"
+  //   Para cada comment:
+  //     Heading h4: "[i] @autor - DD/MM/YYYY HH:MM [interno/publico]"
+  //     Parágrafo: <texto extraido do ADF original>
+  //     Rule (separador)
+  //   Heading h4 final: "Fim dos comentarios herdados."
+  function buildCommentsDigestAdf(srcKey, comments){
+    const content = [];
+    const headerText = `Comentarios herdados de ${srcKey} (${comments.length} ${comments.length === 1 ? 'comentario' : 'comentarios'})`;
+    content.push({
+      type: 'heading', attrs: { level: 3 },
+      content: [{ type: 'text', text: headerText }]
+    });
+
+    if(!comments.length){
+      content.push({ type: 'paragraph', content: [{ type: 'text', text: '(nenhum comentario no ticket origem)' }] });
+      return { type: 'doc', version: 1, content };
+    }
+
+    comments.forEach((c, idx) => {
+      const author = c?.author?.displayName || c?.author?.emailAddress || 'desconhecido';
+      const when = _formatCommentDate(c?.created);
+      // jsdPublic: true = publico (visivel cliente); false = interno
+      const visibility = (c?.jsdPublic === false) ? 'interno' : 'publico';
+      const headerLine = `[${idx + 1}] ${author} - ${when} [${visibility}]`;
+
+      content.push({
+        type: 'heading', attrs: { level: 4 },
+        content: [{ type: 'text', text: headerLine }]
+      });
+
+      const bodyText = descriptionToText(c?.body) || '(sem conteudo de texto)';
+      // textToAdfParagraphs ja retorna { type: 'doc', content: [...] } - extraimos content
+      const bodyAdf = textToAdfParagraphs(bodyText);
+      const blocks = Array.isArray(bodyAdf?.content) ? bodyAdf.content : [];
+      blocks.forEach(b => content.push(b));
+
+      content.push({ type: 'rule' });
+    });
+
+    content.push({
+      type: 'paragraph',
+      content: [{ type: 'text', text: 'Fim dos comentarios herdados.' }]
+    });
+
+    return { type: 'doc', version: 1, content };
+  }
+
+  // Coleta os comentarios do source e os adiciona como UM unico comentario INTERNO
+  // no destino. Best-effort: retorna o relatorio sem lancar excecao em caso de falha.
+  async function copyCommentsAsDigest(srcKey, dstKey){
+    const report = { copied: 0, total: 0, mode: 'digest', error: null };
+    try{
+      const comments = await getAllIssueComments(srcKey);
+      report.total = comments.length;
+      if(!comments.length){
+        report.mode = 'skipped-empty';
+        return report;
+      }
+      const adf = buildCommentsDigestAdf(srcKey, comments);
+      await jiraAddComment(dstKey, adf, { internal: true });
+      report.copied = comments.length;
+      return report;
+    }catch(e){
+      report.error = String(e.message || e);
+      return report;
+    }
   }
 
   async function jiraCreateLink(typeName, inwardKey, outwardKey){
@@ -691,7 +805,16 @@
       attachmentsReport.skipped = false;
     }
 
-    return { newKey, linkType: linkTypeName, attachmentsReport, descReport };
+    // Copia comentarios como digest (1 comment interno consolidado).
+    // Feito DEPOIS dos anexos pra eles ficarem na nova issue antes do digest aparecer
+    // no historico - assim quem ler ja ve "tem anexo + tem o digest contextualizando".
+    let commentsReport = { copied: 0, total: 0, mode: 'skipped-disabled', error: null };
+    if(ISS_TASK_COPY_COMMENTS){
+      progress('Copiando comentarios do ticket origem como digest...');
+      commentsReport = await copyCommentsAsDigest(sourceIssueKey, newKey);
+    }
+
+    return { newKey, linkType: linkTypeName, attachmentsReport, commentsReport, descReport };
   }
 
   function shouldOfferIssTask(teamValue){

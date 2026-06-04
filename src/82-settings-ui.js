@@ -198,6 +198,10 @@
                 <label class="checkbox"><input type="checkbox" id="ml_s_iss_atts" ${cur.ISS_TASK_COPY_ATTACHMENTS !== false ? 'checked' : ''} /> Copiar anexos do ticket original para a tarefa ISS</label>
                 <div class="hint">Best-effort: se algum anexo falhar, os outros vao. Falhas aparecem no console e no resumo final.</div>
               </div>
+              <div>
+                <label class="checkbox"><input type="checkbox" id="ml_s_iss_comments" ${cur.ISS_TASK_COPY_COMMENTS !== false ? 'checked' : ''} /> Copiar comentarios do ticket original (1 digest interno na ISS)</label>
+                <div class="hint">Compila TODOS os comentarios (publicos + internos) em UM unico comentario <b>interno</b> na nova tarefa, com autor + data + visibilidade original. Evita poluir o historico com varios comments.</div>
+              </div>
             </div>
           </div>
 
@@ -669,6 +673,7 @@
           ISS_TASK_LINK_TYPE_NAME: String(modal.querySelector('#ml_s_iss_link').value || '').trim(),
           ISS_TASK_MODEL_ISSUE: String(modal.querySelector('#ml_s_iss_model').value || '').trim().toUpperCase(),
           ISS_TASK_COPY_ATTACHMENTS: !!modal.querySelector('#ml_s_iss_atts').checked,
+          ISS_TASK_COPY_COMMENTS:    !!modal.querySelector('#ml_s_iss_comments').checked,
 
           // Backup reminder
           BACKUP_REMIND_ENABLED: !!modal.querySelector('#ml_s_backup_enabled').checked,

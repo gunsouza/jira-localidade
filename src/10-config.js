@@ -29,6 +29,10 @@
     // (DELETE /rest/api/3/issue/{key}/watchers?accountId=...). Voce para de receber
     // notificacoes daquele ticket. Best-effort: nao bloqueia o fluxo se falhar.
     DERIVE_UNWATCH_AFTER: true,
+    // Apos derivar, remove o assignee atual (volta o ticket pra fila do novo time).
+    // Default true porque, ao derivar pra outro time, o esperado e que QUALQUER pessoa
+    // do novo time possa pegar o ticket -- deixar atribuido pra voce confunde.
+    DERIVE_UNASSIGN_AFTER: true,
     DERIVE_TEAMS_ALLOWLIST: [
       "IS-SHIP-NATS-N1",
       "IS-SHIP-OPS",
@@ -64,6 +68,11 @@
     ISS_TASK_MODEL_ISSUE: 'ISS-19104',
     // Copiar anexos do ticket que estamos derivando para a tarefa ISS criada (best-effort).
     ISS_TASK_COPY_ATTACHMENTS: true,
+    // Quando true, ao criar uma tarefa ISS o plugin baixa todos os comentarios do
+    // ticket origem e adiciona UM UNICO comentario-resumo (interno) na nova tarefa
+    // contendo: autor, data, visibilidade original e o texto. Mais compacto que
+    // 1-para-1 e evita poluicao do historico.
+    ISS_TASK_COPY_COMMENTS: true,
 
     // ---- Snippets de comentario (banco reutilizavel por usuario) ----
     // Cada snippet eh { name: string, text: string }. Usados em qualquer textarea
@@ -236,6 +245,7 @@
   const DERIVE_COMMENT_DEFAULT = SETTINGS.DERIVE_COMMENT_DEFAULT;
   // Default true. Se nunca setou, undefined -> true; se setou false, respeita.
   const DERIVE_UNWATCH_AFTER = (SETTINGS.DERIVE_UNWATCH_AFTER !== false);
+  const DERIVE_UNASSIGN_AFTER = (SETTINGS.DERIVE_UNASSIGN_AFTER !== false);
   const DERIVE_TEAMS_ALLOWLIST = Array.isArray(SETTINGS.DERIVE_TEAMS_ALLOWLIST) && SETTINGS.DERIVE_TEAMS_ALLOWLIST.length
     ? SETTINGS.DERIVE_TEAMS_ALLOWLIST
     : DEFAULTS.DERIVE_TEAMS_ALLOWLIST;
@@ -267,6 +277,7 @@
   // Para o modelo, se o usuario tem '' salvo de uma versao antiga, caimos no default novo (ISS-19104).
   const ISS_TASK_MODEL_ISSUE = (SETTINGS.ISS_TASK_MODEL_ISSUE || DEFAULTS.ISS_TASK_MODEL_ISSUE || '').trim();
   const ISS_TASK_COPY_ATTACHMENTS = (SETTINGS.ISS_TASK_COPY_ATTACHMENTS !== false);
+  const ISS_TASK_COPY_COMMENTS    = (SETTINGS.ISS_TASK_COPY_COMMENTS !== false);
 
   // Snippets de comentario: lista de {name, text}
   const COMMENT_SNIPPETS = Array.isArray(SETTINGS.COMMENT_SNIPPETS)

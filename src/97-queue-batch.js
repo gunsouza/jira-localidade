@@ -521,6 +521,16 @@
           progressLog(`<b style="color:#86efac;">[OK]</b> ${esc(key)} derivado para ${esc(chosenTeam.value)}`);
           ok++;
 
+          // Unassign best-effort (libera ticket pra fila do novo time)
+          if(DERIVE_UNASSIGN_AFTER){
+            try{
+              await jiraUnassign(key);
+              progressLog(`     &#8627; <b style="color:#86efac;">[UNASSIGN]</b> assignee removido`);
+            }catch(eUa){
+              progressLog(`     &#8627; <b style="color:#fbbf24;">[UNASSIGN WARN]</b> ${esc(eUa.message || String(eUa))}`);
+            }
+          }
+
           // Unwatch best-effort com retry (Jira pode re-adicionar via auto-watch on comment
           // ou workflow post-function). No lote, usamos delays menores pra nao ficar muito
           // lento - alem de ja agendar uma tentativa tardia (20s) que cobre post-functions lentas.
@@ -549,6 +559,9 @@
               const r = await createIssTaskFromIssue(key, () => {});
               issResults.push({ key, newKey: r.newKey });
               progressLog(`     &#8627; ISS ${esc(r.newKey)} criada e vinculada (link: <a href="${esc(location.origin + '/browse/' + r.newKey)}" target="_blank" rel="noopener">${esc(r.newKey)}</a>)`, 'var(--ml-text)');
+              if(r.commentsReport && r.commentsReport.copied > 0){
+                progressLog(`         &#8627; <b style="color:#86efac;">[COMMENTS]</b> ${r.commentsReport.copied} comentario(s) herdado(s) como digest interno`);
+              }
               try{ await addInternalComment(key, `Tarefa de troubleshooting criada e vinculada: ${r.newKey} (${location.origin}/browse/${r.newKey}).`); }catch(_){}
             }catch(eIss){
               progressLog(`     &#8627; <b style="color:#fca5a5;">[ISS FAIL]</b> ${esc(eIss.message || String(eIss))}`);

@@ -152,6 +152,23 @@
     document.body.appendChild(modal);
   }
 
+  // Remove o assignee atual do ticket (atribui pra "nenhum"). Usado apos derivar
+  // pra liberar o chamado pra fila do novo time. Best-effort.
+  async function jiraUnassign(issueKey){
+    const url = `${location.origin}/rest/api/3/issue/${encodeURIComponent(issueKey)}/assignee`;
+    const r = await fetch(url, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Accept':'application/json', 'Content-Type':'application/json' },
+      body: JSON.stringify({ accountId: null })
+    });
+    if(!r.ok){
+      const txt = await r.text().catch(() => '');
+      throw new Error(`HTTP ${r.status} ao desatribuir ${issueKey}: ${txt.slice(0, 250)}`);
+    }
+    return true;
+  }
+
   async function jiraDoDerive(issueKey, transitionId, teamOptionId, internalCommentText) {
     const url = `${location.origin}/rest/api/3/issue/${issueKey}/transitions`;
 
@@ -237,6 +254,18 @@
             return;
           }
 
+          // 1.4) Unassign best-effort (libera ticket pra fila do novo time)
+          let unassignMsg = '';
+          if(DERIVE_UNASSIGN_AFTER){
+            try{
+              await jiraUnassign(issueKey);
+              unassignMsg = `\nAssignee removido (ticket liberado pra fila do novo time).`;
+            }catch(e){
+              console.warn('[jira-localidade][derive] unassign falhou (nao critico):', e);
+              unassignMsg = `\n[!] Nao foi possivel remover seu nome como responsavel: ${e.message || e}`;
+            }
+          }
+
           // 1.5) Unwatch best-effort com retry (nao bloqueia se falhar)
           let unwatchMsg = '';
           if(DERIVE_UNWATCH_AFTER){
@@ -258,12 +287,12 @@
 
           // 2) Se o checkbox estava marcado, tentar criar a tarefa ISS.
           if(!createIssTask){
-            alert('Derivado com sucesso.' + unwatchMsg);
+            alert('Derivado com sucesso.' + unassignMsg + unwatchMsg);
             return;
           }
 
           try{
-            const { newKey, linkType, attachmentsReport, descReport } = await createIssTaskFromIssue(issueKey);
+            const { newKey, linkType, attachmentsReport, commentsReport, descReport } = await createIssTaskFromIssue(issueKey);
             const link = `${location.origin}/browse/${newKey}`;
 
             // Adiciona comentario interno no ticket ORIGINAL avisando que a tarefa foi criada.
@@ -276,7 +305,7 @@
               console.warn('[jira-localidade] falha ao comentar no ticket original:', e);
             }
 
-            let msg = `Derivado com sucesso.${unwatchMsg}\nTarefa ${newKey} criada e vinculada (${linkType}).`;
+            let msg = `Derivado com sucesso.${unassignMsg}${unwatchMsg}\nTarefa ${newKey} criada e vinculada (${linkType}).`;
             if(originalCommentOk){
               msg += `\nComentario adicionado em ${issueKey} mencionando ${newKey}.`;
             }
@@ -300,6 +329,17 @@
                 msg += `\nAnexos: ${attachmentsReport.copied}/${attachmentsReport.total} copiados (${attachmentsReport.errors.length} falha(s) - ver console).`;
               } else {
                 msg += `\nAnexos: ${attachmentsReport.copied}/${attachmentsReport.total} copiados.`;
+              }
+            }
+            if(commentsReport){
+              if(commentsReport.mode === 'skipped-empty'){
+                msg += `\nComentarios: ticket origem sem comentarios.`;
+              } else if(commentsReport.mode === 'skipped-disabled'){
+                // nao mostra nada (feature desligada)
+              } else if(commentsReport.error){
+                msg += `\n[!] Comentarios: falha ao copiar (${commentsReport.error}).`;
+              } else {
+                msg += `\nComentarios: ${commentsReport.copied} herdado(s) (digest interno adicionado em ${newKey}).`;
               }
             }
             msg += `\n\nAbrir ${newKey} em nova aba?`;
