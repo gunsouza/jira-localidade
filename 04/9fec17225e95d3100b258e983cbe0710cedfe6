@@ -1,0 +1,28 @@
+extension/page-script.js
+  s_81e60f5c7c2794::t_601219f4c32ab7 6673-6680
+userscript/jira-localidade.user.js
+  ai_agent 4
+  s_81e60f5c7c2794::t_601219f4c32ab7 6688-6695
+build.sh
+  s_81e60f5c7c2794::t_3a80ed5ba5a6fc 48-73
+src/82-settings-ui.js
+  s_81e60f5c7c2794::t_20e2093f464ad0 965-972
+extension/manifest.json
+  s_81e60f5c7c2794::t_e05d328a677b06 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "049fec17225e95d3100b258e983cbe0710cedfe6",
+  "prompts": {},
+  "sessions": {
+    "s_81e60f5c7c2794": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "8cdc45e0-0b64-4dcd-8760-2075f8794ab2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Gustavo Nunes De Souza <gustavo.nsouza@mercadolivre.com>"
+    }
+  }
+}
