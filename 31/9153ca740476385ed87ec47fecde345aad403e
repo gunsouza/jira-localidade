@@ -1,0 +1,44 @@
+src/97-queue-batch.js
+  s_81e60f5c7c2794::t_c178f4eadc73c8 562-564
+  s_81e60f5c7c2794::t_07f0aa778547ed 524-533
+extension/manifest.json
+  s_81e60f5c7c2794::t_3bea7c501f54c4 4
+src/72-iss-task.js
+  s_81e60f5c7c2794::t_6e5df8cdab38da 808-817
+  s_81e60f5c7c2794::t_11082babdfaeef 423-424,426-429,434,443-549
+src/10-config.js
+  s_81e60f5c7c2794::t_d75ce3f09982bb 71-75
+  s_81e60f5c7c2794::t_78f28681f110d2 280
+  s_81e60f5c7c2794::t_345f82bb94f10d 248
+  s_81e60f5c7c2794::t_f2aeade0000660 32-35
+userscript/jira-localidade.user.js
+  s_81e60f5c7c2794::t_1cdf6277625efc 4,77-80,116-120,293,325,1848-1864,1950-1961,1983,1988,2001,2027-2037,2473-2474,2476-2479,2484,2493-2601,2858-2867,5558-5561,6033,7354-7363,7392-7394
+src/82-settings-ui.js
+  s_81e60f5c7c2794::t_9a6fd264fc83d1 201-204
+  s_81e60f5c7c2794::t_3ea0a1d7f9c3cf 676
+extension/page-script.js
+  s_81e60f5c7c2794::t_1cdf6277625efc 62-65,101-105,278,310,1833-1849,1935-1946,1968,1973,1986,2012-2022,2458-2459,2461-2464,2469,2478-2586,2843-2852,5543-5546,6018,7339-7348,7377-7379
+src/70-derive.js
+  s_81e60f5c7c2794::t_f785b8e83c3218 290
+  s_81e60f5c7c2794::t_b9cd8519592fc8 155-171
+  s_81e60f5c7c2794::t_81cb106f1658d7 295
+  s_81e60f5c7c2794::t_c52c85784155d9 308
+  s_81e60f5c7c2794::t_13c3498bdd0390 257-268
+  s_81e60f5c7c2794::t_34591aa5187fc9 334-344
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "319153ca740476385ed87ec47fecde345aad403e",
+  "prompts": {},
+  "sessions": {
+    "s_81e60f5c7c2794": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "8cdc45e0-0b64-4dcd-8760-2075f8794ab2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Gustavo Nunes De Souza <gustavo.nsouza@mercadolivre.com>"
+    }
+  }
+}
