@@ -45,6 +45,32 @@ for f in $SRC_FILES; do
   cat "$f" >> "$TMP_BUNDLE"
 done
 
+# Inline do scraper do Text Blaze: substitui o placeholder __TB_SCRAPER_ENCODED__
+# pelo conteudo do tools/textblaze-scraper.bookmarklet.js URL-encoded.
+# Isso permite o bookmarklet rodar 100% inline (sem precisar baixar nada),
+# contornando CSPs estritas como a do dashboard.blaze.today.
+TB_SCRAPER_FILE="tools/textblaze-scraper.bookmarklet.js"
+if [ -f "$TB_SCRAPER_FILE" ]; then
+  TB_ENCODED=$(python3 -c "
+import urllib.parse, sys
+with open('$TB_SCRAPER_FILE','r') as f:
+    code = f.read()
+# Encode mais agressivo (safe='') pra escapar tambem aspas/parenteses
+print(urllib.parse.quote(code, safe=''))
+")
+  # Substituicao via python pra escapar adequadamente caracteres especiais
+  python3 -c "
+import sys
+with open('$TMP_BUNDLE','r') as f:
+    bundle = f.read()
+encoded = '''$TB_ENCODED'''
+bundle = bundle.replace('__TB_SCRAPER_ENCODED__', encoded)
+with open('$TMP_BUNDLE','w') as f:
+    f.write(bundle)
+"
+  echo "[info] inline do scraper TB ok (${#TB_ENCODED} chars encodados)"
+fi
+
 # Sanity check de sintaxe
 if ! node --check "$TMP_BUNDLE" 2>/dev/null; then
   echo "[erro] Sintaxe invalida no bundle:" >&2

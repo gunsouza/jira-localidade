@@ -962,10 +962,14 @@
     const previewCount = modal.querySelector('#ml_tb_count');
     const importBtn = modal.querySelector('#ml_tb_import');
 
-    // Bookmarklet 1-liner que baixa o scraper do GitHub e executa
-    // (sempre puxa a versao mais recente - auto-update gratis)
-    const SCRAPER_URL = 'https://raw.githubusercontent.com/gunsouza/jira-localidade/main/tools/textblaze-scraper.bookmarklet.js';
-    const BOOKMARKLET_HREF = `javascript:(function(){var s=document.createElement('script');s.src='${SCRAPER_URL}?v='+Date.now();s.onerror=function(){alert('Erro: nao conseguiu baixar o scraper. Voce esta online?');};document.body.appendChild(s);})();void 0;`;
+    // Bookmarklet com o scraper COMPLETO inline (URL-encoded).
+    // Necessario porque dashboards modernos (como blaze.today) tem CSP estrito
+    // que bloqueia carregar scripts externos via <script src=...>.
+    // O placeholder __TB_SCRAPER_ENCODED__ eh substituido no build.sh pelo
+    // conteudo de tools/textblaze-scraper.bookmarklet.js URL-encoded.
+    // Bookmarklets bypassam CSP no Chrome/Firefox/Edge, entao eval() funciona.
+    const TB_SCRAPER_ENCODED = '__TB_SCRAPER_ENCODED__';
+    const BOOKMARKLET_HREF = `javascript:(function(){try{(0,eval)(decodeURIComponent('${TB_SCRAPER_ENCODED}'));}catch(e){alert('Erro: '+e.message+'\\n\\nVoce esta no dashboard.blaze.today?');}})();void 0;`;
 
     // Conteudo por tab
     const TAB_CONTENT = {
