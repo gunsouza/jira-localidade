@@ -1,0 +1,15 @@
+.DS_Store
+dist/
+*.crx
+*.pem
+node_modules/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+ehthumbs.db

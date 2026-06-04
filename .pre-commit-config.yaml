@@ -1,0 +1,12 @@
+# Config minima de pre-commit. So sanity checks basicos -- nada que precise
+# de runtime externo. Mantido apenas para satisfazer o hook global instalado
+# na maquina do dev (que exige a presenca deste arquivo em qualquer projeto).
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
