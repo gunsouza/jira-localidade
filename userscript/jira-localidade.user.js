@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jira Localidade
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.21.4
+// @version      1.21.5
 // @description  Adiciona o botao flutuante "Localidade" aos tickets do Jira: lista duplicados pela mesma localidade (Assets / IS Ubicacion), permite vincular como duplicado, comentar como observacao interna em lote e derivar para outros times.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -5123,8 +5123,16 @@
 
     // Auto-detect: se o clipboard tem uma key Jira (e nao e a current), oferece buscar.
     if(clipBar && navigator?.clipboard?.readText){
-      navigator.clipboard.readText().then(txt => {
-        const k = String(txt || '').toUpperCase().match(/[A-Z][A-Z0-9_]+-\d+/)?.[0];
+      navigator.clipboard.readText().then(rawTxt => {
+        const txt = String(rawTxt || '').trim();
+        // Guard 1: clipboard grande = provavelmente codigo/texto longo, ignora
+        if(!txt || txt.length > 200) return;
+        // Guard 2: clipboard com aparencia de codigo (chaves, ponto-virgula, multiplas linhas)
+        // tambem nao deve disparar auto-detect
+        const looksLikeCode = /[{};()=<>]/.test(txt) || txt.split('\n').length > 3;
+        if(looksLikeCode) return;
+        // Guard 3: word boundary pra nao casar com substring no meio de algo
+        const k = txt.toUpperCase().match(/\b([A-Z][A-Z0-9_]+-\d+)\b/)?.[0];
         if(!k || k === currentIssueKey) return;
         clipBar.innerHTML = `
           <div style="display:flex;gap:10px;align-items:center;padding:10px 14px;background:var(--ml-blue-soft);border:1px solid var(--ml-blue-line);border-radius:var(--ml-radius-sm);font-size:12.5px;">
