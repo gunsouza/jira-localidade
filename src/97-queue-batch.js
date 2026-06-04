@@ -1,5 +1,5 @@
   // =========================
-  // QUEUE BATCH ACTIONS — derivar/criar ISS em lote em /issues e /queues
+  // QUEUE BATCH ACTIONS — Gerenciador: derivar/criar ISS em lote em /issues e /queues
   //
   // UX:
   //   - Botao "Lote" aparece quando voce esta numa pagina /issues?filter=... ou /queues/...
@@ -11,7 +11,7 @@
   // =========================
 
   function isQueueOrIssuesPage(){
-    // Se ja tem um ticket aberto (browse/X ou queues/issue/X), nao mostra "Lote"
+    // Se ja tem um ticket aberto (browse/X ou queues/issue/X), nao mostra "Gerenciador"
     // - usuario quer "Localidade" pra acoes daquele chamado.
     if(getIssueKey()) return false;
     return /\/(issues|queues)(\b|\/|\?|$)/.test(location.pathname);
@@ -79,7 +79,7 @@
     if(document.getElementById('ml_batch_btn')) return;
     const b = document.createElement('button');
     b.id = 'ml_batch_btn';
-    b.textContent = 'Lote';
+    b.textContent = 'Gerenciador';
     b.title = 'Aplicar acoes em massa (derivar / criar ISS) nesta tela';
     Object.assign(b.style, {
       position: 'fixed', right: '18px', bottom: '70px', zIndex: '9999997',
@@ -118,7 +118,7 @@
     modal.innerHTML = `
       <div class="ch">
         <div>
-          <div class="title"><span class="titleDot" style="background:#34c578;box-shadow:0 0 0 4px rgba(52,197,120,.18);"></span>Acoes em lote</div>
+          <div class="title"><span class="titleDot" style="background:#34c578;box-shadow:0 0 0 4px rgba(52,197,120,.18);"></span>Gerenciador de fila</div>
           <div class="subtitle">Derive ou crie tarefas ISS para varios chamados de uma vez.</div>
         </div>
         <div style="display:flex;gap:8px;">
@@ -132,7 +132,7 @@
             <li>${esc(sourceLabel)}: <b>${detected.length}</b> chamado(s) (todos <b>desmarcados</b> por seguranca).</li>
             <li>Voce pode <b>colar mais keys</b> (uma por linha ou separadas por virgula/espaco) e clicar "Adicionar".</li>
             <li>Use o filtro pra achar e <b>marque</b> os chamados que quer processar (ou "Marcar todos").</li>
-            <li>Escolha a acao (Derivar para time X / com ISS) e clique "Executar lote".</li>
+            <li>Escolha a acao (Derivar para time X / com ISS) e clique "Executar".</li>
           </ol>
         </div>
 
@@ -184,7 +184,7 @@
 
         <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
           <button id="ml_batch_cancel" class="btnSecondary">Cancelar</button>
-          <button id="ml_batch_run" class="btnPrimary">Executar lote</button>
+          <button id="ml_batch_run" class="btnPrimary">Executar</button>
         </div>
 
         <div id="ml_batch_progress" style="margin-top:14px;"></div>
@@ -585,7 +585,7 @@
       }${issEligible ? `, <b>${issResults.length}</b> ISS(s) criada(s)` : ''}, <b>${fail}</b> falha(s).`;
       p.appendChild(summary);
 
-      modal.querySelector('#ml_batch_run').innerHTML = 'Executar lote';
+      modal.querySelector('#ml_batch_run').innerHTML = 'Executar';
       modal.querySelector('#ml_batch_run').disabled = false;
     };
   }

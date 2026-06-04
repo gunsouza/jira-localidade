@@ -86,11 +86,25 @@
 
     // ---- Tshoot Confluence (chip lateral com link de troubleshooting) ----
     // Lista mantida CENTRALMENTE neste arquivo (admin = quem build do plugin).
-    // Cada regra: { label, url, match: [{ field, value, mode? }, ...] }
+    // Cada regra:
+    //   {
+    //     label, url, icon?, color?,
+    //     match: [{ field, value, mode? }, ...],
+    //     issTemplate?: 'ISS-XXXXX'    // opcional - explicado abaixo
+    //   }
     //   - field: nome humano ("Object Type") ou customfield_XXXX
     //   - value: comparacao case-insensitive + ignora acentos/hifens
     //   - mode:  'exact' (default) | 'contains'
     //   - match e AND entre criterios. Multiplas regras podem matchar (mostra varios chips).
+    //
+    // issTemplate (opcional, novidade da v1.20.2):
+    //   Quando o usuario clica em "Criar ISS" (via Derivar ou outro fluxo) a partir
+    //   de um chamado que MATCHA esta regra, o plugin usa o ticket aqui referenciado
+    //   como TEMPLATE (copia Demanda, Service, Resolution Team).
+    //   Ex: regra "Botao de Panico" tem issTemplate=ISS-19469, entao a ISS criada vem
+    //   com Service=Control Acceso, Demand=Analisis (que sao os valores de ISS-19469).
+    //   Se nenhuma regra com issTemplate casar, usa ISS_TASK_MODEL_ISSUE default.
+    //   PRIMEIRA regra que casa vence (ordem importa).
     //
     // Pra adicionar uma nova regra:
     //   1) No Jira, abra um ticket exemplo
@@ -110,7 +124,11 @@
           // Tickets de "Botao de Panico" sao identificados pelo Object Type.
           // (Object Origin = Seguridad Electronica e mais generico - cobre toda a familia)
           { field: 'Object Type', value: 'Boton de panico' }
-        ]
+        ],
+        // Quando criamos uma tarefa ISS a partir deste tipo de chamado, usamos este
+        // ticket como TEMPLATE (copia Demanda, Service, Resolution Team).
+        // Pra Botao de Panico: Service = "Control Acceso", Demand = "Analisis", ResTeam = SHIP-NATS-N1.
+        issTemplate: 'ISS-19469'
       },
       {
         // PYMES = Pesar Y Medir (cubadores de Mercado Envios).
@@ -299,7 +317,7 @@
       .filter(r => r && typeof r === 'object' && r.url && Array.isArray(r.match) && r.match.length)
       .map(r => {
         const overrideUrl = String(overrides[r.label] || '').trim();
-        return {
+        const out = {
           label: String(r.label || 'Tshoot').trim(),
           icon:  String(r.icon || '').trim(),
           color: String(r.color || '').trim(), // default '' -> dourado padrao
@@ -312,6 +330,11 @@
               mode:  (c.mode === 'contains' ? 'contains' : 'exact')
             }))
         };
+        // Opcional: template ISS-XXXX para criar tarefa com Demanda/Service/ResTeam pre-resolvidos
+        if(r.issTemplate && typeof r.issTemplate === 'string'){
+          out.issTemplate = r.issTemplate.trim().toUpperCase();
+        }
+        return out;
       })
       .filter(r => r.match.length);
   })();

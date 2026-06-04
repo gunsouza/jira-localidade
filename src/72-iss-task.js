@@ -568,19 +568,54 @@
   // Orquestra a criacao completa da tarefa ISS a partir de um ticket de origem.
   // Retorna { newKey, linkType, attachmentsReport } em caso de sucesso. Lanca em caso de erro.
   // onProgress(stage:string) opcional para feedback de UI.
+  // Resolve qual ticket-modelo (ISS template) usar pra criar a tarefa, baseado nas
+  // regras Confluence. Se alguma rule der match no source E tiver `issTemplate`, ela
+  // vence (primeira que casa). Senao, usa ISS_TASK_MODEL_ISSUE default.
+  // Reutiliza a mesma logica de match das chips Confluence (_confRuleMatches).
+  async function _resolveEffectiveIssTemplate(sourceIssueKey){
+    try{
+      const rules = Array.isArray(CONFLUENCE_RULES) ? CONFLUENCE_RULES : [];
+      const templatedRules = rules.filter(r => r && r.issTemplate);
+      if(!templatedRules.length){
+        return { templateKey: ISS_TASK_MODEL_ISSUE, source: 'default', rule: null };
+      }
+      const issueData = await _confGetIssueData(sourceIssueKey);
+      if(!issueData){
+        console.log(`[jira-localidade][iss-template] sem dados de ${sourceIssueKey}, usando default ${ISS_TASK_MODEL_ISSUE}`);
+        return { templateKey: ISS_TASK_MODEL_ISSUE, source: 'default-fallback', rule: null };
+      }
+      for(const r of templatedRules){
+        if(_confRuleMatches(r, issueData, false)){
+          console.log(`[jira-localidade][iss-template] match na regra "${r.label}" -> usando template ${r.issTemplate}`);
+          return { templateKey: r.issTemplate, source: 'rule', rule: r };
+        }
+      }
+      console.log(`[jira-localidade][iss-template] nenhuma regra com issTemplate casou em ${sourceIssueKey}, usando default ${ISS_TASK_MODEL_ISSUE}`);
+      return { templateKey: ISS_TASK_MODEL_ISSUE, source: 'default', rule: null };
+    }catch(e){
+      console.warn('[jira-localidade][iss-template] erro resolvendo template, usando default:', e);
+      return { templateKey: ISS_TASK_MODEL_ISSUE, source: 'default-error', rule: null };
+    }
+  }
+
   async function createIssTaskFromIssue(sourceIssueKey, onProgress){
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
 
-    progress('Lendo ticket origem, modelo e schema de criacao...');
+    // Decide o template baseado em regras Confluence (se alguma matchar e tiver issTemplate).
+    progress('Avaliando qual template ISS usar para este chamado...');
+    const tmpl = await _resolveEffectiveIssTemplate(sourceIssueKey);
+    const effectiveTemplate = tmpl.templateKey;
+
+    progress(`Lendo ticket origem, modelo (${effectiveTemplate || '(nenhum)'}) e schema de criacao...`);
     const baseTasks = [
       jiraGetMyself(),
       getIssueFullForCopy(sourceIssueKey),
       resolveIssTaskLinkTypeName(),
       getProjectAndIssueTypeIds(ISS_TASK_PROJECT, ISS_TASK_ISSUETYPE)
     ];
-    if(ISS_TASK_MODEL_ISSUE){
+    if(effectiveTemplate){
       // So precisamos das IDs/values exatas de Demanda, Service e ResTeam da modelo.
-      baseTasks.push(getIssueRawFields(ISS_TASK_MODEL_ISSUE, [ISS_TASK_DEMANDA_CF, ISS_TASK_SERVICE_CF, CF_RES_TEAM]));
+      baseTasks.push(getIssueRawFields(effectiveTemplate, [ISS_TASK_DEMANDA_CF, ISS_TASK_SERVICE_CF, CF_RES_TEAM]));
     }
     const [me, source, linkTypeName, projInfo, modelFields] = await Promise.all(baseTasks);
 
@@ -611,9 +646,9 @@
       const cfD = modelFields[`customfield_${ISS_TASK_DEMANDA_CF}`];
       const cfS = modelFields[`customfield_${ISS_TASK_SERVICE_CF}`];
       const cfR = modelFields[`customfield_${CF_RES_TEAM}`];
-      if(!cfD) throw new Error(`Issue modelo ${ISS_TASK_MODEL_ISSUE} nao tem Demanda preenchida.`);
-      if(!cfS) throw new Error(`Issue modelo ${ISS_TASK_MODEL_ISSUE} nao tem Service preenchida.`);
-      if(!cfR) throw new Error(`Issue modelo ${ISS_TASK_MODEL_ISSUE} nao tem Resolution Team preenchida.`);
+      if(!cfD) throw new Error(`Issue modelo ${effectiveTemplate} nao tem Demanda preenchida.`);
+      if(!cfS) throw new Error(`Issue modelo ${effectiveTemplate} nao tem Service preenchida.`);
+      if(!cfR) throw new Error(`Issue modelo ${effectiveTemplate} nao tem Resolution Team preenchida.`);
       demandaVal = sanitizeCustomFieldValue(cfD);
       serviceVal = sanitizeCustomFieldValue(cfS);
       resTeamVal = sanitizeCustomFieldValue(cfR);
@@ -664,7 +699,7 @@
 
     console.groupCollapsed(`[jira-localidade] Criando ISS task (de ${sourceIssueKey})`);
     console.log(`project=${ISS_TASK_PROJECT} (id=${projInfo.projectId}), issuetype=${ISS_TASK_ISSUETYPE} (id=${projInfo.issuetypeId})`);
-    console.log(`modelo: ${ISS_TASK_MODEL_ISSUE || '(sem modelo, fallback por value)'}`);
+    console.log(`modelo: ${effectiveTemplate || '(sem modelo, fallback por value)'} [origem: ${tmpl.source}${tmpl.rule ? ` "${tmpl.rule.label}"` : ''}]`);
     console.log('payload:', JSON.parse(JSON.stringify(payload)));
     console.groupEnd();
 
@@ -814,7 +849,14 @@
       commentsReport = await copyCommentsAsDigest(sourceIssueKey, newKey);
     }
 
-    return { newKey, linkType: linkTypeName, attachmentsReport, commentsReport, descReport };
+    return {
+      newKey,
+      linkType: linkTypeName,
+      attachmentsReport,
+      commentsReport,
+      descReport,
+      template: { key: effectiveTemplate, source: tmpl.source, ruleLabel: tmpl.rule?.label || null }
+    };
   }
 
   function shouldOfferIssTask(teamValue){

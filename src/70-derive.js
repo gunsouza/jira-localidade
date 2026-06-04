@@ -144,12 +144,93 @@
       }
       const comment = modal.querySelector('#ml_d_comment').value || DERIVE_COMMENT_DEFAULT;
       const createIssTask = !!(issCheck && issCheck.checked && shouldOfferIssTask(selected.value));
-      await onSubmit({ team: selected, comment, createIssTask });
-      close();
+
+      // Desabilita imediatamente botoes pra evitar duplo-click (que ja causou criar varias
+      // ISS duplicadas em alguns cenarios). Mostra loading state no botao.
+      const btn = modal.querySelector('#ml_d_submit');
+      const btnCancel = modal.querySelector('#ml_d_cancel');
+      const originalLabel = btn?.textContent || 'Derivar';
+      if(btn){
+        btn.disabled = true;
+        btn.style.opacity = '.7';
+        btn.style.cursor = 'not-allowed';
+        btn.textContent = createIssTask ? 'Derivando + criando ISS...' : 'Derivando...';
+      }
+      if(btnCancel){
+        btnCancel.disabled = true;
+        btnCancel.style.opacity = '.5';
+        btnCancel.style.cursor = 'not-allowed';
+      }
+      // Bloqueia overlay (clique fora nao deve fechar enquanto rola)
+      const overlayEl = document.getElementById(IDS.dOverlay);
+      if(overlayEl){
+        overlayEl.style.pointerEvents = 'none';
+      }
+
+      try{
+        await onSubmit({ team: selected, comment, createIssTask });
+        close();
+      }catch(e){
+        // Em caso de erro, restaurar botoes pra usuario poder tentar de novo
+        if(btn){
+          btn.disabled = false;
+          btn.style.opacity = '';
+          btn.style.cursor = '';
+          btn.textContent = originalLabel;
+        }
+        if(btnCancel){
+          btnCancel.disabled = false;
+          btnCancel.style.opacity = '';
+          btnCancel.style.cursor = '';
+        }
+        if(overlayEl) overlayEl.style.pointerEvents = '';
+        console.error('[jira-localidade][derive] erro no submit:', e);
+        alert('Erro ao derivar: ' + (e.message || e));
+      }
     });
 
     document.body.appendChild(overlay);
     document.body.appendChild(modal);
+  }
+
+  // Toast de sucesso pos-derive. Non-blocking (nao trava UI como alert()).
+  // Mensagem pode ser multilinha (\n vira <br>).
+  function showDeriveSuccessToast(msg){
+    try{
+      document.getElementById('ml_derive_toast')?.remove();
+      const t = document.createElement('div');
+      t.id = 'ml_derive_toast';
+      t.style.cssText = `
+        position: fixed; top: 18px; right: 18px; z-index: 2147483647;
+        background: linear-gradient(180deg, #2f8f48, #246a36);
+        color: #fff; padding: 12px 18px; border-radius: 10px;
+        border: 1px solid #2c7a3e;
+        font: 600 13px var(--ml-font, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+        box-shadow: 0 12px 30px rgba(0,0,0,.5);
+        max-width: 420px; line-height: 1.45;
+        animation: mlToastIn .25s cubic-bezier(.16,.84,.44,1);
+      `;
+      const body = String(msg || 'OK').split('\n').map(line => line.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))).join('<br>');
+      t.innerHTML = `<div style="display:flex;gap:8px;align-items:flex-start;"><div style="font-size:16px;">&#10003;</div><div>${body}<div style="margin-top:6px;font-weight:500;font-size:11px;opacity:.85;">A pagina sera recarregada em instantes...</div></div></div>`;
+      document.body.appendChild(t);
+    }catch(_){}
+  }
+
+  // Agenda recarregamento da pagina pos-derive (1.5s pra dar tempo do toast aparecer).
+  // Bloqueia interacao com a pagina nesse intervalo pra evitar o usuario tentar
+  // continuar e ter mudanca de contexto inesperada.
+  function scheduleReloadAfterDerive(){
+    try{
+      // Veu sutil sobre a pagina
+      const veil = document.createElement('div');
+      veil.id = 'ml_reload_veil';
+      veil.style.cssText = `
+        position: fixed; inset: 0; background: rgba(0,0,0,.25);
+        z-index: 2147483640; pointer-events: all;
+      `;
+      document.body.appendChild(veil);
+    }catch(_){}
+    setTimeout(() => { try{ location.reload(); }catch(_){} }, 1500);
   }
 
   // Remove o assignee atual do ticket (atribui pra "nenhum"). Usado apos derivar
@@ -246,13 +327,9 @@
         teams,
         suggestedTeamValue,
         onSubmit: async ({ team, comment, createIssTask }) => {
-          // 1) Derivar primeiro (fonte da verdade). Se falhar, abortar.
-          try{
-            await jiraDoDerive(issueKey, deriveTr.id, team.id, comment || DERIVE_COMMENT_DEFAULT);
-          }catch(e){
-            alert('Falha ao derivar: ' + (e.message || e));
-            return;
-          }
+          // 1) Derivar primeiro (fonte da verdade). Se falhar, lanca erro pro
+          // handler do botao reabilitar a UI e mostrar mensagem.
+          await jiraDoDerive(issueKey, deriveTr.id, team.id, comment || DERIVE_COMMENT_DEFAULT);
 
           // 1.4) Unassign best-effort (libera ticket pra fila do novo time)
           let unassignMsg = '';
@@ -285,69 +362,48 @@
             }
           }
 
-          // 2) Se o checkbox estava marcado, tentar criar a tarefa ISS.
+          // 2) Se o checkbox NAO estava marcado, finaliza so com toast + reload.
           if(!createIssTask){
-            alert('Derivado com sucesso.' + unassignMsg + unwatchMsg);
+            showDeriveSuccessToast(`Derivado para ${team.value}.${unassignMsg}${unwatchMsg}`);
+            scheduleReloadAfterDerive();
             return;
           }
 
+          // 3) Criar tarefa ISS vinculada
           try{
-            const { newKey, linkType, attachmentsReport, commentsReport, descReport } = await createIssTaskFromIssue(issueKey);
+            const { newKey, linkType, attachmentsReport, commentsReport, descReport, template } = await createIssTaskFromIssue(issueKey);
             const link = `${location.origin}/browse/${newKey}`;
 
-            // Adiciona comentario interno no ticket ORIGINAL avisando que a tarefa foi criada.
-            // Best-effort: nao falha o fluxo se nao conseguir.
-            let originalCommentOk = false;
+            // Comentario interno no ticket ORIGINAL (best-effort)
             try{
               await addInternalComment(issueKey, `Tarefa de troubleshooting criada e vinculada: ${newKey} (${link}).`);
-              originalCommentOk = true;
             }catch(e){
               console.warn('[jira-localidade] falha ao comentar no ticket original:', e);
             }
 
-            let msg = `Derivado com sucesso.${unassignMsg}${unwatchMsg}\nTarefa ${newKey} criada e vinculada (${linkType}).`;
-            if(originalCommentOk){
-              msg += `\nComentario adicionado em ${issueKey} mencionando ${newKey}.`;
-            }
+            // Detalhes vao pro console pra debug, toast mostra o essencial
+            console.log('[jira-localidade][derive] sucesso:', {
+              source: issueKey, target: team.value, newKey, linkType,
+              attachmentsReport, commentsReport, descReport
+            });
 
-            if(descReport){
-              if(descReport.method === 'skipped'){
-                msg += `\nDescricao: ticket original sem descricao para copiar.`;
-              } else if(descReport.method === 'update-after-create'){
-                const isPlain = /texto puro/i.test(descReport.detail);
-                msg += `\nDescricao: copiada${isPlain ? ' (texto puro - formato simplificado)' : ' integralmente'}.`;
-              } else if(descReport.method === 'comment-fallback'){
-                msg += `\nDescricao: nao foi possivel setar no campo. Adicionada como COMENTARIO em ${newKey}.`;
-              } else if(descReport.method === 'failed'){
-                msg += `\n[!] Descricao NAO foi copiada (plugin bloqueou tudo). Edite manualmente.`;
-              }
-            }
-            if(attachmentsReport && !attachmentsReport.skipped){
-              if(attachmentsReport.total === 0){
-                msg += `\nNenhum anexo no ticket original.`;
-              } else if(attachmentsReport.errors.length){
-                msg += `\nAnexos: ${attachmentsReport.copied}/${attachmentsReport.total} copiados (${attachmentsReport.errors.length} falha(s) - ver console).`;
-              } else {
-                msg += `\nAnexos: ${attachmentsReport.copied}/${attachmentsReport.total} copiados.`;
-              }
-            }
-            if(commentsReport){
-              if(commentsReport.mode === 'skipped-empty'){
-                msg += `\nComentarios: ticket origem sem comentarios.`;
-              } else if(commentsReport.mode === 'skipped-disabled'){
-                // nao mostra nada (feature desligada)
-              } else if(commentsReport.error){
-                msg += `\n[!] Comentarios: falha ao copiar (${commentsReport.error}).`;
-              } else {
-                msg += `\nComentarios: ${commentsReport.copied} herdado(s) (digest interno adicionado em ${newKey}).`;
-              }
-            }
-            msg += `\n\nAbrir ${newKey} em nova aba?`;
-            if(confirm(msg)){
-              window.open(link, '_blank', 'noopener');
-            }
+            const extras = [];
+            if(attachmentsReport && attachmentsReport.copied > 0) extras.push(`${attachmentsReport.copied} anexo(s)`);
+            if(commentsReport && commentsReport.copied > 0) extras.push(`${commentsReport.copied} comentario(s)`);
+            const extrasTxt = extras.length ? ` (${extras.join(' + ')})` : '';
+            const tmplLine = (template && template.source === 'rule' && template.ruleLabel)
+              ? `\nTemplate: ${template.ruleLabel} (${template.key})`
+              : '';
+
+            // Abre ISS em nova aba imediatamente (sem confirm bloqueante)
+            window.open(link, '_blank', 'noopener');
+            showDeriveSuccessToast(`Derivado + ISS ${newKey} criada${extrasTxt}. Aberta em nova aba.${tmplLine}`);
+            scheduleReloadAfterDerive();
           }catch(e){
+            // Caso a ISS falhe mas o derive ja foi - importante alertar com modal pra nao perder
+            console.error('[jira-localidade][derive] derive OK mas ISS falhou:', e);
             alert(`Derivado com sucesso, MAS falhou ao criar tarefa ISS:\n\n${e.message || e}\n\nVoce pode criar a tarefa manualmente ou tentar novamente.`);
+            scheduleReloadAfterDerive();
           }
         }
       });

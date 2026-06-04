@@ -34,7 +34,7 @@
     const key = getIssueKey();
     if(key) ensureButton();
     else document.getElementById(IDS.btn)?.remove();
-    // Botao "Lote" aparece em /issues e /queues (independente de ter ticket aberto).
+    // Botao "Gerenciador" aparece em /issues e /queues (independente de ter ticket aberto).
     try { ensureBatchButton(); } catch(_) {}
     // Botao "Status" (antigo "Atribuir & iniciar") so em paginas de issue individual.
     try { ensureStatusButton(); } catch(_) {}

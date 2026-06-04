@@ -239,7 +239,7 @@ ${lines.join('\n')}`;
 
       batchBtn.addEventListener('click', () => {
         if(selected.size === 0) return;
-        // Reusa o modal de Lote do queue-batch.js, pre-populando com os duplicados selecionados.
+        // Reusa o modal Gerenciador do queue-batch.js, pre-populando com os duplicados selecionados.
         openBatchModal({
           initialKeys: [...selected],
           sourceLabel: `Selecionados em Duplicados de ${issueKey}`

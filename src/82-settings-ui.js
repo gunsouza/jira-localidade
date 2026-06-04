@@ -115,7 +115,7 @@
               <div class="full">
                 <label>Comentario padrao da derivacao (obs interna, aceita varias linhas)</label>
                 <textarea id="ml_s_derive_msg" style="min-height: 80px;">${esc(cur.DERIVE_COMMENT_DEFAULT)}</textarea>
-                <div class="hint">Pre-preenche o campo de comentario nos modais Derivar e Lote. Pode usar quebras de linha.</div>
+                <div class="hint">Pre-preenche o campo de comentario nos modais Derivar e Gerenciador. Pode usar quebras de linha.</div>
               </div>
               <div class="full">
                 <label>Allowlist de times (um por linha)</label>
@@ -212,7 +212,7 @@
                 <div class="hint" style="margin-bottom: 8px;">
                   Banco de textos pre-definidos por usuario.
                   <b>3 jeitos de usar:</b>
-                  (1) bot&atilde;o <b>Snippets</b> em qualquer textarea (Derivar, Lote);
+                  (1) bot&atilde;o <b>Snippets</b> em qualquer textarea (Derivar, Gerenciador);
                   (2) atalho <b>Quick Comment</b> (Alt+C) que abre um popover de busca;
                   (3) digitar o <b>/comando</b> direto no textarea + Espa&ccedil;o/Tab/Enter para expandir.
                   <br/>Ex: cadastra <code>/ola</code> &rarr; <code>Ola, tudo bem?</code>. Ao digitar <code>/ola </code> vira <code>Ola, tudo bem?</code>.

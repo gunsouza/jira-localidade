@@ -116,11 +116,25 @@
 
     // ---- Tshoot Confluence (chip lateral com link de troubleshooting) ----
     // Lista mantida CENTRALMENTE neste arquivo (admin = quem build do plugin).
-    // Cada regra: { label, url, match: [{ field, value, mode? }, ...] }
+    // Cada regra:
+    //   {
+    //     label, url, icon?, color?,
+    //     match: [{ field, value, mode? }, ...],
+    //     issTemplate?: 'ISS-XXXXX'    // opcional - explicado abaixo
+    //   }
     //   - field: nome humano ("Object Type") ou customfield_XXXX
     //   - value: comparacao case-insensitive + ignora acentos/hifens
     //   - mode:  'exact' (default) | 'contains'
     //   - match e AND entre criterios. Multiplas regras podem matchar (mostra varios chips).
+    //
+    // issTemplate (opcional, novidade da v1.20.2):
+    //   Quando o usuario clica em "Criar ISS" (via Derivar ou outro fluxo) a partir
+    //   de um chamado que MATCHA esta regra, o plugin usa o ticket aqui referenciado
+    //   como TEMPLATE (copia Demanda, Service, Resolution Team).
+    //   Ex: regra "Botao de Panico" tem issTemplate=ISS-19469, entao a ISS criada vem
+    //   com Service=Control Acceso, Demand=Analisis (que sao os valores de ISS-19469).
+    //   Se nenhuma regra com issTemplate casar, usa ISS_TASK_MODEL_ISSUE default.
+    //   PRIMEIRA regra que casa vence (ordem importa).
     //
     // Pra adicionar uma nova regra:
     //   1) No Jira, abra um ticket exemplo
@@ -140,7 +154,11 @@
           // Tickets de "Botao de Panico" sao identificados pelo Object Type.
           // (Object Origin = Seguridad Electronica e mais generico - cobre toda a familia)
           { field: 'Object Type', value: 'Boton de panico' }
-        ]
+        ],
+        // Quando criamos uma tarefa ISS a partir deste tipo de chamado, usamos este
+        // ticket como TEMPLATE (copia Demanda, Service, Resolution Team).
+        // Pra Botao de Panico: Service = "Control Acceso", Demand = "Analisis", ResTeam = SHIP-NATS-N1.
+        issTemplate: 'ISS-19469'
       },
       {
         // PYMES = Pesar Y Medir (cubadores de Mercado Envios).
@@ -329,7 +347,7 @@
       .filter(r => r && typeof r === 'object' && r.url && Array.isArray(r.match) && r.match.length)
       .map(r => {
         const overrideUrl = String(overrides[r.label] || '').trim();
-        return {
+        const out = {
           label: String(r.label || 'Tshoot').trim(),
           icon:  String(r.icon || '').trim(),
           color: String(r.color || '').trim(), // default '' -> dourado padrao
@@ -342,6 +360,11 @@
               mode:  (c.mode === 'contains' ? 'contains' : 'exact')
             }))
         };
+        // Opcional: template ISS-XXXX para criar tarefa com Demanda/Service/ResTeam pre-resolvidos
+        if(r.issTemplate && typeof r.issTemplate === 'string'){
+          out.issTemplate = r.issTemplate.trim().toUpperCase();
+        }
+        return out;
       })
       .filter(r => r.match.length);
   })();
@@ -1255,7 +1278,7 @@
     return issues;
   }
 
-  // Busca info compacta de varios chamados de uma vez (para o modal de Lote).
+  // Busca info compacta de varios chamados de uma vez (para o modal Gerenciador).
   // Faz JQL "key in (...)" e retorna [{ key, summary, status, priority, assignee,
   //   issuetype, asset (texto), resTeam }]. Asset e resolvido em paralelo via Assets API.
   // Pagina internamente se houver muitas keys (limite JQL ~ algumas centenas).
@@ -1822,12 +1845,93 @@
       }
       const comment = modal.querySelector('#ml_d_comment').value || DERIVE_COMMENT_DEFAULT;
       const createIssTask = !!(issCheck && issCheck.checked && shouldOfferIssTask(selected.value));
-      await onSubmit({ team: selected, comment, createIssTask });
-      close();
+
+      // Desabilita imediatamente botoes pra evitar duplo-click (que ja causou criar varias
+      // ISS duplicadas em alguns cenarios). Mostra loading state no botao.
+      const btn = modal.querySelector('#ml_d_submit');
+      const btnCancel = modal.querySelector('#ml_d_cancel');
+      const originalLabel = btn?.textContent || 'Derivar';
+      if(btn){
+        btn.disabled = true;
+        btn.style.opacity = '.7';
+        btn.style.cursor = 'not-allowed';
+        btn.textContent = createIssTask ? 'Derivando + criando ISS...' : 'Derivando...';
+      }
+      if(btnCancel){
+        btnCancel.disabled = true;
+        btnCancel.style.opacity = '.5';
+        btnCancel.style.cursor = 'not-allowed';
+      }
+      // Bloqueia overlay (clique fora nao deve fechar enquanto rola)
+      const overlayEl = document.getElementById(IDS.dOverlay);
+      if(overlayEl){
+        overlayEl.style.pointerEvents = 'none';
+      }
+
+      try{
+        await onSubmit({ team: selected, comment, createIssTask });
+        close();
+      }catch(e){
+        // Em caso de erro, restaurar botoes pra usuario poder tentar de novo
+        if(btn){
+          btn.disabled = false;
+          btn.style.opacity = '';
+          btn.style.cursor = '';
+          btn.textContent = originalLabel;
+        }
+        if(btnCancel){
+          btnCancel.disabled = false;
+          btnCancel.style.opacity = '';
+          btnCancel.style.cursor = '';
+        }
+        if(overlayEl) overlayEl.style.pointerEvents = '';
+        console.error('[jira-localidade][derive] erro no submit:', e);
+        alert('Erro ao derivar: ' + (e.message || e));
+      }
     });
 
     document.body.appendChild(overlay);
     document.body.appendChild(modal);
+  }
+
+  // Toast de sucesso pos-derive. Non-blocking (nao trava UI como alert()).
+  // Mensagem pode ser multilinha (\n vira <br>).
+  function showDeriveSuccessToast(msg){
+    try{
+      document.getElementById('ml_derive_toast')?.remove();
+      const t = document.createElement('div');
+      t.id = 'ml_derive_toast';
+      t.style.cssText = `
+        position: fixed; top: 18px; right: 18px; z-index: 2147483647;
+        background: linear-gradient(180deg, #2f8f48, #246a36);
+        color: #fff; padding: 12px 18px; border-radius: 10px;
+        border: 1px solid #2c7a3e;
+        font: 600 13px var(--ml-font, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+        box-shadow: 0 12px 30px rgba(0,0,0,.5);
+        max-width: 420px; line-height: 1.45;
+        animation: mlToastIn .25s cubic-bezier(.16,.84,.44,1);
+      `;
+      const body = String(msg || 'OK').split('\n').map(line => line.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))).join('<br>');
+      t.innerHTML = `<div style="display:flex;gap:8px;align-items:flex-start;"><div style="font-size:16px;">&#10003;</div><div>${body}<div style="margin-top:6px;font-weight:500;font-size:11px;opacity:.85;">A pagina sera recarregada em instantes...</div></div></div>`;
+      document.body.appendChild(t);
+    }catch(_){}
+  }
+
+  // Agenda recarregamento da pagina pos-derive (1.5s pra dar tempo do toast aparecer).
+  // Bloqueia interacao com a pagina nesse intervalo pra evitar o usuario tentar
+  // continuar e ter mudanca de contexto inesperada.
+  function scheduleReloadAfterDerive(){
+    try{
+      // Veu sutil sobre a pagina
+      const veil = document.createElement('div');
+      veil.id = 'ml_reload_veil';
+      veil.style.cssText = `
+        position: fixed; inset: 0; background: rgba(0,0,0,.25);
+        z-index: 2147483640; pointer-events: all;
+      `;
+      document.body.appendChild(veil);
+    }catch(_){}
+    setTimeout(() => { try{ location.reload(); }catch(_){} }, 1500);
   }
 
   // Remove o assignee atual do ticket (atribui pra "nenhum"). Usado apos derivar
@@ -1924,13 +2028,9 @@
         teams,
         suggestedTeamValue,
         onSubmit: async ({ team, comment, createIssTask }) => {
-          // 1) Derivar primeiro (fonte da verdade). Se falhar, abortar.
-          try{
-            await jiraDoDerive(issueKey, deriveTr.id, team.id, comment || DERIVE_COMMENT_DEFAULT);
-          }catch(e){
-            alert('Falha ao derivar: ' + (e.message || e));
-            return;
-          }
+          // 1) Derivar primeiro (fonte da verdade). Se falhar, lanca erro pro
+          // handler do botao reabilitar a UI e mostrar mensagem.
+          await jiraDoDerive(issueKey, deriveTr.id, team.id, comment || DERIVE_COMMENT_DEFAULT);
 
           // 1.4) Unassign best-effort (libera ticket pra fila do novo time)
           let unassignMsg = '';
@@ -1963,69 +2063,48 @@
             }
           }
 
-          // 2) Se o checkbox estava marcado, tentar criar a tarefa ISS.
+          // 2) Se o checkbox NAO estava marcado, finaliza so com toast + reload.
           if(!createIssTask){
-            alert('Derivado com sucesso.' + unassignMsg + unwatchMsg);
+            showDeriveSuccessToast(`Derivado para ${team.value}.${unassignMsg}${unwatchMsg}`);
+            scheduleReloadAfterDerive();
             return;
           }
 
+          // 3) Criar tarefa ISS vinculada
           try{
-            const { newKey, linkType, attachmentsReport, commentsReport, descReport } = await createIssTaskFromIssue(issueKey);
+            const { newKey, linkType, attachmentsReport, commentsReport, descReport, template } = await createIssTaskFromIssue(issueKey);
             const link = `${location.origin}/browse/${newKey}`;
 
-            // Adiciona comentario interno no ticket ORIGINAL avisando que a tarefa foi criada.
-            // Best-effort: nao falha o fluxo se nao conseguir.
-            let originalCommentOk = false;
+            // Comentario interno no ticket ORIGINAL (best-effort)
             try{
               await addInternalComment(issueKey, `Tarefa de troubleshooting criada e vinculada: ${newKey} (${link}).`);
-              originalCommentOk = true;
             }catch(e){
               console.warn('[jira-localidade] falha ao comentar no ticket original:', e);
             }
 
-            let msg = `Derivado com sucesso.${unassignMsg}${unwatchMsg}\nTarefa ${newKey} criada e vinculada (${linkType}).`;
-            if(originalCommentOk){
-              msg += `\nComentario adicionado em ${issueKey} mencionando ${newKey}.`;
-            }
+            // Detalhes vao pro console pra debug, toast mostra o essencial
+            console.log('[jira-localidade][derive] sucesso:', {
+              source: issueKey, target: team.value, newKey, linkType,
+              attachmentsReport, commentsReport, descReport
+            });
 
-            if(descReport){
-              if(descReport.method === 'skipped'){
-                msg += `\nDescricao: ticket original sem descricao para copiar.`;
-              } else if(descReport.method === 'update-after-create'){
-                const isPlain = /texto puro/i.test(descReport.detail);
-                msg += `\nDescricao: copiada${isPlain ? ' (texto puro - formato simplificado)' : ' integralmente'}.`;
-              } else if(descReport.method === 'comment-fallback'){
-                msg += `\nDescricao: nao foi possivel setar no campo. Adicionada como COMENTARIO em ${newKey}.`;
-              } else if(descReport.method === 'failed'){
-                msg += `\n[!] Descricao NAO foi copiada (plugin bloqueou tudo). Edite manualmente.`;
-              }
-            }
-            if(attachmentsReport && !attachmentsReport.skipped){
-              if(attachmentsReport.total === 0){
-                msg += `\nNenhum anexo no ticket original.`;
-              } else if(attachmentsReport.errors.length){
-                msg += `\nAnexos: ${attachmentsReport.copied}/${attachmentsReport.total} copiados (${attachmentsReport.errors.length} falha(s) - ver console).`;
-              } else {
-                msg += `\nAnexos: ${attachmentsReport.copied}/${attachmentsReport.total} copiados.`;
-              }
-            }
-            if(commentsReport){
-              if(commentsReport.mode === 'skipped-empty'){
-                msg += `\nComentarios: ticket origem sem comentarios.`;
-              } else if(commentsReport.mode === 'skipped-disabled'){
-                // nao mostra nada (feature desligada)
-              } else if(commentsReport.error){
-                msg += `\n[!] Comentarios: falha ao copiar (${commentsReport.error}).`;
-              } else {
-                msg += `\nComentarios: ${commentsReport.copied} herdado(s) (digest interno adicionado em ${newKey}).`;
-              }
-            }
-            msg += `\n\nAbrir ${newKey} em nova aba?`;
-            if(confirm(msg)){
-              window.open(link, '_blank', 'noopener');
-            }
+            const extras = [];
+            if(attachmentsReport && attachmentsReport.copied > 0) extras.push(`${attachmentsReport.copied} anexo(s)`);
+            if(commentsReport && commentsReport.copied > 0) extras.push(`${commentsReport.copied} comentario(s)`);
+            const extrasTxt = extras.length ? ` (${extras.join(' + ')})` : '';
+            const tmplLine = (template && template.source === 'rule' && template.ruleLabel)
+              ? `\nTemplate: ${template.ruleLabel} (${template.key})`
+              : '';
+
+            // Abre ISS em nova aba imediatamente (sem confirm bloqueante)
+            window.open(link, '_blank', 'noopener');
+            showDeriveSuccessToast(`Derivado + ISS ${newKey} criada${extrasTxt}. Aberta em nova aba.${tmplLine}`);
+            scheduleReloadAfterDerive();
           }catch(e){
+            // Caso a ISS falhe mas o derive ja foi - importante alertar com modal pra nao perder
+            console.error('[jira-localidade][derive] derive OK mas ISS falhou:', e);
             alert(`Derivado com sucesso, MAS falhou ao criar tarefa ISS:\n\n${e.message || e}\n\nVoce pode criar a tarefa manualmente ou tentar novamente.`);
+            scheduleReloadAfterDerive();
           }
         }
       });
@@ -2603,19 +2682,54 @@
   // Orquestra a criacao completa da tarefa ISS a partir de um ticket de origem.
   // Retorna { newKey, linkType, attachmentsReport } em caso de sucesso. Lanca em caso de erro.
   // onProgress(stage:string) opcional para feedback de UI.
+  // Resolve qual ticket-modelo (ISS template) usar pra criar a tarefa, baseado nas
+  // regras Confluence. Se alguma rule der match no source E tiver `issTemplate`, ela
+  // vence (primeira que casa). Senao, usa ISS_TASK_MODEL_ISSUE default.
+  // Reutiliza a mesma logica de match das chips Confluence (_confRuleMatches).
+  async function _resolveEffectiveIssTemplate(sourceIssueKey){
+    try{
+      const rules = Array.isArray(CONFLUENCE_RULES) ? CONFLUENCE_RULES : [];
+      const templatedRules = rules.filter(r => r && r.issTemplate);
+      if(!templatedRules.length){
+        return { templateKey: ISS_TASK_MODEL_ISSUE, source: 'default', rule: null };
+      }
+      const issueData = await _confGetIssueData(sourceIssueKey);
+      if(!issueData){
+        console.log(`[jira-localidade][iss-template] sem dados de ${sourceIssueKey}, usando default ${ISS_TASK_MODEL_ISSUE}`);
+        return { templateKey: ISS_TASK_MODEL_ISSUE, source: 'default-fallback', rule: null };
+      }
+      for(const r of templatedRules){
+        if(_confRuleMatches(r, issueData, false)){
+          console.log(`[jira-localidade][iss-template] match na regra "${r.label}" -> usando template ${r.issTemplate}`);
+          return { templateKey: r.issTemplate, source: 'rule', rule: r };
+        }
+      }
+      console.log(`[jira-localidade][iss-template] nenhuma regra com issTemplate casou em ${sourceIssueKey}, usando default ${ISS_TASK_MODEL_ISSUE}`);
+      return { templateKey: ISS_TASK_MODEL_ISSUE, source: 'default', rule: null };
+    }catch(e){
+      console.warn('[jira-localidade][iss-template] erro resolvendo template, usando default:', e);
+      return { templateKey: ISS_TASK_MODEL_ISSUE, source: 'default-error', rule: null };
+    }
+  }
+
   async function createIssTaskFromIssue(sourceIssueKey, onProgress){
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
 
-    progress('Lendo ticket origem, modelo e schema de criacao...');
+    // Decide o template baseado em regras Confluence (se alguma matchar e tiver issTemplate).
+    progress('Avaliando qual template ISS usar para este chamado...');
+    const tmpl = await _resolveEffectiveIssTemplate(sourceIssueKey);
+    const effectiveTemplate = tmpl.templateKey;
+
+    progress(`Lendo ticket origem, modelo (${effectiveTemplate || '(nenhum)'}) e schema de criacao...`);
     const baseTasks = [
       jiraGetMyself(),
       getIssueFullForCopy(sourceIssueKey),
       resolveIssTaskLinkTypeName(),
       getProjectAndIssueTypeIds(ISS_TASK_PROJECT, ISS_TASK_ISSUETYPE)
     ];
-    if(ISS_TASK_MODEL_ISSUE){
+    if(effectiveTemplate){
       // So precisamos das IDs/values exatas de Demanda, Service e ResTeam da modelo.
-      baseTasks.push(getIssueRawFields(ISS_TASK_MODEL_ISSUE, [ISS_TASK_DEMANDA_CF, ISS_TASK_SERVICE_CF, CF_RES_TEAM]));
+      baseTasks.push(getIssueRawFields(effectiveTemplate, [ISS_TASK_DEMANDA_CF, ISS_TASK_SERVICE_CF, CF_RES_TEAM]));
     }
     const [me, source, linkTypeName, projInfo, modelFields] = await Promise.all(baseTasks);
 
@@ -2646,9 +2760,9 @@
       const cfD = modelFields[`customfield_${ISS_TASK_DEMANDA_CF}`];
       const cfS = modelFields[`customfield_${ISS_TASK_SERVICE_CF}`];
       const cfR = modelFields[`customfield_${CF_RES_TEAM}`];
-      if(!cfD) throw new Error(`Issue modelo ${ISS_TASK_MODEL_ISSUE} nao tem Demanda preenchida.`);
-      if(!cfS) throw new Error(`Issue modelo ${ISS_TASK_MODEL_ISSUE} nao tem Service preenchida.`);
-      if(!cfR) throw new Error(`Issue modelo ${ISS_TASK_MODEL_ISSUE} nao tem Resolution Team preenchida.`);
+      if(!cfD) throw new Error(`Issue modelo ${effectiveTemplate} nao tem Demanda preenchida.`);
+      if(!cfS) throw new Error(`Issue modelo ${effectiveTemplate} nao tem Service preenchida.`);
+      if(!cfR) throw new Error(`Issue modelo ${effectiveTemplate} nao tem Resolution Team preenchida.`);
       demandaVal = sanitizeCustomFieldValue(cfD);
       serviceVal = sanitizeCustomFieldValue(cfS);
       resTeamVal = sanitizeCustomFieldValue(cfR);
@@ -2699,7 +2813,7 @@
 
     console.groupCollapsed(`[jira-localidade] Criando ISS task (de ${sourceIssueKey})`);
     console.log(`project=${ISS_TASK_PROJECT} (id=${projInfo.projectId}), issuetype=${ISS_TASK_ISSUETYPE} (id=${projInfo.issuetypeId})`);
-    console.log(`modelo: ${ISS_TASK_MODEL_ISSUE || '(sem modelo, fallback por value)'}`);
+    console.log(`modelo: ${effectiveTemplate || '(sem modelo, fallback por value)'} [origem: ${tmpl.source}${tmpl.rule ? ` "${tmpl.rule.label}"` : ''}]`);
     console.log('payload:', JSON.parse(JSON.stringify(payload)));
     console.groupEnd();
 
@@ -2849,7 +2963,14 @@
       commentsReport = await copyCommentsAsDigest(sourceIssueKey, newKey);
     }
 
-    return { newKey, linkType: linkTypeName, attachmentsReport, commentsReport, descReport };
+    return {
+      newKey,
+      linkType: linkTypeName,
+      attachmentsReport,
+      commentsReport,
+      descReport,
+      template: { key: effectiveTemplate, source: tmpl.source, ruleLabel: tmpl.rule?.label || null }
+    };
   }
 
   function shouldOfferIssTask(teamValue){
@@ -5457,7 +5578,7 @@ ${rule.match.map(c => `          { field: ${JSON.stringify(c.field)}, value: ${J
               <div class="full">
                 <label>Comentario padrao da derivacao (obs interna, aceita varias linhas)</label>
                 <textarea id="ml_s_derive_msg" style="min-height: 80px;">${esc(cur.DERIVE_COMMENT_DEFAULT)}</textarea>
-                <div class="hint">Pre-preenche o campo de comentario nos modais Derivar e Lote. Pode usar quebras de linha.</div>
+                <div class="hint">Pre-preenche o campo de comentario nos modais Derivar e Gerenciador. Pode usar quebras de linha.</div>
               </div>
               <div class="full">
                 <label>Allowlist de times (um por linha)</label>
@@ -5554,7 +5675,7 @@ ${rule.match.map(c => `          { field: ${JSON.stringify(c.field)}, value: ${J
                 <div class="hint" style="margin-bottom: 8px;">
                   Banco de textos pre-definidos por usuario.
                   <b>3 jeitos de usar:</b>
-                  (1) bot&atilde;o <b>Snippets</b> em qualquer textarea (Derivar, Lote);
+                  (1) bot&atilde;o <b>Snippets</b> em qualquer textarea (Derivar, Gerenciador);
                   (2) atalho <b>Quick Comment</b> (Alt+C) que abre um popover de busca;
                   (3) digitar o <b>/comando</b> direto no textarea + Espa&ccedil;o/Tab/Enter para expandir.
                   <br/>Ex: cadastra <code>/ola</code> &rarr; <code>Ola, tudo bem?</code>. Ao digitar <code>/ola </code> vira <code>Ola, tudo bem?</code>.
@@ -6714,7 +6835,7 @@ ${lines.join('\n')}`;
 
       batchBtn.addEventListener('click', () => {
         if(selected.size === 0) return;
-        // Reusa o modal de Lote do queue-batch.js, pre-populando com os duplicados selecionados.
+        // Reusa o modal Gerenciador do queue-batch.js, pre-populando com os duplicados selecionados.
         openBatchModal({
           initialKeys: [...selected],
           sourceLabel: `Selecionados em Duplicados de ${issueKey}`
@@ -6760,7 +6881,7 @@ ${lines.join('\n')}`;
     const key = getIssueKey();
     if(key) ensureButton();
     else document.getElementById(IDS.btn)?.remove();
-    // Botao "Lote" aparece em /issues e /queues (independente de ter ticket aberto).
+    // Botao "Gerenciador" aparece em /issues e /queues (independente de ter ticket aberto).
     try { ensureBatchButton(); } catch(_) {}
     // Botao "Status" (antigo "Atribuir & iniciar") so em paginas de issue individual.
     try { ensureStatusButton(); } catch(_) {}
@@ -6814,7 +6935,7 @@ ${lines.join('\n')}`;
   // Lembrete periodico de backup das configs (configs ficam so neste navegador).
   try { maybeShowBackupReminder(); } catch(_) {}
   // =========================
-  // QUEUE BATCH ACTIONS — derivar/criar ISS em lote em /issues e /queues
+  // QUEUE BATCH ACTIONS — Gerenciador: derivar/criar ISS em lote em /issues e /queues
   //
   // UX:
   //   - Botao "Lote" aparece quando voce esta numa pagina /issues?filter=... ou /queues/...
@@ -6826,7 +6947,7 @@ ${lines.join('\n')}`;
   // =========================
 
   function isQueueOrIssuesPage(){
-    // Se ja tem um ticket aberto (browse/X ou queues/issue/X), nao mostra "Lote"
+    // Se ja tem um ticket aberto (browse/X ou queues/issue/X), nao mostra "Gerenciador"
     // - usuario quer "Localidade" pra acoes daquele chamado.
     if(getIssueKey()) return false;
     return /\/(issues|queues)(\b|\/|\?|$)/.test(location.pathname);
@@ -6894,7 +7015,7 @@ ${lines.join('\n')}`;
     if(document.getElementById('ml_batch_btn')) return;
     const b = document.createElement('button');
     b.id = 'ml_batch_btn';
-    b.textContent = 'Lote';
+    b.textContent = 'Gerenciador';
     b.title = 'Aplicar acoes em massa (derivar / criar ISS) nesta tela';
     Object.assign(b.style, {
       position: 'fixed', right: '18px', bottom: '70px', zIndex: '9999997',
@@ -6933,7 +7054,7 @@ ${lines.join('\n')}`;
     modal.innerHTML = `
       <div class="ch">
         <div>
-          <div class="title"><span class="titleDot" style="background:#34c578;box-shadow:0 0 0 4px rgba(52,197,120,.18);"></span>Acoes em lote</div>
+          <div class="title"><span class="titleDot" style="background:#34c578;box-shadow:0 0 0 4px rgba(52,197,120,.18);"></span>Gerenciador de fila</div>
           <div class="subtitle">Derive ou crie tarefas ISS para varios chamados de uma vez.</div>
         </div>
         <div style="display:flex;gap:8px;">
@@ -6947,7 +7068,7 @@ ${lines.join('\n')}`;
             <li>${esc(sourceLabel)}: <b>${detected.length}</b> chamado(s) (todos <b>desmarcados</b> por seguranca).</li>
             <li>Voce pode <b>colar mais keys</b> (uma por linha ou separadas por virgula/espaco) e clicar "Adicionar".</li>
             <li>Use o filtro pra achar e <b>marque</b> os chamados que quer processar (ou "Marcar todos").</li>
-            <li>Escolha a acao (Derivar para time X / com ISS) e clique "Executar lote".</li>
+            <li>Escolha a acao (Derivar para time X / com ISS) e clique "Executar".</li>
           </ol>
         </div>
 
@@ -6999,7 +7120,7 @@ ${lines.join('\n')}`;
 
         <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
           <button id="ml_batch_cancel" class="btnSecondary">Cancelar</button>
-          <button id="ml_batch_run" class="btnPrimary">Executar lote</button>
+          <button id="ml_batch_run" class="btnPrimary">Executar</button>
         </div>
 
         <div id="ml_batch_progress" style="margin-top:14px;"></div>
@@ -7400,7 +7521,7 @@ ${lines.join('\n')}`;
       }${issEligible ? `, <b>${issResults.length}</b> ISS(s) criada(s)` : ''}, <b>${fail}</b> falha(s).`;
       p.appendChild(summary);
 
-      modal.querySelector('#ml_batch_run').innerHTML = 'Executar lote';
+      modal.querySelector('#ml_batch_run').innerHTML = 'Executar';
       modal.querySelector('#ml_batch_run').disabled = false;
     };
   }

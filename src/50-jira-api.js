@@ -94,7 +94,7 @@
     return issues;
   }
 
-  // Busca info compacta de varios chamados de uma vez (para o modal de Lote).
+  // Busca info compacta de varios chamados de uma vez (para o modal Gerenciador).
   // Faz JQL "key in (...)" e retorna [{ key, summary, status, priority, assignee,
   //   issuetype, asset (texto), resTeam }]. Asset e resolvido em paralelo via Assets API.
   // Pagina internamente se houver muitas keys (limite JQL ~ algumas centenas).
