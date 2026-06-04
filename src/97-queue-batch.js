@@ -121,7 +121,8 @@
           <div class="title"><span class="titleDot" style="background:#34c578;box-shadow:0 0 0 4px rgba(52,197,120,.18);"></span>Gerenciador de fila</div>
           <div class="subtitle">Derive ou crie tarefas ISS para varios chamados de uma vez.</div>
         </div>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button id="ml_batch_settings" class="gear" title="Configuracoes">&#9881;</button>
           <button id="ml_batch_close">Fechar</button>
         </div>
       </div>
@@ -222,6 +223,7 @@
     overlay.addEventListener('click', close);
     modal.querySelector('#ml_batch_close').onclick = close;
     modal.querySelector('#ml_batch_cancel').onclick = close;
+    modal.querySelector('#ml_batch_settings').onclick = () => openSettingsModal();
 
     function updateSelCount(){
       const el = modal.querySelector('#ml_batch_sel_count');

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jira Localidade
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.21.0
+// @version      1.21.1
 // @description  Adiciona o botao flutuante "Localidade" aos tickets do Jira: lista duplicados pela mesma localidade (Assets / IS Ubicacion), permite vincular como duplicado, comentar como observacao interna em lote e derivar para outros times.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -7319,7 +7319,44 @@ ${lines.join('\n')}`;
   async function runApp(){
     const issueKey = getIssueKey();
     if(!issueKey){
-      alert('Abra um ticket (/browse/XXX-123) ou /queues/issue/XXX-123 para usar.');
+      // Sem ticket aberto: abre o modal mesmo assim com um conteudo neutro,
+      // dando acesso ao botao de Configuracoes (gear) no header e a busca por key.
+      const modal = openModal('Localidade', 'Nenhum ticket detectado nesta pagina.');
+      modal.setBody(`
+        <div style="padding: 14px 0;">
+          <div style="background:var(--ml-bg-2); border:1px dashed var(--ml-border); border-radius:8px; padding:16px; margin-bottom:14px;">
+            <div style="font-weight:700; margin-bottom:6px;">Sem ticket aberto</div>
+            <div class="meta" style="margin-bottom:10px;">
+              As acoes principais (Duplicados, Derivar, Criar ISS, Mudar Status) precisam de um ticket aberto.
+              Abra um chamado <code>/browse/XXX-123</code> ou use o <b>Gerenciador de fila</b> em uma tela de fila/busca.
+            </div>
+            <div style="font-size:12px; color:var(--ml-text-mut);">
+              Por enquanto voce pode acessar as <b>&#9881; Configuracoes</b> no canto superior direito deste modal.
+            </div>
+          </div>
+
+          <div style="margin-bottom:10px;">
+            <label style="display:block; font-size:12px; font-weight:700; color:var(--ml-text-mut); margin-bottom:6px;">
+              Abrir ticket diretamente (cole a key):
+            </label>
+            <div style="display:flex; gap:8px;">
+              <input id="ml_loc_jumpkey" type="text" placeholder="Ex: IS-123456" style="flex:1; background:var(--ml-bg-0); color:var(--ml-text); border:1px solid var(--ml-border-2); border-radius:6px; padding:9px 12px; font-size:13px;" />
+              <button id="ml_loc_jumpgo" class="primary">Abrir</button>
+            </div>
+            <div class="meta" style="margin-top:6px;">Abre em nova aba.</div>
+          </div>
+        </div>
+      `);
+      const jumpInput = document.getElementById('ml_loc_jumpkey');
+      const jumpBtn   = document.getElementById('ml_loc_jumpgo');
+      const goJump = () => {
+        const k = String(jumpInput.value || '').trim().toUpperCase();
+        if(!/^[A-Z]+-\d+$/.test(k)){ jumpInput.focus(); return; }
+        window.open(`${location.origin}/browse/${k}`, '_blank', 'noopener');
+      };
+      jumpBtn?.addEventListener('click', goJump);
+      jumpInput?.addEventListener('keydown', (e) => { if(e.key === 'Enter'){ e.preventDefault(); goJump(); } });
+      setTimeout(() => jumpInput?.focus(), 50);
       return;
     }
     const modal = openModal('Localidade', `Ticket atual: ${issueKey}`);
@@ -7366,10 +7403,8 @@ ${lines.join('\n')}`;
   document.addEventListener('keydown', (ev) => {
     if(isTypingTarget(ev.target)) return;
 
-    // Localidade
+    // Localidade (funciona mesmo sem ticket: abre modal neutro com acesso a Configuracoes)
     if(_parsedShortcuts.length && matchesAnyShortcut(ev, _parsedShortcuts)){
-      const key = getIssueKey();
-      if(!key) return;
       ev.preventDefault();
       ev.stopPropagation();
       toggleApp();
@@ -7525,7 +7560,8 @@ ${lines.join('\n')}`;
           <div class="title"><span class="titleDot" style="background:#34c578;box-shadow:0 0 0 4px rgba(52,197,120,.18);"></span>Gerenciador de fila</div>
           <div class="subtitle">Derive ou crie tarefas ISS para varios chamados de uma vez.</div>
         </div>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button id="ml_batch_settings" class="gear" title="Configuracoes">&#9881;</button>
           <button id="ml_batch_close">Fechar</button>
         </div>
       </div>
@@ -7626,6 +7662,7 @@ ${lines.join('\n')}`;
     overlay.addEventListener('click', close);
     modal.querySelector('#ml_batch_close').onclick = close;
     modal.querySelector('#ml_batch_cancel').onclick = close;
+    modal.querySelector('#ml_batch_settings').onclick = () => openSettingsModal();
 
     function updateSelCount(){
       const el = modal.querySelector('#ml_batch_sel_count');
