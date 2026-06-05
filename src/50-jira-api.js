@@ -257,8 +257,8 @@
       if(!stillThere){
         log(`removido com sucesso (tentativa ${attempt}/${maxAttempts}).`);
         // Bonus: agenda uma checagem tardia (cobre post-functions lentas)
-        scheduleLateUnwatch(issueKey, accountId);
-        return { ok: true, attempts: attempt, reAdded };
+        const flushLate = scheduleLateUnwatch(issueKey, accountId);
+        return { ok: true, attempts: attempt, reAdded, flushLate };
       }
 
       // Ainda esta na lista - aguarda e tenta de novo
@@ -268,15 +268,25 @@
     }
 
     log(`falhou apos ${maxAttempts} tentativas - agendando ultima tentativa tardia (20s)...`);
-    scheduleLateUnwatch(issueKey, accountId);
-    return { ok: false, attempts: maxAttempts, reAdded: true };
+    const flushLate = scheduleLateUnwatch(issueKey, accountId);
+    return { ok: false, attempts: maxAttempts, reAdded: true, flushLate };
   }
 
   // Fire-and-forget: agenda 1 tentativa extra de unwatch ~20s depois.
   // Cobre post-functions/automations que adicionam watcher com delay maior que o nosso retry sincrono.
   // Roda silenciosamente em background (so loga no console).
+  //
+  // Retorna { flush: async () => ... } pra forcar execucao imediata
+  // (com buffer pequeno pra dar tempo das post-functions rodarem). Usar antes
+  // de location.reload() pra que a verificacao tardia nao seja morta pelo reload.
   function scheduleLateUnwatch(issueKey, accountId){
-    setTimeout(async () => {
+    const FLUSH_BUFFER_MS = 3500; // tempo extra antes do check no flush() (post-functions costumam rodar em 1-3s)
+    const SCHED_DELAY_MS  = 20000;
+    let executed = false;
+
+    const doCheck = async () => {
+      if(executed) return;
+      executed = true;
       try{
         const watchers = await jiraGetWatchers(issueKey);
         const stillThere = (watchers || []).some(w => String(w.accountId) === String(accountId));
@@ -289,7 +299,17 @@
       }catch(e){
         console.warn(`[jira-localidade][unwatch-late] ${issueKey} falhou (silencioso):`, e);
       }
-    }, 20000);
+    };
+
+    const handle = setTimeout(doCheck, SCHED_DELAY_MS);
+
+    return async function flush(){
+      clearTimeout(handle);
+      // Buffer curto antes do check pra dar chance das post-functions rodarem.
+      // Sem isso, podemos ver o watcher ANTES do post-function readicionar.
+      await new Promise(r => setTimeout(r, FLUSH_BUFFER_MS));
+      await doCheck();
+    };
   }
 
   async function addInternalComment(issueKey, bodyText) {

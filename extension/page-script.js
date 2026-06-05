@@ -1498,8 +1498,8 @@
       if(!stillThere){
         log(`removido com sucesso (tentativa ${attempt}/${maxAttempts}).`);
         // Bonus: agenda uma checagem tardia (cobre post-functions lentas)
-        scheduleLateUnwatch(issueKey, accountId);
-        return { ok: true, attempts: attempt, reAdded };
+        const flushLate = scheduleLateUnwatch(issueKey, accountId);
+        return { ok: true, attempts: attempt, reAdded, flushLate };
       }
 
       // Ainda esta na lista - aguarda e tenta de novo
@@ -1509,15 +1509,25 @@
     }
 
     log(`falhou apos ${maxAttempts} tentativas - agendando ultima tentativa tardia (20s)...`);
-    scheduleLateUnwatch(issueKey, accountId);
-    return { ok: false, attempts: maxAttempts, reAdded: true };
+    const flushLate = scheduleLateUnwatch(issueKey, accountId);
+    return { ok: false, attempts: maxAttempts, reAdded: true, flushLate };
   }
 
   // Fire-and-forget: agenda 1 tentativa extra de unwatch ~20s depois.
   // Cobre post-functions/automations que adicionam watcher com delay maior que o nosso retry sincrono.
   // Roda silenciosamente em background (so loga no console).
+  //
+  // Retorna { flush: async () => ... } pra forcar execucao imediata
+  // (com buffer pequeno pra dar tempo das post-functions rodarem). Usar antes
+  // de location.reload() pra que a verificacao tardia nao seja morta pelo reload.
   function scheduleLateUnwatch(issueKey, accountId){
-    setTimeout(async () => {
+    const FLUSH_BUFFER_MS = 3500; // tempo extra antes do check no flush() (post-functions costumam rodar em 1-3s)
+    const SCHED_DELAY_MS  = 20000;
+    let executed = false;
+
+    const doCheck = async () => {
+      if(executed) return;
+      executed = true;
       try{
         const watchers = await jiraGetWatchers(issueKey);
         const stillThere = (watchers || []).some(w => String(w.accountId) === String(accountId));
@@ -1530,7 +1540,17 @@
       }catch(e){
         console.warn(`[jira-localidade][unwatch-late] ${issueKey} falhou (silencioso):`, e);
       }
-    }, 20000);
+    };
+
+    const handle = setTimeout(doCheck, SCHED_DELAY_MS);
+
+    return async function flush(){
+      clearTimeout(handle);
+      // Buffer curto antes do check pra dar chance das post-functions rodarem.
+      // Sem isso, podemos ver o watcher ANTES do post-function readicionar.
+      await new Promise(r => setTimeout(r, FLUSH_BUFFER_MS));
+      await doCheck();
+    };
   }
 
   async function addInternalComment(issueKey, bodyText) {
@@ -1977,7 +1997,16 @@
   // Agenda recarregamento da pagina pos-derive (1.5s pra dar tempo do toast aparecer).
   // Bloqueia interacao com a pagina nesse intervalo pra evitar o usuario tentar
   // continuar e ter mudanca de contexto inesperada.
-  function scheduleReloadAfterDerive(){
+  //
+  // Se houver um `flushLate` pendente (do scheduleLateUnwatch), ele eh executado
+  // ANTES do reload pra garantir que a verificacao tardia nao seja morta pelo
+  // reload da pagina.
+  async function scheduleReloadAfterDerive(opts){
+    opts = opts || {};
+    // Flush sincrono do unwatch tardio (sobreviver ao reload)
+    if(typeof opts.flushLate === 'function'){
+      try{ await opts.flushLate(); }catch(e){ console.warn('[jira-localidade][derive] flushLate falhou:', e); }
+    }
     try{
       // Veu sutil sobre a pagina
       const veil = document.createElement('div');
@@ -2103,10 +2132,12 @@
 
           // 1.5) Unwatch best-effort com retry (nao bloqueia se falhar)
           let unwatchMsg = '';
+          let unwatchFlushLate = null;
           if(DERIVE_UNWATCH_AFTER){
             try{
               const me = await jiraGetMyself();
               const res = await jiraUnwatchIssueRobust(issueKey, me.accountId);
+              unwatchFlushLate = res.flushLate || null;
               if(res.ok){
                 unwatchMsg = `\nVoce parou de acompanhar este ticket${res.attempts > 1 ? ` (${res.attempts} tentativa(s) por causa do auto-watch do Jira)` : ''}.`;
               } else {
@@ -2123,7 +2154,7 @@
           // 2) Se o checkbox NAO estava marcado, finaliza so com toast + reload.
           if(!createIssTask){
             showDeriveSuccessToast(`Derivado para ${team.value}.${unassignMsg}${unwatchMsg}`);
-            scheduleReloadAfterDerive();
+            scheduleReloadAfterDerive({ flushLate: unwatchFlushLate });
             return;
           }
 
@@ -2156,18 +2187,18 @@
             // Abre ISS em nova aba imediatamente (sem confirm bloqueante)
             window.open(link, '_blank', 'noopener');
             showDeriveSuccessToast(`Derivado + ISS ${newKey} criada${extrasTxt}. Aberta em nova aba.${tmplLine}`);
-            scheduleReloadAfterDerive();
+            scheduleReloadAfterDerive({ flushLate: unwatchFlushLate });
           }catch(e){
             // Cancelamento (usuario fechou o prompt de Service) - apenas finaliza derive ok
             if(String(e.message || '').includes('cancelada pelo usuario')){
               showDeriveSuccessToast(`Derivado para ${team.value}.${unassignMsg}${unwatchMsg}\nCriacao da ISS cancelada (categoria nao identificada).`);
-              scheduleReloadAfterDerive();
+              scheduleReloadAfterDerive({ flushLate: unwatchFlushLate });
               return;
             }
             // Erro real - alerta com modal pra nao perder a info
             console.error('[jira-localidade][derive] derive OK mas ISS falhou:', e);
             alert(`Derivado com sucesso, MAS falhou ao criar tarefa ISS:\n\n${e.message || e}\n\nVoce pode criar a tarefa manualmente ou tentar novamente.`);
-            scheduleReloadAfterDerive();
+            scheduleReloadAfterDerive({ flushLate: unwatchFlushLate });
           }
         }
       });
@@ -2654,6 +2685,21 @@
     }catch{ return String(iso || ''); }
   }
 
+  // Varre um nodo ADF (recursivamente) e devolve a lista de IDs de anexos
+  // referenciados via 'media' / 'mediaSingle' / 'mediaInline' (anexos colados/embutidos no comentario).
+  function _extractAttachmentIdsFromAdf(node, out){
+    out = out || new Set();
+    if(!node || typeof node !== 'object') return out;
+    if((node.type === 'media' || node.type === 'mediaSingle' || node.type === 'mediaInline')){
+      const id = node.attrs?.id;
+      if(id) out.add(String(id));
+    }
+    if(Array.isArray(node.content)){
+      node.content.forEach(c => _extractAttachmentIdsFromAdf(c, out));
+    }
+    return out;
+  }
+
   // Monta UM documento ADF que contem o digest de todos os comentarios.
   // Formato (compacto e legivel):
   //
@@ -2661,10 +2707,16 @@
   //   Para cada comment:
   //     Heading h4: "[i] @autor - DD/MM/YYYY HH:MM [interno/publico]"
   //     Parágrafo: <texto extraido do ADF original>
+  //     Parágrafo: "📎 Anexos referenciados: file1.png, file2.jpg" (se houver)
   //     Rule (separador)
   //   Heading h4 final: "Fim dos comentarios herdados."
-  function buildCommentsDigestAdf(srcKey, comments){
+  //
+  // `attachments` (opcional): lista do source pra resolver IDs em nomes de arquivo.
+  function buildCommentsDigestAdf(srcKey, comments, attachments){
     const content = [];
+    const attMap = new Map();
+    (attachments || []).forEach(a => { if(a && a.id) attMap.set(String(a.id), a.filename || `anexo-${a.id}`); });
+
     const headerText = `Comentarios herdados de ${srcKey} (${comments.length} ${comments.length === 1 ? 'comentario' : 'comentarios'})`;
     content.push({
       type: 'heading', attrs: { level: 3 },
@@ -2694,6 +2746,20 @@
       const blocks = Array.isArray(bodyAdf?.content) ? bodyAdf.content : [];
       blocks.forEach(b => content.push(b));
 
+      // Anexos referenciados no ADF deste comentario (imagens coladas, arquivos embutidos)
+      const refIds = Array.from(_extractAttachmentIdsFromAdf(c?.body));
+      if(refIds.length){
+        const refNames = refIds.map(id => attMap.get(id) || `(anexo ${id})`);
+        content.push({
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: '\u{1F4CE} Anexos referenciados: ', marks: [{ type: 'em' }] },
+            { type: 'text', text: refNames.join(', '), marks: [{ type: 'strong' }] },
+            { type: 'text', text: ' (veja na aba "Attachments" desta tarefa)' }
+          ]
+        });
+      }
+
       content.push({ type: 'rule' });
     });
 
@@ -2707,7 +2773,9 @@
 
   // Coleta os comentarios do source e os adiciona como UM unico comentario INTERNO
   // no destino. Best-effort: retorna o relatorio sem lancar excecao em caso de falha.
-  async function copyCommentsAsDigest(srcKey, dstKey){
+  // `attachments` (opcional): lista de anexos do source pra resolver os ids
+  // referenciados nos comentarios em nomes legiveis.
+  async function copyCommentsAsDigest(srcKey, dstKey, attachments){
     const report = { copied: 0, total: 0, mode: 'digest', error: null };
     try{
       const comments = await getAllIssueComments(srcKey);
@@ -2716,7 +2784,7 @@
         report.mode = 'skipped-empty';
         return report;
       }
-      const adf = buildCommentsDigestAdf(srcKey, comments);
+      const adf = buildCommentsDigestAdf(srcKey, comments, attachments);
       await jiraAddComment(dstKey, adf, { internal: true });
       report.copied = comments.length;
       return report;
@@ -3178,10 +3246,12 @@
     // Copia comentarios como digest (1 comment interno consolidado).
     // Feito DEPOIS dos anexos pra eles ficarem na nova issue antes do digest aparecer
     // no historico - assim quem ler ja ve "tem anexo + tem o digest contextualizando".
+    // Passamos sourceAttachments pra resolver IDs em nomes de arquivo no digest
+    // ("Anexos referenciados: img1.png, doc.pdf").
     let commentsReport = { copied: 0, total: 0, mode: 'skipped-disabled', error: null };
     if(ISS_TASK_COPY_COMMENTS){
       progress('Copiando comentarios do ticket origem como digest...');
-      commentsReport = await copyCommentsAsDigest(sourceIssueKey, newKey);
+      commentsReport = await copyCommentsAsDigest(sourceIssueKey, newKey, sourceAttachments);
     }
 
     return {

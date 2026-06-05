@@ -219,7 +219,16 @@
   // Agenda recarregamento da pagina pos-derive (1.5s pra dar tempo do toast aparecer).
   // Bloqueia interacao com a pagina nesse intervalo pra evitar o usuario tentar
   // continuar e ter mudanca de contexto inesperada.
-  function scheduleReloadAfterDerive(){
+  //
+  // Se houver um `flushLate` pendente (do scheduleLateUnwatch), ele eh executado
+  // ANTES do reload pra garantir que a verificacao tardia nao seja morta pelo
+  // reload da pagina.
+  async function scheduleReloadAfterDerive(opts){
+    opts = opts || {};
+    // Flush sincrono do unwatch tardio (sobreviver ao reload)
+    if(typeof opts.flushLate === 'function'){
+      try{ await opts.flushLate(); }catch(e){ console.warn('[jira-localidade][derive] flushLate falhou:', e); }
+    }
     try{
       // Veu sutil sobre a pagina
       const veil = document.createElement('div');
@@ -345,10 +354,12 @@
 
           // 1.5) Unwatch best-effort com retry (nao bloqueia se falhar)
           let unwatchMsg = '';
+          let unwatchFlushLate = null;
           if(DERIVE_UNWATCH_AFTER){
             try{
               const me = await jiraGetMyself();
               const res = await jiraUnwatchIssueRobust(issueKey, me.accountId);
+              unwatchFlushLate = res.flushLate || null;
               if(res.ok){
                 unwatchMsg = `\nVoce parou de acompanhar este ticket${res.attempts > 1 ? ` (${res.attempts} tentativa(s) por causa do auto-watch do Jira)` : ''}.`;
               } else {
@@ -365,7 +376,7 @@
           // 2) Se o checkbox NAO estava marcado, finaliza so com toast + reload.
           if(!createIssTask){
             showDeriveSuccessToast(`Derivado para ${team.value}.${unassignMsg}${unwatchMsg}`);
-            scheduleReloadAfterDerive();
+            scheduleReloadAfterDerive({ flushLate: unwatchFlushLate });
             return;
           }
 
@@ -398,18 +409,18 @@
             // Abre ISS em nova aba imediatamente (sem confirm bloqueante)
             window.open(link, '_blank', 'noopener');
             showDeriveSuccessToast(`Derivado + ISS ${newKey} criada${extrasTxt}. Aberta em nova aba.${tmplLine}`);
-            scheduleReloadAfterDerive();
+            scheduleReloadAfterDerive({ flushLate: unwatchFlushLate });
           }catch(e){
             // Cancelamento (usuario fechou o prompt de Service) - apenas finaliza derive ok
             if(String(e.message || '').includes('cancelada pelo usuario')){
               showDeriveSuccessToast(`Derivado para ${team.value}.${unassignMsg}${unwatchMsg}\nCriacao da ISS cancelada (categoria nao identificada).`);
-              scheduleReloadAfterDerive();
+              scheduleReloadAfterDerive({ flushLate: unwatchFlushLate });
               return;
             }
             // Erro real - alerta com modal pra nao perder a info
             console.error('[jira-localidade][derive] derive OK mas ISS falhou:', e);
             alert(`Derivado com sucesso, MAS falhou ao criar tarefa ISS:\n\n${e.message || e}\n\nVoce pode criar a tarefa manualmente ou tentar novamente.`);
-            scheduleReloadAfterDerive();
+            scheduleReloadAfterDerive({ flushLate: unwatchFlushLate });
           }
         }
       });

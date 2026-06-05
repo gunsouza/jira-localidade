@@ -477,6 +477,21 @@
     }catch{ return String(iso || ''); }
   }
 
+  // Varre um nodo ADF (recursivamente) e devolve a lista de IDs de anexos
+  // referenciados via 'media' / 'mediaSingle' / 'mediaInline' (anexos colados/embutidos no comentario).
+  function _extractAttachmentIdsFromAdf(node, out){
+    out = out || new Set();
+    if(!node || typeof node !== 'object') return out;
+    if((node.type === 'media' || node.type === 'mediaSingle' || node.type === 'mediaInline')){
+      const id = node.attrs?.id;
+      if(id) out.add(String(id));
+    }
+    if(Array.isArray(node.content)){
+      node.content.forEach(c => _extractAttachmentIdsFromAdf(c, out));
+    }
+    return out;
+  }
+
   // Monta UM documento ADF que contem o digest de todos os comentarios.
   // Formato (compacto e legivel):
   //
@@ -484,10 +499,16 @@
   //   Para cada comment:
   //     Heading h4: "[i] @autor - DD/MM/YYYY HH:MM [interno/publico]"
   //     Parágrafo: <texto extraido do ADF original>
+  //     Parágrafo: "📎 Anexos referenciados: file1.png, file2.jpg" (se houver)
   //     Rule (separador)
   //   Heading h4 final: "Fim dos comentarios herdados."
-  function buildCommentsDigestAdf(srcKey, comments){
+  //
+  // `attachments` (opcional): lista do source pra resolver IDs em nomes de arquivo.
+  function buildCommentsDigestAdf(srcKey, comments, attachments){
     const content = [];
+    const attMap = new Map();
+    (attachments || []).forEach(a => { if(a && a.id) attMap.set(String(a.id), a.filename || `anexo-${a.id}`); });
+
     const headerText = `Comentarios herdados de ${srcKey} (${comments.length} ${comments.length === 1 ? 'comentario' : 'comentarios'})`;
     content.push({
       type: 'heading', attrs: { level: 3 },
@@ -517,6 +538,20 @@
       const blocks = Array.isArray(bodyAdf?.content) ? bodyAdf.content : [];
       blocks.forEach(b => content.push(b));
 
+      // Anexos referenciados no ADF deste comentario (imagens coladas, arquivos embutidos)
+      const refIds = Array.from(_extractAttachmentIdsFromAdf(c?.body));
+      if(refIds.length){
+        const refNames = refIds.map(id => attMap.get(id) || `(anexo ${id})`);
+        content.push({
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: '\u{1F4CE} Anexos referenciados: ', marks: [{ type: 'em' }] },
+            { type: 'text', text: refNames.join(', '), marks: [{ type: 'strong' }] },
+            { type: 'text', text: ' (veja na aba "Attachments" desta tarefa)' }
+          ]
+        });
+      }
+
       content.push({ type: 'rule' });
     });
 
@@ -530,7 +565,9 @@
 
   // Coleta os comentarios do source e os adiciona como UM unico comentario INTERNO
   // no destino. Best-effort: retorna o relatorio sem lancar excecao em caso de falha.
-  async function copyCommentsAsDigest(srcKey, dstKey){
+  // `attachments` (opcional): lista de anexos do source pra resolver os ids
+  // referenciados nos comentarios em nomes legiveis.
+  async function copyCommentsAsDigest(srcKey, dstKey, attachments){
     const report = { copied: 0, total: 0, mode: 'digest', error: null };
     try{
       const comments = await getAllIssueComments(srcKey);
@@ -539,7 +576,7 @@
         report.mode = 'skipped-empty';
         return report;
       }
-      const adf = buildCommentsDigestAdf(srcKey, comments);
+      const adf = buildCommentsDigestAdf(srcKey, comments, attachments);
       await jiraAddComment(dstKey, adf, { internal: true });
       report.copied = comments.length;
       return report;
@@ -1001,10 +1038,12 @@
     // Copia comentarios como digest (1 comment interno consolidado).
     // Feito DEPOIS dos anexos pra eles ficarem na nova issue antes do digest aparecer
     // no historico - assim quem ler ja ve "tem anexo + tem o digest contextualizando".
+    // Passamos sourceAttachments pra resolver IDs em nomes de arquivo no digest
+    // ("Anexos referenciados: img1.png, doc.pdf").
     let commentsReport = { copied: 0, total: 0, mode: 'skipped-disabled', error: null };
     if(ISS_TASK_COPY_COMMENTS){
       progress('Copiando comentarios do ticket origem como digest...');
-      commentsReport = await copyCommentsAsDigest(sourceIssueKey, newKey);
+      commentsReport = await copyCommentsAsDigest(sourceIssueKey, newKey, sourceAttachments);
     }
 
     return {
