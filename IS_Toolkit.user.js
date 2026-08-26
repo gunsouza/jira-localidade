@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.58.0
+// @version      1.59.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -1296,8 +1296,9 @@
           grid-template-columns: 1fr;
           gap: 14px;
         }
+        /* 2 colunas a partir de 760px — com os 4 cards de hoje da um 2x2 simetrico
+           em vez de "3 numa fileira + 1 sozinho" (era o que acontecia com 3 colunas). */
         @media (min-width: 760px){ #${IDS.modal} .homeGrid{ grid-template-columns: 1fr 1fr; } }
-        @media (min-width:1000px){ #${IDS.modal} .homeGrid{ grid-template-columns: 1fr 1fr 1fr; } }
 
         #${IDS.modal} .homeCard {
           position: relative;
