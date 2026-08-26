@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.50.0
+// @version      1.57.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -490,6 +490,15 @@
       // Filtre no Jira com: labels = "is-toolkit"
       USAGE_LABEL: 'is-toolkit',
 
+      // ---- Marcação de uso num campo de texto livre (complementa o USAGE_LABEL) ----
+      // Alguns times filtram/relatam por um campo de texto ("Categorias" ou outro) em vez
+      // de labels. Se configurado, toda ação relevante do toolkit acrescenta USAGE_MARK_TEXT
+      // ao final do valor atual do campo (sem apagar o que já estava escrito). Idempotente:
+      // se o marcador já estiver presente, não duplica.
+      // 0 = desligado (nenhuma escrita nesse campo). Descubra o ID em Configuracoes → Avancado.
+      CF_USAGE_MARK: 0,
+      USAGE_MARK_TEXT: '[IS-Toolkit]',
+
       // Atalhos para abrir o menu de Status (ou executar direto se houver 1 acao).
       // Cmd+Shift+I conflita com Chrome DevTools no Mac, entao usamos Cmd+Shift+E.
       STATUS_MENU_SHORTCUTS: ['Alt+I', 'Cmd+Shift+E', 'Ctrl+Shift+I'],
@@ -545,8 +554,20 @@
       // Atalho de teclado para assumir o ticket e mover para In Progress.
       ASSIGN_SHORTCUT: 'Cmd+Shift+A',
       // Comentario publico postado automaticamente ao mover o ticket para In Progress.
-      ASSIGN_COMMENT: 'Iniciando atendimento.'
+      ASSIGN_COMMENT: 'Iniciando atendimento.',
+
+      // ---- Assistente de setup inicial ----
+      // true depois que o usuario passa pelo wizard (Salvar ou Pular). Usado junto com
+      // _IS_FRESH_INSTALL pra decidir se mostra o wizard automaticamente no primeiro uso
+      // (instalacoes que ja tinham configuracao salva antes desta versao NUNCA sao
+      // interrompidas por ele, mesmo com esta flag em false).
+      SETUP_WIZARD_DONE: false
     };
+
+    // Calculado ANTES de loadSettings() (que migra localStorage -> GM e teria mascarado o resultado):
+    // true so quando NUNCA existiu configuracao salva neste navegador/perfil — ou seja, so dispara
+    // o wizard automatico pra instalacoes genuinamente novas, nunca pra quem ja usa o toolkit.
+    const _IS_FRESH_INSTALL = (_gmGet(_STORAGE_KEY) == null) && !localStorage.getItem(_STORAGE_KEY);
 
     const SETTINGS = loadSettings(DEFAULTS);
 
@@ -1010,6 +1031,43 @@
       });
     }catch(e){
       console.warn('[is-toolkit][label]', issueKey, e.message || e);
+    }
+  }
+
+  // ======================================================
+  // _markToolkitUsage(issueKey) — ponto ÚNICO de marcação de uso.
+  // Faz DUAS coisas, best-effort (nunca lança, nunca bloqueia o fluxo que chamou):
+  //   1) addUsageLabel — label "is-toolkit" (existente).
+  //   2) Se CF_USAGE_MARK estiver configurado (>0), acrescenta USAGE_MARK_TEXT ao
+  //      final do valor atual do campo de texto livre (sem apagar o que já tinha).
+  //      Idempotente: não duplica se o marcador já estiver presente.
+  // Chamado a partir de TODAS as ações que efetivamente tocam um ticket (derivar,
+  // status, comentário — interno ou de fechamento, vincular duplicado, auditoria,
+  // aplicar sugestão do modo auditoria) — ver os pontos de chamada nas funções de
+  // baixo nível (jiraDoDerive, jiraApplyTransitionWithFields, addInternalComment) e
+  // nos pontos específicos do modo auditoria/coaching.
+  // ======================================================
+  async function _markToolkitUsage(issueKey){
+    if(!issueKey) return;
+    await addUsageLabel(issueKey).catch(() => {});
+    const cfId = Number(SETTINGS.CF_USAGE_MARK || DEFAULTS.CF_USAGE_MARK || 0);
+    if(!cfId) return;
+    try{
+      const mark = String(SETTINGS.USAGE_MARK_TEXT || DEFAULTS.USAGE_MARK_TEXT || '').trim();
+      if(!mark) return;
+      const fieldKey = `customfield_${cfId}`;
+      const data = await getIssueFields(issueKey, [fieldKey]);
+      const current = String(data?.fields?.[fieldKey] ?? '').trim();
+      if(current.includes(mark)) return; // ja marcado nesta issue — nao duplica a cada acao
+      const updated = current ? `${current} ${mark}` : mark;
+      await fetch(`${location.origin}/rest/api/3/issue/${encodeURIComponent(issueKey)}`, {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: { [fieldKey]: updated } })
+      });
+    }catch(e){
+      console.warn('[is-toolkit][usage-field]', issueKey, e.message || e);
     }
   }
 
@@ -1855,6 +1913,7 @@
       });
       const txt = await r.text().catch(()=> '');
       if(!r.ok) throw new Error(`HTTP ${r.status} ao comentar: ${txt.slice(0,300)}`);
+      _markToolkitUsage(issueKey).catch(()=>{});
       return JSON.parse(txt);
     }
 
@@ -2361,6 +2420,7 @@
 
       const txt = await r.text().catch(()=> '');
       if(!r.ok) throw new Error(`HTTP ${r.status} ao derivar: ${txt.slice(0,300)}`);
+      _markToolkitUsage(issueKey).catch(()=>{});
       return true;
     }
 
@@ -2710,7 +2770,7 @@
             // 1) Derivar primeiro (fonte da verdade). Se falhar, lanca erro pro
             // handler do botao reabilitar a UI e mostrar mensagem.
             await jiraDoDerive(issueKey, deriveTr.id, team.id, comment || DERIVE_COMMENT_DEFAULT);
-          addUsageLabel(issueKey).catch(()=>{});
+            // marcação de uso (label + campo texto) agora acontece dentro do próprio jiraDoDerive
 
             // 1.4) Unassign best-effort (libera ticket pra fila do novo time)
             let unassignMsg = '';
@@ -4612,6 +4672,7 @@
         const txt = await r.text().catch(() => '');
         throw new Error(`HTTP ${r.status} ao aplicar transicao em ${issueKey}: ${txt.slice(0, 350)}`);
       }
+      _markToolkitUsage(issueKey).catch(()=>{});
       return true;
     }
 
@@ -5249,10 +5310,16 @@
             if(!cached){
               const go = confirm('⚠️ Este ticket não foi auditado.\n\nDeseja auditar antes de fechar?');
               if(go) return; // usuario clicou OK = quer auditar, cancela transicao
-            } else if(cached.score < 60){
-              const errs = (cached.items||[]).filter(i=>i.status==='error').map(i=>i.check).join(', ');
-              const go = confirm(`⚠️ Score de auditoria: ${cached.score}/100\nPendências: ${errs || 'ver painel'}\n\nFechar mesmo assim?`);
-              if(!go) return;
+            } else {
+              const updatedTs = await _getIssueUpdatedTs(issueKey);
+              if(_isAuditStale(cached, updatedTs)){
+                const go = confirm('⚠️ Este ticket foi alterado depois da última auditoria salva (auditoria desatualizada).\n\nDeseja reauditar antes de fechar?');
+                if(go) return;
+              } else if(cached.score < 60){
+                const errs = (cached.items||[]).filter(i=>i.status==='error').map(i=>i.check).join(', ');
+                const go = confirm(`⚠️ Score de auditoria: ${cached.score}/100\nPendências: ${errs || 'ver painel'}\n\nFechar mesmo assim?`);
+                if(!go) return;
+              }
             }
           }
         }catch(e){} // se falhar, deixar a transicao acontecer normalmente
@@ -5822,6 +5889,11 @@
       return parts.join(' ').replace(/\s+/g, ' ').trim().slice(0, maxLen) || '(vazio)';
     }
 
+    // Versao do conjunto de criterios/regras do prompt de auditoria — bump sempre que _buildAuditPrompt mudar
+    // de forma que altere o veredito esperado (novo criterio, mudanca de rubrica, nova regra de escopo/guardrail).
+    // Fica gravada em cada resultado (result._prompt_version) pra permitir comparar resultados entre versoes.
+    const AUDIT_PROMPT_VERSION = '1.54.0';
+
     // Monta o prompt que sera enviado para a IA via webhook
     function _buildAuditPrompt(data, alreadyFixed){
       const f = data.fields || {};
@@ -5835,6 +5907,28 @@
       const reporter     = f.reporter?.displayName || 'Desconhecido';
       const desc         = f.description ? _adfToText(f.description, 3000) : '(vazio)';
       const issueType    = f.issuetype?.name || 'Desconhecido';
+
+      // Campos de categorizacao/tipificacao (customfields configuraveis, 0 = nao mapeado).
+      // Ate a v1.53 esses IDs existiam nas Configuracoes mas nunca eram lidos aqui — a
+      // auditoria nunca avaliava Categoria/Subcategoria/Tipo de solicitacao/Tipo de
+      // resolucao/Validacao do usuario de fato. Isso passa a alimentar os criterios
+      // "Categoria", "Solucao Efetiva" e "Validacao Usuario" abaixo.
+      const _cfStr = v => {
+        if(v == null) return '';
+        if(typeof v === 'string') return v;
+        if(typeof v === 'object') return String(v.value ?? v.name ?? v.id ?? '');
+        return String(v);
+      };
+      const _readCf = key => {
+        const id = Number(SETTINGS[key] || DEFAULTS[key] || 0);
+        return id ? _cfStr(f[`customfield_${id}`]) : '';
+      };
+      const catCategoria   = _readCf('CF_CATEGORY');
+      const catSubcategoria = _readCf('CF_SUBCATEGORY');
+      const catRequestType = _readCf('CF_REQUEST_TYPE');
+      const catUserValidation = _readCf('CF_USER_VALIDATION');
+      const catSolutionType = _readCf('CF_SOLUTION_TYPE');
+      const hasCategoryData = !!(catCategoria || catSubcategoria || catRequestType);
 
       // Ticket considerado aberto se nao estiver em status "done"
       const isClosed = statusCatKey === 'done'
@@ -5987,6 +6081,9 @@ Responsavel: ${assignee}
 Relator (quem abriu): ${reporter}
 Quantidade de anexos: ${attachCount}${attachCount > 0 ? ' (' + attachList + ')' : ''}
 ${attachCount > 0 ? 'OBS: varios desses anexos estao EMBUTIDOS nos comentarios dos analistas (veja os marcadores "[CONTEM N IMAGEM(NS)...]" ao lado de cada comentario). Nesses casos, o texto do comentario e a legenda/comprovacao da imagem — nao trate essas imagens como "sem descricao".' : ''}
+${hasCategoryData ? `Categoria: ${catCategoria || '(vazio)'} | Subcategoria: ${catSubcategoria || '(vazio)'} | Tipo de solicitacao: ${catRequestType || '(vazio)'}` : ''}
+${catSolutionType ? `Tipo de resolucao selecionado: ${catSolutionType}` : ''}
+${catUserValidation ? `Campo "Validacao do usuario": ${catUserValidation}` : ''}
 
 Descricao (escrita pelo relator "${reporter}"):
 ${desc}
@@ -6036,8 +6133,15 @@ G) SLA E VISITA TECNICA: NAO sugira SLAs especificos (ex: "24-48 horas", "3-7 di
 H) IMAGENS E ANEXOS: Se o ticket tem imagens ou anexos, reconheca que existem mas NAO escreva frases como "analisaremos a imagem", "verificaremos o anexo", "vamos analisar o print" nos suggested_text ou closing_comment. As imagens sao contexto — nao promessa de analise futura. Se um analista enviou uma imagem como evidencia de contato, isso E a evidencia — nao ha nada a "analisar" depois.
    IMPORTANTE: anexos enviados PELO USUARIO (fotos/prints do problema) contam como EVIDENCIA VISUAL VALIDA e como contexto do chamado. NAO exija que o analista "confirme a analise dos anexos", NAO sugira comentario dizendo que os anexos foram analisados, e NAO penalize por falta de "analise dos anexos". Se ha anexos relevantes no ticket, considere a evidencia visual ja presente — trate como ponto positivo, nao como pendencia. Voce NAO ve o conteudo das imagens; entao nunca afirme o que elas mostram nem exija descricao do que elas contem.
    REGRA-CHAVE (texto = legenda da imagem): quando um comentario/texto do analista DESCREVE uma acao e ha um anexo/imagem associado, o TEXTO ja diz o que a imagem comprova — trate a imagem como a COMPROVACAO daquela acao, evidencia COMPLETA. Exemplos: "Contato realizado via WhatsApp" + print = o print e a prova do contato (ok); "Validado queda nas metricas" + imagem = a imagem e a validacao da queda (ok). NUNCA peça que o analista descreva de novo o que a imagem mostra nem "confirme" o anexo — o texto que acompanha ja e a confirmacao.
+   IMAGENS COM LINK QUEBRADO (blob:): e comum um comentario referenciar uma imagem via link "blob:" que nao carrega mais fora do navegador original (o link e temporario). Isso NAO significa que a evidencia nao existia — trate o comentario associado (ex: "Contato realizado", "Validacao", "Metricas", "Taxa de impressao", "NOC acionado", "SEV4 criado", checagem de VPN/VLAN/DNS/latencia) como evidencia tecnica real mesmo com o link quebrado. NAO critique "falta de evidencia" so por causa do link nao carregar.
 
 E) ESCRITA: Avalie apenas o texto original do ticket — nao penalize por truncamentos ou quebras que possam ter ocorrido no processamento. Se um texto parece incompleto, prefira "warn" a "error".
+
+I) GUARDRAIL DE INTEGRIDADE: o objetivo desta auditoria e melhorar a qualidade REAL da documentacao — nao ensinar a "maquiar" o ticket pra passar na auditoria sem o trabalho correspondente ter sido feito. Se o atendimento foi genuinamente deficiente (sem evidencia nenhuma, resolucao incoerente com o problema, etapa claramente pulada), sinalize isso como um problema REAL a corrigir (warn/error de verdade) — nunca redija um suggested_text que simule uma qualidade que nao existiu. O suggested_text so pode compor texto a partir do que JA foi feito/coletado; se nao ha o que compor, deixe "" e diga isso no detail.
+
+J) DELIMITACAO DE ESCOPO: voce avalia qualidade de DOCUMENTACAO, CATEGORIZACAO e COERENCIA do registro — voce NAO julga se a decisao tecnica em si foi a correta (ex: nao avalia se reiniciar o equipamento era a acao certa tecnicamente, so se isso esta bem registrado, categorizado e coerente com o que foi relatado). Nao extrapole pra opinar sobre a qualidade da decisao tecnica do analista.
+
+K) ESCALONAMENTO (baixa confianca): se o caso for genuinamente ambiguo — informacao insuficiente pra decidir com seguranca, ou situacao que nao se encaixa claramente nas regras acima — NAO force um veredito confiante. Use "confidence":"baixa" nesse item, comece o "detail" com "[REVISAO HUMANA]" e descreva a pergunta pendente especifica que um analista humano precisaria responder. Isso vale mais do que "chutar" ok/error com confianca alta.
 
 === CONTEXTO DO TIPO DE TICKET ===
 ${issueTypeCtx}
@@ -6059,32 +6163,51 @@ Avalie cada criterio e retorne "ok", "warn", "error" ou "skip":
    Use no "detail" o que esta vago ou faltando no relato original.
    Se warn, "suggested_text" pode ser uma descricao enriquecida — porem SOMENTE com informacoes JA COLETADAS no ticket (relato + comentarios do analista + dados obtidos durante o atendimento). Ver regra detalhada em "suggested_text" abaixo.
 
-3. STATUS COMENTADO
+3. CATEGORIA
+   ${hasCategoryData
+     ? `Categoria/Subcategoria/Tipo de solicitacao atuais: "${catCategoria || '(vazio)'}" / "${catSubcategoria || '(vazio)'}" / "${catRequestType || '(vazio)'}".
+   Compare com a CAUSA RAIZ REAL discutida nos comentarios dos analistas — nao so a queixa inicial do relator (o sintoma inicial pode nao refletir o que foi de fato investigado; ex: "instabilidade" pode virar "lentidao por sobrecarga de AP" ou "queda intermitente real" dependendo do que foi apurado).
+   IMPORTANTE: a categoria inicial normalmente e preenchida pelo PROPRIO SOLICITANTE no portal ao abrir o chamado, nao pelo analista. O analista tem autonomia pra corrigir mas nem sempre corrige — uma categoria errada nao e automaticamente "culpa" do analista, mas se a causa raiz apurada e claramente diferente da categoria e o analista nao ajustou nem comentou, isso e um ajuste legitimo a sinalizar.
+   - ok: categoria/subcategoria coerente com a causa raiz discutida, OU categoria inicial ficou desatualizada mas o analista corrigiu/comentou a divergencia.
+   - warn: categoria parcialmente incoerente com o que foi apurado, sem correcao nem comentario.
+   - error: categoria claramente incompativel com a causa raiz discutida (ex: aberto como um tipo de equipamento, mas a investigacao real foi sobre outro totalmente diferente) e nada foi ajustado/comentado.
+   Se "warn"/"error", "suggested_text" = comentario sugerindo a recategorizacao correta com base no que foi apurado (nunca invente uma categoria que nao exista no ticket/contexto).`
+     : 'Campos de categoria nao configurados nas Configuracoes (CF_CATEGORY/CF_SUBCATEGORY/CF_REQUEST_TYPE) — use "skip".'}
+
+4. STATUS COMENTADO
    Para cada transicao de status no historico acima, ja estao listados os comentarios que ocorreram dentro de ±30 min.
    Se uma transicao ja aparece com "→ Comentario [...]", ela ESTA justificada — marque como ok.
    Apenas transicoes com "→ Sem comentario justificando" podem ser warn/error.
    Se TODAS as transicoes tem comentario proximo = ok. Se algumas faltam = warn. Se nenhuma tem = error.
 
-4. ESCRITA
+5. ESCRITA
    Os comentarios dos ANALISTAS estao claros, profissionais e compreensiveis?
    Avalie apenas textos de analistas, nao do relator.
 
-5. SOLUCAO DOCUMENTADA
+6. SOLUCAO DOCUMENTADA
    ${isClosed
-     ? 'Foi registrado O QUE o analista fez para resolver? Acoes de diagnostico e tratamento realizadas?'
+     ? `Foi registrado O QUE o analista fez para resolver? Acoes de diagnostico e tratamento realizadas?
+   RASTREABILIDADE: se o fechamento menciona algo tipo "carta de risco", handoff pra outro time, ticket vinculado, escalonamento, etc. SEM numero/link/referencia identificavel, isso e um ajuste a sinalizar (warn) — pedir que cite a referencia especifica.
+   HANDOFF: se a resolucao foi handoff/redirecionamento pra outro time, NAO cobre do analista documentacao do diagnostico tecnico que e responsabilidade do OUTRO time — ele nao tem visibilidade da tratativa de quem recebeu. Cobre so que o handoff em si esteja registrado com referencia.`
      : 'Ticket ainda aberto. Use "skip".'}
 
-6. SOLUCAO EFETIVA
+7. SOLUCAO EFETIVA
    ${isClosed
-     ? 'A solucao documentada resolve de fato o problema da descricao? Ha coerencia entre problema e solucao?'
+     ? `A solucao documentada resolve de fato o problema da descricao? Ha coerencia entre problema e solucao?
+   ${catSolutionType ? `CONSISTENCIA TIPO DE RESOLUCAO × NARRATIVA (o erro mais caro observado em auditorias reais): o tipo de resolucao selecionado e "${catSolutionType}". Cruze com o VERBO da acao relatada pelo analista:
+   - "No technical intervention" (ou similar "sem intervencao tecnica"): valido quando a resolucao efetiva veio de OUTRO LUGAR (outro time/ticket vinculado, carta de risco, escalonamento formal) — mesmo que o analista tenha feito alguma acao tecnica que NAO foi o que resolveu.
+   - "Invalid Channel" (canal invalido): valido quando a causa raiz real esta fora do escopo desta fila (ex: problema de sistema/software que foi so roteado/redirecionado pra outro time).
+   - "Operational User Error" (erro operacional do usuario): valido quando a solucao foi so orientacao/instrucao ao usuario, sem nenhuma acao de sistema do analista.
+   - "With technical intervention" (com intervencao tecnica): exige acao tecnica REAL e documentada (ex: reiniciar servico, instalar driver, trocar peca). Se o tipo escolhido e este mas o relato so descreve orientacao ou redirecionamento (sem acao tecnica de fato), isso E incoerencia real a sinalizar — nao invente uma acao tecnica que nao foi relatada.
+   Se o tipo escolhido contradiz o verbo da acao relatada (ex: marcado "with technical intervention" mas o texto so diz "orientei o usuario a reiniciar"), marque warn/error e explique a incoerencia especifica no "detail".` : ''}`
      : 'Ticket ainda aberto. Use "skip".'}
 
-7. VALIDACAO USUARIO
+8. VALIDACAO USUARIO
    ${isClosed
-     ? 'Houve confirmacao do usuario de que o problema foi resolvido, ou justificativa de N/A (ex: compliance)?'
+     ? `Houve confirmacao do usuario de que o problema foi resolvido, ou justificativa de N/A (ex: compliance)?${catUserValidation ? ` Campo "Validacao do usuario" no ticket: "${catUserValidation}" — considere esse valor como parte da avaliacao (ele deve refletir se e como o usuario foi validado/contatado; se estiver vazio ou incoerente com o que os comentarios descrevem, sinalize).` : ''}`
      : 'Ticket ainda aberto. Use "skip".'}
 
-8. RECLASSIFICACAO (Prioridade, Urgencia, Impacto)
+9. RECLASSIFICACAO (Prioridade, Urgencia, Impacto)
    ${(prioChanges.length || humanReclassifChanges.length || changedPriorityYes)
      ? `Houve reclassificacao (mudancas por humanos e/ou flag "Changed priority" = SIM):
    ${prioChanges.length ? `Prioridade: ${prioHistory}` : '(Prioridade: sem mudanca por humanos no changelog)'}
@@ -6100,7 +6223,7 @@ Avalie cada criterio e retorne "ok", "warn", "error" ou "skip":
    Use os dados reais do ticket (equipamento, problema, impacto real descrito) para tornar o comentario especifico. Seja conciso.`
      : 'Nenhuma reclassificacao (Prioridade/Urgencia/Impacto por humanos, nem flag "Changed priority"). Use "skip".'}
 
-9. QUALIDADE GERAL
+10. QUALIDADE GERAL
    ${isClosed
      ? 'Holistica: outra pessoa entenderia o que aconteceu, o que foi feito e o resultado?'
      : 'Ticket ainda aberto. Use "skip".'}
@@ -6111,22 +6234,28 @@ TITULO (title_review): O titulo/summary do ticket "${summary}" e claro, especifi
    - warn: titulo generico, vago ou incompleto (ex: so "impressora", "erro", "problema"). Pode melhorar.
    - error: titulo discrepante da descricao (fala de uma coisa, descricao e de outra) ou totalmente inutil.
    Para warn/error, "suggested_text" = um titulo melhor em UMA LINHA (sem quebras), sintetizando o contexto do chamado a partir de TODAS as informacoes ja presentes no ticket (relato + dados coletados nos comentarios do analista): equipamento, sintoma, local/localidade. Use APENAS o que ja foi coletado, NUNCA invente nem coloque pendencias. "detail" = por que o titulo atual e fraco.
+   Sinalize so DIVERGENCIAS RELEVANTES de escopo entre titulo e descricao (titulo fala de um problema, descricao de outro completamente diferente) — pequenas variacoes de wording ou faixas que quase coincidem NAO justificam warn/error.
 
 === INSTRUCOES DE RESPOSTA ===
 Responda SOMENTE com JSON valido. Sem markdown. Sem texto fora do JSON.
 "status" validos: "ok" | "warn" | "error" | "skip"
+"confidence": "alta" | "media" | "baixa" — o quanto voce tem certeza deste veredito com base no que esta escrito no ticket.
+  Use "baixa" sempre que o caso for genuinamente ambiguo ou a informacao disponivel for insuficiente pra decidir com seguranca — nesse caso, comece o "detail" com "[REVISAO HUMANA]" e descreva a pergunta pendente especifica (ver regra K). NAO force confianca "alta" so pra parecer decisivo.
 "detail": especifico, cite o que voce viu no ticket.
+"evidence_quote": uma citacao BREVE (max ~25 palavras), copiada literalmente da descricao ou de um comentario, que sustenta o veredito deste criterio — nunca uma recomendacao "solta" sem referencia ao texto que a motivou. Se "skip" ou se não há trecho específico aplicável (ex: ausência total de algo), deixe "".
 "suggestion": se "warn" ou "error", acao concreta para corrigir. Se "ok" ou "skip", deixe "".
 "suggested_text": se "warn" ou "error", escreva o rascunho de texto exato conforme o tipo do criterio:
   - "Descricao": escreva uma descricao enriquecida do chamado integrando TODAS as informacoes JA PRESENTES no ticket — o relato original do usuario MAIS os dados coletados nos comentarios do analista durante o atendimento (equipamento, sistema, local, sintoma, contexto). Escreva como uma descricao real do problema, em terceira pessoa, corrida. REGRA CRITICA: use APENAS o que ja foi coletado; se um dado NAO foi coletado, simplesmente nao o inclua. NUNCA escreva pendencias, perguntas ou placeholders (ex: "confirmar equipamento", "necessario saber o SO", "numero de serie a definir", "[campo]") — a descricao nao pode conter nada a confirmar. Se o ticket ainda nao tem informacao coletada suficiente para enriquecer o relato original de forma util, deixe "".
+  - "Categoria": comentario sugerindo a recategorizacao correta com base na causa raiz apurada (ver regra do criterio 3). Nunca invente uma categoria que nao exista no contexto do ticket.
   - "Status Comentado": escreva o comentario que deveria ter sido adicionado na transicao de status. Use apenas contexto real do ticket. NAO sugira SLA nem "visita tecnica" se esses termos nao constam no ticket.
   - "Reclassificacao": escreva um unico comentario justificando TODAS as mudancas de classificacao detectadas (Prioridade, Urgencia e/ou Impacto) no formato: "Reclassificando [campo] de '[X]' para '[Y]': [motivo especifico baseado no ticket]. [campos adicionais se houver, mesma logica]." Seja conciso, use dados reais do ticket.
   - "Evidencias", "Solucao Documentada", "Solucao Efetiva", "Validacao Usuario", "Qualidade Geral", "Escrita": escreva o comentario ou texto que o tecnico deveria adicionar ao ticket para corrigir a pendencia.
   Seja pratico, adapte ao contexto real do ticket, use os nomes/dados ja presentes no ticket.
   Se "ok" ou "skip", deixe "".
+  GUARDRAIL (regra I): nunca componha um suggested_text que simule um trabalho/qualidade que nao aconteceu de fato — se nao ha base real no ticket pra compor o texto, deixe "" e explique no "detail" que falta insumo real, em vez de inventar.
 
 RUBRICA DE SCORE:
-- Cada criterio: ok=11 | warn=6 | error=0 | skip=11 (skip nao penaliza).
+- Cada criterio (10 no total): ok=10 | warn=5 | error=0 | skip=10 (skip nao penaliza).
 - Some os pontos → "score" de 0 a 100.
 
 "closing_comment": ${isClosed
@@ -6150,8 +6279,8 @@ RUBRICA DE SCORE:
   Inclua apenas comentarios com "warn" (que tem sugestao de melhoria). Se todos estiverem bons, retorne array vazio [].
   Se nao houver comentarios de analistas, retorne array vazio [].
 
-Formato exato:
-{"score":0,"items":[{"check":"Evidencias","status":"ok","detail":"texto","suggestion":"","suggested_text":""},{"check":"Descricao","status":"ok","detail":"texto","suggestion":"","suggested_text":""},{"check":"Status Comentado","status":"ok","detail":"texto","suggestion":"","suggested_text":""},{"check":"Escrita","status":"ok","detail":"texto","suggestion":"","suggested_text":""},{"check":"Solucao Documentada","status":"ok","detail":"texto","suggestion":"","suggested_text":""},{"check":"Solucao Efetiva","status":"ok","detail":"texto","suggestion":"","suggested_text":""},{"check":"Validacao Usuario","status":"ok","detail":"texto","suggestion":"","suggested_text":""},{"check":"Reclassificacao","status":"skip","detail":"texto","suggestion":"","suggested_text":""},{"check":"Qualidade Geral","status":"ok","detail":"texto","suggestion":"","suggested_text":""}],"summary":"resumo de 1-2 frases do estado geral","closing_comment":"texto","title_review":{"status":"ok","detail":"texto","suggestion":"","suggested_text":""},"comment_reviews":[{"id":0,"author":"nome","date":"2026-01-01 10:00","excerpt":"primeiros 80 chars...","status":"warn","issue":"o que esta impreciso","improved":"versao reescrita completa"}]}`;
+Formato exato (todo item de "items" e o "title_review" seguem {"check","status","confidence","detail","evidence_quote","suggestion","suggested_text"}):
+{"score":0,"items":[{"check":"Evidencias","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Descricao","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Categoria","status":"skip","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Status Comentado","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Escrita","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Solucao Documentada","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Solucao Efetiva","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Validacao Usuario","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Reclassificacao","status":"skip","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Qualidade Geral","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""}],"summary":"resumo de 1-2 frases do estado geral","closing_comment":"texto","title_review":{"status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},"comment_reviews":[{"id":0,"author":"nome","date":"2026-01-01 10:00","excerpt":"primeiros 80 chars...","status":"warn","issue":"o que esta impreciso","improved":"versao reescrita completa"}]}`;
     }
 
     // Abre o campo de comentario do Jira e preenche com o texto fornecido.
@@ -6237,9 +6366,107 @@ Formato exato:
     }
 
     // Executa a auditoria: coleta dados do ticket, chama webhook, exibe resultado
-    async function runAudit(modal, issueKey){
+    // Núcleo da auditoria (sem UI): busca o ticket, monta o prompt, chama o webhook
+    // (com retry em erro de gateway), parseia o resultado, salva cache/histórico e
+    // marca uso. Usado tanto pelo runAudit (ticket único, com painel) quanto pela
+    // auditoria em lote (Gerenciador de fila, sem painel — só progresso/score).
+    // Lança erro em qualquer falha; quem chama decide como mostrar.
+    async function _runAuditCore(issueKey, opts){
+      opts = opts || {};
       const webhookUrl = SETTINGS.AUDIT_WEBHOOK_URL;
-      if(!webhookUrl){
+      if(!webhookUrl) throw new Error('Webhook de auditoria não configurado (Configurações → Avançado → Integrações).');
+
+      // Busca ticket com changelog + campos relevantes
+      const _cpId = Number(SETTINGS.CF_CHANGED_PRIORITY || DEFAULTS.CF_CHANGED_PRIORITY || 0);
+      const fields = 'summary,description,priority,status,attachment,comment,issuetype,labels,assignee,reporter'
+        + (_cpId ? `,customfield_${_cpId}` : '');
+      const resp = await fetch(
+        `${location.origin}/rest/api/3/issue/${encodeURIComponent(issueKey)}?expand=changelog&fields=${fields}`,
+        { credentials: 'same-origin', headers: { 'Accept': 'application/json' } }
+      );
+      if(!resp.ok) throw new Error(`Jira API HTTP ${resp.status}`);
+      const data = await resp.json();
+
+      const fixedChecks = _auditFixedChecks.get(issueKey);
+      const prompt = _buildAuditPrompt(data, fixedChecks ? [...fixedChecks] : []);
+
+      // Busca ate 3 anexos de imagem e codifica como base64
+      const imgAttachments = (data.fields?.attachment || [])
+        .filter(a => /\.(jpg|jpeg|png|gif|webp)$/i.test(a.filename))
+        .slice(0, 3);
+      const images = [];
+      for(const att of imgAttachments){
+        try{
+          const ir = await fetch(att.content, { credentials: 'same-origin' });
+          if(!ir.ok) continue;
+          const blob = await ir.blob();
+          const base64 = await new Promise(res => {
+            const reader = new FileReader();
+            reader.onloadend = () => res(reader.result.split(',')[1]);
+            reader.readAsDataURL(blob);
+          });
+          images.push({ filename: att.filename, base64, mimeType: blob.type || 'image/jpeg' });
+        }catch(e){}
+      }
+
+      // Envia para o webhook n8n via GM_xmlhttpRequest (bypassa CORS) com retry em 503
+      const _callWebhook = () => new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+          method: 'POST',
+          url: webhookUrl,
+          headers: { 'Content-Type': 'application/json' },
+          data: JSON.stringify({ prompt, issueKey, images }),
+          timeout: 60000,
+          onload(r){
+            if(r.status < 200 || r.status >= 300){
+              return reject(Object.assign(new Error(`Webhook HTTP ${r.status}: ${r.responseText?.slice(0,200)}`), { status: r.status }));
+            }
+            try{ resolve(JSON.parse(r.responseText)); }
+            catch{ resolve({ result: r.responseText }); }
+          },
+          onerror(){ reject(new Error('Erro de rede ao chamar o webhook')); },
+          ontimeout(){ reject(new Error('Timeout — webhook demorou mais de 60s')); }
+        });
+      });
+
+      let wData, lastErr;
+      for(let attempt = 1; attempt <= 3; attempt++){
+        try{
+          if(attempt > 1){
+            const delay = attempt === 2 ? 3000 : 7000;
+            if(opts.onRetry) opts.onRetry(attempt);
+            await new Promise(r => setTimeout(r, delay));
+          }
+          wData = await _callWebhook();
+          break;
+        }catch(e){
+          lastErr = e;
+          if(e.status !== 503 && e.status !== 502 && e.status !== 504) throw e; // só retry em erros de gateway
+        }
+      }
+      if(!wData) throw lastErr;
+
+      // Extrai e parseia o JSON da resposta da IA
+      let result;
+      try{
+        const raw = wData.result ?? wData.text ?? wData.output ?? JSON.stringify(wData);
+        const clean = (typeof raw === 'string')
+          ? raw.replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim()
+          : raw;
+        result = (typeof clean === 'string') ? JSON.parse(clean) : clean;
+      }catch(pe){
+        throw new Error('Resposta da IA nao e JSON valido. Verifique o workflow no n8n.');
+      }
+
+      if(result && typeof result === 'object') result._prompt_version = AUDIT_PROMPT_VERSION;
+      _saveAuditGM(issueKey, result);
+      _saveScoreHistory(issueKey, result?.score ?? 0, result?.items);
+      _markToolkitUsage(issueKey).catch(()=>{});
+      return result;
+    }
+
+    async function runAudit(modal, issueKey){
+      if(!SETTINGS.AUDIT_WEBHOOK_URL){
         showToast('Configure o Webhook de auditoria em Configuracoes → Avancado → Integracoes', 'warn');
         return;
       }
@@ -6248,92 +6475,10 @@ Formato exato:
       if(btn){ btn.disabled = true; btn.textContent = 'Analisando...'; }
 
       try{
-        // Busca ticket com changelog + campos relevantes
-        const _cpId = Number(SETTINGS.CF_CHANGED_PRIORITY || DEFAULTS.CF_CHANGED_PRIORITY || 0);
-        const fields = 'summary,description,priority,status,attachment,comment,issuetype,labels,assignee,reporter'
-          + (_cpId ? `,customfield_${_cpId}` : '');
-        const resp = await fetch(
-          `${location.origin}/rest/api/3/issue/${encodeURIComponent(issueKey)}?expand=changelog&fields=${fields}`,
-          { credentials: 'same-origin', headers: { 'Accept': 'application/json' } }
-        );
-        if(!resp.ok) throw new Error(`Jira API HTTP ${resp.status}`);
-        const data = await resp.json();
-
-        const fixedChecks = _auditFixedChecks.get(issueKey);
-        const prompt = _buildAuditPrompt(data, fixedChecks ? [...fixedChecks] : []);
-
-        // Busca ate 3 anexos de imagem e codifica como base64
-        const imgAttachments = (data.fields?.attachment || [])
-          .filter(a => /\.(jpg|jpeg|png|gif|webp)$/i.test(a.filename))
-          .slice(0, 3);
-        const images = [];
-        for(const att of imgAttachments){
-          try{
-            const ir = await fetch(att.content, { credentials: 'same-origin' });
-            if(!ir.ok) continue;
-            const blob = await ir.blob();
-            const base64 = await new Promise(res => {
-              const reader = new FileReader();
-              reader.onloadend = () => res(reader.result.split(',')[1]);
-              reader.readAsDataURL(blob);
-            });
-            images.push({ filename: att.filename, base64, mimeType: blob.type || 'image/jpeg' });
-          }catch(e){}
-        }
-
-        // Envia para o webhook n8n via GM_xmlhttpRequest (bypassa CORS) com retry em 503
-        const _callWebhook = () => new Promise((resolve, reject) => {
-          GM_xmlhttpRequest({
-            method: 'POST',
-            url: webhookUrl,
-            headers: { 'Content-Type': 'application/json' },
-            data: JSON.stringify({ prompt, issueKey, images }),
-            timeout: 60000,
-            onload(r){
-              if(r.status < 200 || r.status >= 300){
-                return reject(Object.assign(new Error(`Webhook HTTP ${r.status}: ${r.responseText?.slice(0,200)}`), { status: r.status }));
-              }
-              try{ resolve(JSON.parse(r.responseText)); }
-              catch{ resolve({ result: r.responseText }); }
-            },
-            onerror(){ reject(new Error('Erro de rede ao chamar o webhook')); },
-            ontimeout(){ reject(new Error('Timeout — webhook demorou mais de 60s')); }
-          });
+        const result = await _runAuditCore(issueKey, {
+          onRetry: (attempt) => { if(btn) btn.textContent = `Tentativa ${attempt}/3...`; }
         });
-
-        let wData, lastErr;
-        for(let attempt = 1; attempt <= 3; attempt++){
-          try{
-            if(attempt > 1){
-              const delay = attempt === 2 ? 3000 : 7000;
-              if(btn) btn.textContent = `Tentativa ${attempt}/3...`;
-              await new Promise(r => setTimeout(r, delay));
-            }
-            wData = await _callWebhook();
-            break;
-          }catch(e){
-            lastErr = e;
-            if(e.status !== 503 && e.status !== 502 && e.status !== 504) throw e; // só retry em erros de gateway
-          }
-        }
-        if(!wData) throw lastErr;
-
-        // Extrai e parseia o JSON da resposta da IA
-        let result;
-        try{
-          const raw = wData.result ?? wData.text ?? wData.output ?? JSON.stringify(wData);
-          const clean = (typeof raw === 'string')
-            ? raw.replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim()
-            : raw;
-          result = (typeof clean === 'string') ? JSON.parse(clean) : clean;
-        }catch(pe){
-          throw new Error('Resposta da IA nao e JSON valido. Verifique o workflow no n8n.');
-        }
-
-        _saveAuditGM(issueKey, result);
-        _saveScoreHistory(issueKey, result?.score ?? 0, result?.items);
         showAuditPanel(modal, issueKey, result, true);
-
       }catch(e){
         showToast('Auditoria falhou: ' + (e.message || String(e)), 'error', 6000);
         if(btn){ btn.disabled = false; btn.textContent = 'Auditar'; }
@@ -6432,16 +6577,24 @@ Formato exato:
             </div>
           </div>` : '';
 
+        const isLowConf = item.confidence === 'baixa';
+        const confBadge = isLowConf ? `<span title="Confiança baixa — vale revisão humana antes de aplicar" style="font-size:10px;color:#f59e0b;border:1px solid #f59e0b;border-radius:4px;padding:0 5px;white-space:nowrap;">baixa confiança</span>` : '';
+        const evidenceBlock = (item.evidence_quote && item.evidence_quote.trim())
+          ? `<div style="font-size:11.5px;color:var(--ml-text-dim);font-style:italic;line-height:1.5;margin-top:4px;border-left:2px solid var(--ml-border);padding-left:8px;">"${item.evidence_quote.replace(/</g,'&lt;').replace(/>/g,'&gt;')}"</div>`
+          : '';
+
         if(isPending){
           return `
             <details data-st="${st}" open style="border-top:1px solid var(--ml-border);">
               <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;padding:9px 2px;font-size:13px;">
                 <span style="width:8px;height:8px;border-radius:50%;background:${dot};flex:0 0 auto;"></span>
                 <span style="flex:1;font-weight:600;">${item.check || '?'}</span>
+                ${confBadge}
                 <span style="font-size:11px;color:${dot};white-space:nowrap;">${labelMap[st] || st}</span>
               </summary>
               <div style="padding:0 2px 12px 28px;">
                 <div style="font-size:12.5px;color:var(--ml-text-dim);line-height:1.55;${hasSugText?'margin-bottom:8px;':''}">${item.detail || ''}</div>
+                ${evidenceBlock}
                 ${sugBlock}
               </div>
             </details>`;
@@ -6476,6 +6629,8 @@ Formato exato:
               <div style="font-size:12.5px;color:var(--ml-text-dim);line-height:1.5;margin-top:2px;">${summary}</div>
             </div>
           </div>
+
+          <div id="ml_audit_stale_banner"></div>
 
           <!-- Chips de contagem -->
           <div style="display:flex;gap:8px;flex-wrap:wrap;padding:12px 0;">
@@ -6541,6 +6696,17 @@ Formato exato:
         applyFilter();
         document.getElementById('ml_audit_filter_toggle')?.addEventListener('click', () => { _showAll = !_showAll; applyFilter(); });
       }catch(e){}
+
+      // Aviso "auditoria desatualizada": ticket mudou depois deste resultado ter sido salvo.
+      (async () => {
+        try{
+          if(!result?._ts) return; // resultado ainda nao persistido (ex: preview) - nada a comparar
+          const updatedTs = await _getIssueUpdatedTs(issueKey);
+          if(!_isAuditStale({ _ts: result._ts }, updatedTs)) return;
+          const el = document.getElementById('ml_audit_stale_banner');
+          if(el) el.innerHTML = `<div style="margin-top:10px;padding:8px 10px;background:#f59e0b1e;border:1px solid #f59e0b;border-radius:6px;font-size:12px;color:#f59e0b;">&#9888; Este ticket foi alterado depois desta an&aacute;lise. Considere reauditar antes de aplicar as sugest&otilde;es.</div>`;
+        }catch(e){}
+      })();
 
       // Historico de scores
       try{
@@ -6754,6 +6920,26 @@ Formato exato:
         if(Date.now() - (d._ts || 0) > _AUDIT_CACHE_TTL){ _gmDel(_AUDIT_CACHE_PREFIX + issueKey); return null; }
         return d;
       }catch(e){ return null; }
+    }
+
+    // Le apenas o timestamp "updated" da issue (chamada leve, 1 campo) — usado pra saber
+    // se o ticket mudou depois da ultima auditoria salva (auditoria "desatualizada").
+    async function _getIssueUpdatedTs(issueKey){
+      try{
+        const url = `${location.origin}/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=updated`;
+        const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' } });
+        if(!r.ok) return null;
+        const d = await r.json().catch(()=>null);
+        const upd = d?.fields?.updated;
+        return upd ? new Date(upd).getTime() : null;
+      }catch(e){ return null; }
+    }
+
+    // Verdadeiro se o ticket foi modificado depois do timestamp salvo da ultima auditoria (cached._ts).
+    // updatedTs = epoch ms (de _getIssueUpdatedTs) já resolvido; se null, não dá pra saber -> false (nao afirma o que nao sabe).
+    function _isAuditStale(cached, updatedTs){
+      if(!cached || !cached._ts || !updatedTs) return false;
+      return updatedTs > cached._ts;
     }
 
     // Remove sidebar e tooltip apenas (mantém chip ambient visível)
@@ -7051,6 +7237,7 @@ Formato exato:
                     ${!SETTINGS.AUDIT_WEBHOOK_URL ? 'Webhook n&atilde;o configurado' : (cached ? 'Reanalisar' : 'Auditar')}
                   </button>
                   ${tsLabel ? `<button id="ml_home_audit_cached" class="ghost" style="font-size:12px;">&#x23F1; ${tsLabel}${scoreLabel}</button>` : ''}
+                  <span id="ml_home_audit_stale"></span>
                 </div>`;
               })()}
           </div>
@@ -7075,6 +7262,19 @@ Formato exato:
         };
         showAuditPanel(modal, issueKey, cached, true);
       });
+
+      // Aviso "auditoria desatualizada": ticket mudou depois da ultima auditoria salva.
+      // Checagem assincrona (1 campo, nao bloqueia o render do Home) — so aparece se houver cache pra comparar.
+      (async () => {
+        try{
+          const cached = _loadAuditGM(issueKey);
+          if(!cached) return;
+          const updatedTs = await _getIssueUpdatedTs(issueKey);
+          if(!_isAuditStale(cached, updatedTs)) return;
+          const el = document.getElementById('ml_home_audit_stale');
+          if(el) el.innerHTML = `<span title="O ticket foi alterado depois desta análise" style="font-size:11px;color:#f59e0b;background:#f59e0b1e;padding:2px 10px;border-radius:20px;white-space:nowrap;">&#9888; auditoria desatualizada</span>`;
+        }catch(e){}
+      })();
 
       // Badge de score (sem clique) quando ha cache valido
       try{
@@ -8036,6 +8236,7 @@ Formato exato:
         { key: 'CF_REQUEST_TYPE',    label: 'Tipo de solicitação' },
         { key: 'CF_USER_VALIDATION', label: 'Validação do usuário' },
         { key: 'CF_SOLUTION_TYPE',   label: 'Solução aplicada' },
+        { key: 'CF_USAGE_MARK',      label: 'Categorias (marcação de uso — texto livre)' },
       ];
 
       const overlay = document.createElement('div');
@@ -8106,6 +8307,7 @@ Formato exato:
             CF_REQUEST_TYPE:    'ml_s_cf_request_type',
             CF_USER_VALIDATION: 'ml_s_cf_user_validation',
             CF_SOLUTION_TYPE:   'ml_s_cf_solution_type',
+            CF_USAGE_MARK:      'ml_s_cf_usage_mark',
           }[role];
           if(inputId && settingsModal){
             const inp = settingsModal.querySelector('#' + inputId);
@@ -8113,6 +8315,118 @@ Formato exato:
           }
         });
         overlay.remove();
+      });
+    }
+
+    // =========================
+    // ASSISTENTE DE SETUP INICIAL
+    // Wizard curto pra configurar o essencial de uma instalacao nova: webhook de auditoria,
+    // os customfields de categoria/subcategoria/etc. (reaproveitando openDiscoverModal —
+    // os inputs ocultos abaixo usam os MESMOS ids que o modal de descoberta ja sabe preencher)
+    // e o telefone de contato. Nada aqui e obrigatorio.
+    // =========================
+    function openSetupWizard(opts){
+      opts = opts || {};
+      document.getElementById('ml_setup_wizard_overlay')?.remove();
+
+      const cur = SETTINGS;
+
+      const overlay = document.createElement('div');
+      overlay.id = 'ml_setup_wizard_overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100020;display:flex;align-items:center;justify-content:center;';
+
+      const box = document.createElement('div');
+      box.style.cssText = 'background:#1e1e2e;color:#e0e0e0;border-radius:12px;padding:24px;max-width:640px;width:96%;max-height:88vh;overflow-y:auto;font-family:var(--ml-font,sans-serif);font-size:13px;';
+
+      box.innerHTML = `
+        <h3 style="margin:0 0 4px;font-size:18px;color:#fff;">&#128075; Bem-vindo ao IS Toolkit</h3>
+        <p style="margin:0 0 16px;color:#aaa;line-height:1.5;">
+          Assistente rápido de configuração inicial — leva menos de 1 minuto. Nada aqui é obrigatório:
+          pule o que não souber agora, você pode reabrir este assistente e configurar depois em
+          Configurações → Avançado → "Assistente de setup inicial".
+        </p>
+
+        <div style="border-top:1px solid #3a3a4e;padding-top:14px;margin-top:6px;">
+          <label style="font-weight:600;display:block;margin-bottom:4px;color:#ccc;">1. Webhook de auditoria por IA <span style="color:#888;font-weight:400;">(opcional)</span></label>
+          <input type="text" id="ml_wiz_webhook" placeholder="https://...n8n.../webhook/..." value="${esc(cur.AUDIT_WEBHOOK_URL || '')}"
+            style="width:100%;padding:7px 9px;border:1px solid #555;border-radius:6px;background:#2a2a3e;color:#e0e0e0;font-size:12px;box-sizing:border-box;" />
+          <div style="font-size:11px;color:#888;margin-top:4px;">Sem isso, o card "Auditar Ticket" fica desabilitado — o resto do toolkit funciona igual.</div>
+        </div>
+
+        <div style="border-top:1px solid #3a3a4e;padding-top:14px;margin-top:14px;">
+          <label style="font-weight:600;display:block;margin-bottom:6px;color:#ccc;">2. Campos do ticket usados na auditoria <span style="color:#888;font-weight:400;">(opcional)</span></label>
+          <div style="font-size:11px;color:#888;margin-bottom:8px;">Abra um ticket Jira numa aba antes de clicar aqui — o assistente lê os customfields desse ticket pra você escolher qual é qual.</div>
+          <button type="button" id="ml_wiz_discover" style="padding:7px 14px;border:1px solid #555;border-radius:6px;background:#2a2a3e;color:#e0e0e0;cursor:pointer;font-size:12px;">&#128269; Descobrir automaticamente</button>
+          <div id="ml_wiz_discover_status" style="font-size:11px;color:#888;margin-top:6px;"></div>
+          <!-- Inputs ocultos: mesmos ids que openDiscoverModal ja sabe preencher (reaproveita a logica de Configuracoes) -->
+          <input type="hidden" id="ml_s_cf_category" value="${Number(cur.CF_CATEGORY)||0}" />
+          <input type="hidden" id="ml_s_cf_subcategory" value="${Number(cur.CF_SUBCATEGORY)||0}" />
+          <input type="hidden" id="ml_s_cf_request_type" value="${Number(cur.CF_REQUEST_TYPE)||0}" />
+          <input type="hidden" id="ml_s_cf_user_validation" value="${Number(cur.CF_USER_VALIDATION)||0}" />
+          <input type="hidden" id="ml_s_cf_solution_type" value="${Number(cur.CF_SOLUTION_TYPE)||0}" />
+          <input type="hidden" id="ml_s_cf_usage_mark" value="${Number(cur.CF_USAGE_MARK)||0}" />
+        </div>
+
+        <div style="border-top:1px solid #3a3a4e;padding-top:14px;margin-top:14px;">
+          <label style="font-weight:600;display:block;margin-bottom:4px;color:#ccc;">3. Telefone de contato (WhatsApp) <span style="color:#888;font-weight:400;">(opcional)</span></label>
+          <input type="number" id="ml_wiz_cf_phone" min="0" value="${Number(cur.CF_CONTACT_PHONE)||0}"
+            style="width:100%;padding:7px 9px;border:1px solid #555;border-radius:6px;background:#2a2a3e;color:#e0e0e0;font-size:12px;box-sizing:border-box;" />
+          <div style="font-size:11px;color:#888;margin-top:4px;">ID do customfield "Contact phone". <b>0</b> = ler direto da tela do ticket (funciona na maioria dos casos — deixe 0 se não souber).</div>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:20px;justify-content:flex-end;flex-wrap:wrap;">
+          <button id="ml_wiz_skip" style="padding:7px 16px;border:1px solid #555;border-radius:6px;background:transparent;color:#e0e0e0;cursor:pointer;">Pular por agora</button>
+          <button id="ml_wiz_save" style="padding:7px 16px;border:none;border-radius:6px;background:#0052cc;color:#fff;cursor:pointer;font-weight:600;">Salvar e recarregar</button>
+        </div>
+      `;
+
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+
+      box.querySelector('#ml_wiz_discover').addEventListener('click', async () => {
+        const btn = box.querySelector('#ml_wiz_discover');
+        const statusEl = box.querySelector('#ml_wiz_discover_status');
+        const orig = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '⏳ Buscando...';
+        const result = await discoverJiraFields();
+        btn.disabled = false;
+        btn.textContent = orig;
+        if(result){
+          openDiscoverModal(result.issueKey, result.customs, box);
+          statusEl.textContent = `Campos de ${result.issueKey} carregados acima — selecione e clique em "Aplicar".`;
+        }
+      });
+
+      // "Pular" so marca o wizard como visto (nao muda nenhum valor) — nao interrompe de novo
+      // automaticamente, mas continua acessivel em Configuracoes → Avancado quando quiser voltar.
+      box.querySelector('#ml_wiz_skip').addEventListener('click', () => {
+        try{ saveSettings({ ...SETTINGS, SETUP_WIZARD_DONE: true }); }catch(e){}
+        overlay.remove();
+      });
+
+      box.querySelector('#ml_wiz_save').addEventListener('click', () => {
+        const values = {
+          ...SETTINGS,
+          AUDIT_WEBHOOK_URL:  String(box.querySelector('#ml_wiz_webhook').value || '').trim(),
+          CF_CATEGORY:        Math.max(0, Number(box.querySelector('#ml_s_cf_category').value)        || 0),
+          CF_SUBCATEGORY:     Math.max(0, Number(box.querySelector('#ml_s_cf_subcategory').value)     || 0),
+          CF_REQUEST_TYPE:    Math.max(0, Number(box.querySelector('#ml_s_cf_request_type').value)    || 0),
+          CF_USER_VALIDATION: Math.max(0, Number(box.querySelector('#ml_s_cf_user_validation').value)  || 0),
+          CF_SOLUTION_TYPE:   Math.max(0, Number(box.querySelector('#ml_s_cf_solution_type').value)    || 0),
+          CF_USAGE_MARK:      Math.max(0, Number(box.querySelector('#ml_s_cf_usage_mark').value)       || 0),
+          CF_CONTACT_PHONE:   Math.max(0, Number(box.querySelector('#ml_wiz_cf_phone').value)          || 0),
+          SETUP_WIZARD_DONE: true
+        };
+        const ok = saveSettings(values);
+        if(ok){
+          const saveBtn = box.querySelector('#ml_wiz_save');
+          saveBtn.disabled = true;
+          saveBtn.textContent = '✓ Salvo — recarregando...';
+          setTimeout(() => { try{ location.reload(); }catch(_){ overlay.remove(); } }, 900);
+        } else {
+          alert('Não foi possível salvar (GM storage indisponível).');
+        }
       });
     }
 
@@ -8466,6 +8780,21 @@ Formato exato:
             </div>
 
             <div class="group full" data-tab="advanced">
+              <h4>Assistente de setup inicial</h4>
+              <div class="grid">
+                <div class="full">
+                  <div class="hint" style="margin:0 0 8px;">
+                    Reabre o assistente guiado (webhook de auditoria, campos do ticket e telefone de contato) —
+                    o mesmo que aparece automaticamente numa instala&ccedil;&atilde;o nova.
+                  </div>
+                  <button type="button" id="ml_s_reopen_wizard" class="ghost" style="padding:6px 14px;font-size:13px;">
+                    &#128075; Abrir assistente de setup
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="group full" data-tab="advanced">
               <h4>Integra&ccedil;&otilde;es</h4>
               <div class="grid">
                 <div class="full">
@@ -8556,6 +8885,21 @@ Formato exato:
                   <label>"Contact phone" (CF ID)</label>
                   <input type="number" id="ml_s_cf_contact_phone" value="${Number(cur.CF_CONTACT_PHONE)||0}" min="0" />
                   <div class="hint">ID do customfield do telefone. <b>0</b> = ler da p&aacute;gina. Use "Descobrir campos" pra achar o ID (mais confi&aacute;vel).</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="group full" data-tab="advanced">
+              <h4>Marca&ccedil;&atilde;o de uso</h4>
+              <div class="grid">
+                <div>
+                  <label>Campo de texto livre "Categorias" (CF ID)</label>
+                  <input type="number" id="ml_s_cf_usage_mark" value="${Number(cur.CF_USAGE_MARK)||0}" min="0" />
+                  <div class="hint"><b>0</b> = desligado. Al&eacute;m do label <code>is-toolkit</code> (sempre aplicado), toda a&ccedil;&atilde;o relevante (derivar, status, coment&aacute;rio, auditoria) acrescenta o marcador abaixo a este campo de texto &mdash; sem apagar o que j&aacute; estava escrito. Use "Descobrir campos" pra achar o ID.</div>
+                </div>
+                <div>
+                  <label>Texto do marcador</label>
+                  <input type="text" id="ml_s_usage_mark_text" value="${esc(String(cur.USAGE_MARK_TEXT || def.USAGE_MARK_TEXT || '[IS-Toolkit]'))}" />
                 </div>
               </div>
             </div>
@@ -8869,6 +9213,10 @@ Formato exato:
       if(suggAdd) suggAdd.onclick = (e) => { e.preventDefault(); renderSuggRow({}); };
 
       // Botao de descoberta de campos de auditoria
+      modal.querySelector('#ml_s_reopen_wizard')?.addEventListener('click', () => {
+        try{ openSetupWizard({ forced: true }); }catch(e){ alert('Erro ao abrir o assistente: ' + (e.message || e)); }
+      });
+
       modal.querySelector('#ml_s_discover_fields')?.addEventListener('click', async () => {
         const btn = modal.querySelector('#ml_s_discover_fields');
         const orig = btn.textContent;
@@ -9100,7 +9448,9 @@ Formato exato:
             WHATSAPP_COUNTRY_CODE: String(modal.querySelector('#ml_s_wa_cc')?.value || '').replace(/\D/g,'') || DEFAULTS.WHATSAPP_COUNTRY_CODE,
             WHATSAPP_MSG_TEMPLATE: String(modal.querySelector('#ml_s_wa_msg')?.value || '').replace(/\r\n/g,'\n').trim() || DEFAULTS.WHATSAPP_MSG_TEMPLATE,
             ASSIGN_SHORTCUT: String(modal.querySelector('#ml_s_assign_shortcut')?.value || '').trim() || DEFAULTS.ASSIGN_SHORTCUT,
-            ASSIGN_COMMENT: String(modal.querySelector('#ml_s_assign_comment')?.value || '').replace(/\r\n/g, '\n').replace(/^\n+|\n+$/g, '') || DEFAULTS.ASSIGN_COMMENT
+            ASSIGN_COMMENT: String(modal.querySelector('#ml_s_assign_comment')?.value || '').replace(/\r\n/g, '\n').replace(/^\n+|\n+$/g, '') || DEFAULTS.ASSIGN_COMMENT,
+            CF_USAGE_MARK: Math.max(0, Number(modal.querySelector('#ml_s_cf_usage_mark')?.value) || 0),
+            USAGE_MARK_TEXT: String(modal.querySelector('#ml_s_usage_mark_text')?.value || '').trim() || DEFAULTS.USAGE_MARK_TEXT
           };
 
           const ok = saveSettings(values);
@@ -10310,12 +10660,22 @@ Formato exato:
       document.body.appendChild(btn);
     }
 
+    let _setupWizardShown = false;
+
     const _tick = () => {
       try{ if(typeof _arEnsureButton === 'function') _arEnsureButton(); }catch(_){}
       try{ if(typeof _aiEnsureToggle === 'function') _aiEnsureToggle(); }catch(_){}
       const key = getIssueKey();
       if(key){ ensureButton(); ensureProviderButton(key); _waEnsureButton(key); }
       else { document.getElementById(IDS.btn)?.remove(); document.getElementById(PROVIDER_BTN_ID)?.remove(); document.getElementById(WA_BTN_ID)?.remove(); }
+
+      // Assistente de setup inicial: so dispara automaticamente pra instalacoes genuinamente
+      // novas (nunca salvaram configuracao neste navegador), uma unica vez por carregamento
+      // de pagina, e so quando ha um ticket aberto (pro passo de "Descobrir campos" funcionar).
+      if(key && _IS_FRESH_INSTALL && !SETTINGS.SETUP_WIZARD_DONE && !_setupWizardShown){
+        _setupWizardShown = true;
+        try{ openSetupWizard(); }catch(e){}
+      }
 
       // Chip ambient (arco SVG + pendências): mantém visível enquanto há auditoria para este ticket
       try{
@@ -10724,6 +11084,7 @@ Formato exato:
               <li>Voce pode <b>colar mais keys</b> (uma por linha ou separadas por virgula/espaco) e clicar "Adicionar".</li>
               <li>Use o filtro pra achar e <b>marque</b> os chamados que quer processar (ou "Marcar todos").</li>
               <li>Escolha a acao (Derivar para time X / com ISS) e clique "Executar".</li>
+              <li>Ou clique "Auditar selecionados" pra rodar a auditoria por IA nos marcados sem derivar nada (precisa do Webhook de auditoria configurado).</li>
             </ol>
           </details>
 
@@ -10771,6 +11132,7 @@ Formato exato:
 
           <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
             <button id="ml_batch_cancel" class="btnSecondary">Cancelar</button>
+            <button id="ml_batch_audit_run" class="btnSecondary" title="Roda a auditoria por IA em cada chamado marcado — não deriva, só analisa e salva o resultado." ${SETTINGS.AUDIT_WEBHOOK_URL ? '' : 'disabled'}>&#128269; Auditar selecionados</button>
             <button id="ml_batch_run" class="btnPrimary">Executar</button>
           </div>
 
@@ -11293,7 +11655,7 @@ Formato exato:
               }
             }
             await jiraDoDerive(key, deriveTr.id, ticketTeam.id, comment, adfOverride);
-          addUsageLabel(key).catch(()=>{});
+            // marcação de uso (label + campo texto) agora acontece dentro do próprio jiraDoDerive
             progressLog(`<b style="color:#86efac;">[OK]</b> ${esc(key)} derivado para ${esc(ticketTeam.value)}`);
             ok++;
 
@@ -11389,6 +11751,66 @@ Formato exato:
           setTimeout(() => { try{ close(); }catch(_){} }, 1200);
         }
       };
+
+      // Auditoria em lote — roda o mesmo núcleo do "Auditar" (ticket único) pra cada
+      // chamado marcado. NÃO deriva, não muda status: só analisa e salva o resultado
+      // (fica disponível no card do ticket e no modo auditoria inline). Não some da
+      // lista depois — o chamado normalmente ainda precisa de outra ação (derivar etc.).
+      modal.querySelector('#ml_batch_audit_run')?.addEventListener('click', async () => {
+        if(!SETTINGS.AUDIT_WEBHOOK_URL){
+          showToast('Configure o Webhook de auditoria em Configuracoes → Avancado → Integracoes', 'warn');
+          return;
+        }
+        const targetKeys = [...selected];
+        if(!targetKeys.length){ alert('Selecione pelo menos 1 chamado.'); return; }
+        if(!confirm(`Rodar auditoria por IA em ${targetKeys.length} chamado(s)?\n\nIsso NÃO deriva nem altera o chamado — só analisa e salva o resultado.`)) return;
+
+        const auditBtn = modal.querySelector('#ml_batch_audit_run');
+        const runBtn = modal.querySelector('#ml_batch_run');
+        const origAuditLabel = auditBtn.innerHTML;
+        auditBtn.disabled = true;
+        if(runBtn) runBtn.disabled = true;
+        auditBtn.innerHTML = `<span class="mlSpin"></span> Auditando...`;
+
+        const p = modal.querySelector('#ml_batch_progress');
+        p.innerHTML = `<div style="font-weight:700;color:var(--ml-text);margin-bottom:8px;">Progresso (0/${targetKeys.length})</div>`;
+        const counter = (i) => p.firstChild.textContent = `Progresso (${i}/${targetKeys.length})`;
+
+        let okA = 0, failA = 0;
+        const scores = [];
+        for(let i = 0; i < targetKeys.length; i++){
+          const key = targetKeys[i];
+          counter(i);
+          try{
+            const result = await _runAuditCore(key);
+            const sc = typeof result?.score === 'number' ? result.score : null;
+            if(sc != null) scores.push(sc);
+            const scColor = sc == null ? 'var(--ml-text-mut)' : (sc >= 80 ? '#34c578' : sc >= 50 ? '#f59e0b' : '#ef4444');
+            progressLog(`<b style="color:#86efac;">[OK]</b> ${esc(key)} &mdash; score <b style="color:${scColor};">${sc ?? '?'}</b>`);
+            okA++;
+          }catch(e){
+            progressLog(`<b style="color:#fca5a5;">[FAIL]</b> ${esc(key)}: ${esc(e.message || String(e))}`);
+            failA++;
+          }
+          // Rate limiting: cada chamada já é pesada (webhook + imagens + retry) — respiro entre tickets
+          if(i < targetKeys.length - 1) await new Promise(r => setTimeout(r, 600));
+        }
+        counter(targetKeys.length);
+
+        const avg = scores.length ? Math.round(scores.reduce((a,b) => a+b, 0) / scores.length) : null;
+        const summaryA = document.createElement('div');
+        summaryA.style.cssText = `margin-top:12px;padding:10px 12px;border-radius:8px;font-weight:700;${
+          failA === 0
+            ? 'background:var(--ml-green-soft);border:1px solid var(--ml-green);color:#bdf0d2;'
+            : 'background:var(--ml-amber-soft);border:1px solid var(--ml-amber);color:#ffeec3;'
+        }`;
+        summaryA.innerHTML = `Concluído: <b>${okA}</b> auditado(s)${avg != null ? `, score médio <b>${avg}</b>` : ''}, <b>${failA}</b> falha(s).`;
+        p.appendChild(summaryA);
+
+        auditBtn.innerHTML = origAuditLabel;
+        auditBtn.disabled = !SETTINGS.AUDIT_WEBHOOK_URL;
+        if(runBtn) runBtn.disabled = false;
+      });
     }
 
     // =========================
@@ -11460,6 +11882,9 @@ Formato exato:
     // Aplica a sugestão de um item conforme o tipo. Retorna mensagem de sucesso.
     async function _aiApplyItem(item, issueKey){
       const txt = String(item.suggested_text || '').trim();
+      // Marca uso já aqui (fire-and-forget) — cobre também o ramo "comentário", que insere
+      // via DOM (_openJiraCommentWithText) e não passa pelas funções de API já instrumentadas.
+      _markToolkitUsage(issueKey).catch(()=>{});
       if(item.check === 'Titulo'){
         if(!txt) throw new Error('Sem título sugerido.');
         await _aiApiPut(issueKey, { summary: txt.replace(/\s*\n+\s*/g, ' ').slice(0, 250) });
@@ -11625,6 +12050,7 @@ Formato exato:
           if(!txt) return;
           try{ navigator.clipboard.writeText(txt); }catch(_){}
           _openJiraCommentWithText(txt);
+          _markToolkitUsage(issueKey).catch(()=>{});
           it._applied = true;
           rowsEl.innerHTML = renderRows();
           const prog = panel.querySelector('#ml_coach_progress');
