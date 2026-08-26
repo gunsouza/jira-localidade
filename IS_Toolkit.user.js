@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.57.0
+// @version      1.58.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -524,8 +524,10 @@
 
       // ---- Auditoria de Ticket (IA via n8n) ----
       // URL do webhook n8n que recebe os dados do ticket e retorna a analise.
-      // Deixe vazio para desabilitar o card de auditoria.
-      AUDIT_WEBHOOK_URL: '',
+      // Fixa pra todo o time (workflow central "ist-ticket-audit" no verdi-flows) — ninguem
+      // precisa configurar isso na instalacao. Deixe vazio pra desabilitar o card de auditoria,
+      // ou troque aqui em Configuracoes -> Avancado -> Integracoes se o endpoint mudar de lugar.
+      AUDIT_WEBHOOK_URL: 'http://verdi-flows.melisystems.com/webhook/ist-ticket-audit',
 
       // ---- Campos customizados de auditoria (IDs por instancia Jira) ----
       // Preenchidos via "Descobrir campos" em Configuracoes → Integrações.
@@ -8347,10 +8349,10 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         </p>
 
         <div style="border-top:1px solid #3a3a4e;padding-top:14px;margin-top:6px;">
-          <label style="font-weight:600;display:block;margin-bottom:4px;color:#ccc;">1. Webhook de auditoria por IA <span style="color:#888;font-weight:400;">(opcional)</span></label>
+          <label style="font-weight:600;display:block;margin-bottom:4px;color:#ccc;">1. Webhook de auditoria por IA <span style="color:#888;font-weight:400;">(já vem preenchido — só troque se souber que mudou)</span></label>
           <input type="text" id="ml_wiz_webhook" placeholder="https://...n8n.../webhook/..." value="${esc(cur.AUDIT_WEBHOOK_URL || '')}"
             style="width:100%;padding:7px 9px;border:1px solid #555;border-radius:6px;background:#2a2a3e;color:#e0e0e0;font-size:12px;box-sizing:border-box;" />
-          <div style="font-size:11px;color:#888;margin-top:4px;">Sem isso, o card "Auditar Ticket" fica desabilitado — o resto do toolkit funciona igual.</div>
+          <div style="font-size:11px;color:#888;margin-top:4px;">É o endpoint central do time — a maioria não precisa tocar aqui. Deixe vazio pra desabilitar o card "Auditar Ticket".</div>
         </div>
 
         <div style="border-top:1px solid #3a3a4e;padding-top:14px;margin-top:14px;">
@@ -8802,7 +8804,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <input type="url" id="ml_s_audit_webhook" value="${esc(cur.AUDIT_WEBHOOK_URL || '')}" placeholder="https://verdiflow.../webhook/..." style="font-family:var(--ml-mono);font-size:12px;" />
                   <div class="hint">
                     URL do webhook n8n que recebe os dados do ticket e retorna a an&aacute;lise por IA.
-                    Veja o workflow de exemplo no arquivo <code>ist-audit-workflow.json</code> da pasta do projeto.
+                    J&aacute; vem preenchida com o endpoint central do time (fixo em <code>DEFAULTS</code>) &mdash; s&oacute; troque aqui se o workflow mudar de lugar.
                     Deixe vazio para desabilitar o card de auditoria na home.
                   </div>
                 </div>
