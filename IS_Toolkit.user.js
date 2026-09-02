@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.60.0
+// @version      1.61.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -2932,6 +2932,15 @@
       return JSON.parse(txt);
     }
 
+    // Substitui o placeholder {meu_nome} pelo nome de quem esta logado (via /myself),
+    // pra templates de comentario (ASSIGN_COMMENT, STATUS_ACTIONS) nao precisarem de um
+    // nome fixo hardcoded — cada analista que usar o mesmo template assina com o proprio nome.
+    function _applyMyNamePlaceholder(text, me){
+      if(!text) return text;
+      const name = me?.displayName || '';
+      return text.replace(/\{meu_nome\}/gi, name);
+    }
+
     async function getIssueFullForCopy(issueKey){
       // Pega description (ADF), priority (para manter), asset (raw) e anexos.
       const url = `${location.origin}/rest/api/3/issue/${issueKey}?fields=description,priority,attachment,customfield_${CF_ASSET}`;
@@ -4953,7 +4962,7 @@
       }
 
       // 5) Monta comentario default + campos extras
-      const defaultComment = String(opts.comment || action.comment || '').trim();
+      const defaultComment = _applyMyNamePlaceholder(String(opts.comment || action.comment || '').trim(), me);
       let extraFields = {};
       let commentForTransition = defaultComment;
       const isInternal = action.internal === true;
@@ -8702,7 +8711,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                     com todas elas, e voce escolhe qual aplicar.<br/>
                     Cada acao tem sua <b>propria mensagem</b>, define se e <b>publico ou interno</b>,
                     e se <b>atribui o ticket pra voce</b>.<br/>
-                    <b>Exemplos uteis:</b> "Em andamento", "Waiting for customer", "Waiting for support", "Resolvido".
+                    <b>Exemplos uteis:</b> "Em andamento", "Waiting for customer", "Waiting for support", "Resolvido".<br/>
+                    Use <code>{meu_nome}</code> na mensagem pra assinar com o nome de quem estiver logado &mdash; assim o mesmo template funciona pra qualquer analista do time, sem nome fixo.
                   </div>
                   <div id="ml_s_status_list"></div>
                   <button id="ml_s_status_add" class="ghost" style="margin-top: 8px;">+ Adicionar acao de status</button>
@@ -8828,7 +8838,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <textarea id="ml_s_assign_comment" rows="4" placeholder="${esc(def.ASSIGN_COMMENT || 'Iniciando atendimento.')}">${esc(cur.ASSIGN_COMMENT || def.ASSIGN_COMMENT || '')}</textarea>
                   <div class="hint">
                     Mensagem postada como coment&aacute;rio <strong>p&uacute;blico</strong> ao mover o ticket para <em>In Progress</em> via atalho.
-                    Quebras de linha s&atilde;o preservadas. Padr&atilde;o: <code>${esc(def.ASSIGN_COMMENT || 'Iniciando atendimento.')}</code>
+                    Quebras de linha s&atilde;o preservadas. Padr&atilde;o: <code>${esc(def.ASSIGN_COMMENT || 'Iniciando atendimento.')}</code><br/>
+                    Use <code>{meu_nome}</code> pra assinar automaticamente com o nome de quem est&aacute; logado no Jira &mdash; assim o mesmo texto serve pra qualquer analista, sem nome fixo.
                   </div>
                 </div>
               </div>
@@ -12359,7 +12370,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         }
       }
 
-      const commentText = (SETTINGS.ASSIGN_COMMENT || DEFAULTS.ASSIGN_COMMENT || 'Iniciando atendimento.').trim();
+      const commentText = _applyMyNamePlaceholder((SETTINGS.ASSIGN_COMMENT || DEFAULTS.ASSIGN_COMMENT || 'Iniciando atendimento.').trim(), me);
       await jiraApplyTransitionWithFields(issueKey, tr.id, {
         commentText,
         internal: false,
