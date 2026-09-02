@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.59.0
+// @version      1.60.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -212,6 +212,10 @@
       // ---- Auto-reload da pagina (o Jira daqui nao atualiza em tempo real) ----
       // Intervalo padrao em segundos. O liga/desliga fica num botao flutuante e eh
       // POR ABA (sessionStorage); o intervalo padrao eh global.
+      // Bloco fica escondido do usuario final por padrao (Task interna de 2026-08-27): o botao
+      // flutuante confundia gente que nao usava a feature. O codigo continua funcionando pra
+      // quem quiser ligar via Configuracoes -> Auto-reload -> "Mostrar botao flutuante".
+      AUTO_RELOAD_BUTTON_VISIBLE: false,
       AUTO_RELOAD_INTERVAL_SEC: 60,
       // Se true, toda aba do Jira ja abre com o auto-reload ligado. Default false
       // (voce liga manualmente por aba). Pausas de seguranca configuraveis abaixo.
@@ -8939,9 +8943,16 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   </div>
                 </div>
                 <div>
+                  <label style="display:flex; align-items:center; gap:8px;">
+                    <input type="checkbox" id="ml_s_ar_button_visible" ${cur.AUTO_RELOAD_BUTTON_VISIBLE ? 'checked' : ''} />
+                    <span>Mostrar bot&atilde;o flutuante</span>
+                  </label>
+                  <div class="hint">Desligado por padr&atilde;o (o bot&atilde;o &#8635; confundia quem n&atilde;o usa a feature). O auto-reload em si continua funcionando por baixo; isso s&oacute; esconde/mostra o bot&atilde;o de controle.</div>
+                </div>
+                <div>
                   <label>Intervalo (segundos)</label>
                   <input type="number" id="ml_s_ar_interval" value="${esc(String(_arLoadDefaultInterval() || cur.AUTO_RELOAD_INTERVAL_SEC || def.AUTO_RELOAD_INTERVAL_SEC || 60))}" min="5" max="3600" />
-                  <div class="hint">Padr&atilde;o global (m&iacute;nimo 5s). Tamb&eacute;m d&aacute; pra mudar r&aacute;pido clicando com o <b>bot&atilde;o direito</b> no bot&atilde;o flutuante.</div>
+                  <div class="hint">Padr&atilde;o global (m&iacute;nimo 5s). Tamb&eacute;m d&aacute; pra mudar r&aacute;pido clicando com o <b>bot&atilde;o direito</b> no bot&atilde;o flutuante (quando vis&iacute;vel).</div>
                 </div>
                 <div>
                   <label style="display:flex; align-items:center; gap:8px;">
@@ -9326,6 +9337,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             ISS_TASK_AUTO_CLOSE_SOLUTION: String(modal.querySelector('#ml_s_iss_autoclose_solution')?.value || '').trim() || 'Troubleshooting vinculado e tarefa encerrada',
 
             // Auto-reload
+            AUTO_RELOAD_BUTTON_VISIBLE: !!modal.querySelector('#ml_s_ar_button_visible')?.checked,
             AUTO_RELOAD_INTERVAL_SEC: (() => {
               const v = Number(modal.querySelector('#ml_s_ar_interval')?.value);
               return Number.isFinite(v) && v >= 5 ? Math.round(v) : DEFAULTS.AUTO_RELOAD_INTERVAL_SEC;
@@ -10844,6 +10856,13 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       return false;
     }
     function _arEnsureButton(){
+      // Botao escondido por padrao (SETTINGS.AUTO_RELOAD_BUTTON_VISIBLE) — o auto-reload em si
+      // (start/stop/timer) continua funcionando por baixo pra quem ja tinha ligado antes disso
+      // via GM storage, so o controle visual fica oculto ate a pessoa reativar em Configuracoes.
+      if(!SETTINGS.AUTO_RELOAD_BUTTON_VISIBLE){
+        document.getElementById(AR_BTN_ID)?.remove();
+        return;
+      }
       if(document.getElementById(AR_BTN_ID)) return;
       const b = document.createElement('button');
       b.id = AR_BTN_ID;
