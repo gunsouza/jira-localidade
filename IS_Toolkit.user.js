@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.61.0
+// @version      1.62.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -8892,7 +8892,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 <div class="full">
                   <label>Mensagem padr&atilde;o (pr&eacute;-escrita no WhatsApp)</label>
                   <textarea id="ml_s_wa_msg" style="min-height:70px;">${esc(cur.WHATSAPP_MSG_TEMPLATE || def.WHATSAPP_MSG_TEMPLATE || '')}</textarea>
-                  <div class="hint">Placeholders: <code>{key}</code> (chamado), <code>{reporter}</code> (relator), <code>{firstname}</code> (1&ordm; nome), <code>{summary}</code> (t&iacute;tulo), <code>{description}</code> (o que foi solicitado). O WhatsApp deixa a mensagem pronta &mdash; voc&ecirc; aperta Enter (n&atilde;o envia sozinho).</div>
+                  <div class="hint">Placeholders: <code>{key}</code> (chamado), <code>{reporter}</code> (relator, nome completo), <code>{firstname}</code> (s&oacute; o 1&ordm; nome do relator &mdash; use este se o ticket puder ter sido aberto por outra pessoa), <code>{summary}</code> (t&iacute;tulo), <code>{description}</code> (o que foi solicitado), <code>{meu_nome}</code> (seu nome, via login do Jira &mdash; evita assinatura fixa hardcoded). Dica: prefira <code>{firstname}</code> a <code>{reporter}</code>, e n&atilde;o fixe uma sauda&ccedil;&atilde;o como "Boa tarde" (nem sempre &eacute; verdade). O WhatsApp deixa a mensagem pronta &mdash; voc&ecirc; aperta Enter (n&atilde;o envia sozinho).</div>
                 </div>
                 <div>
                   <label>C&oacute;digo do pa&iacute;s (fallback)</label>
@@ -10620,7 +10620,12 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const num = _waNormalizePhone(phone, SETTINGS.WHATSAPP_COUNTRY_CODE || DEFAULTS.WHATSAPP_COUNTRY_CODE, locationKey);
       if(!num || num.length < 10){ showToast('Telefone inválido: ' + phone, 'warn', 4000); return; }
 
-      const tmpl = String(SETTINGS.WHATSAPP_MSG_TEMPLATE || DEFAULTS.WHATSAPP_MSG_TEMPLATE || '');
+      // {meu_nome} = nome de quem está logado (via /myself) — mesma lógica do ASSIGN_COMMENT/STATUS_ACTIONS,
+      // assim a mensagem de WhatsApp também não precisa de assinatura fixa hardcoded no template.
+      let me = null;
+      try{ me = await jiraGetMyself(); }catch(_){}
+      const tmplRaw = String(SETTINGS.WHATSAPP_MSG_TEMPLATE || DEFAULTS.WHATSAPP_MSG_TEMPLATE || '');
+      const tmpl = _applyMyNamePlaceholder(tmplRaw, me);
       const first = (reporter || '').split(/\s+/)[0] || '';
       // Substitui os campos curtos primeiro e colapsa só espaços/tabs repetidos (não newlines);
       // description/summary entram por último pra preservar as quebras de linha do relato.
