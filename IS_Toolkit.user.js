@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.64.0
+// @version      1.65.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -7356,8 +7356,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           </div>
 
           ${GRID_CENTRAL_URL ? `
-          <div style="margin-top:10px;display:flex;justify-content:center;">
-            <a href="${esc(GRID_CENTRAL_URL)}" target="_blank" rel="noopener" class="primary" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:9px 18px;">
+          <div style="margin-top:10px;">
+            <a href="${esc(GRID_CENTRAL_URL)}" target="_blank" rel="noopener" class="primary" style="text-decoration:none;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;padding:10px 18px;width:100%;box-sizing:border-box;">
               &#128194; Central Natis
             </a>
           </div>` : ''}
