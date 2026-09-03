@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.69.0
+// @version      1.70.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -1721,6 +1721,40 @@
       const txt = await r.text().catch(()=> '');
       if(!r.ok) throw new Error(`HTTP ${r.status} no search/jql: ${txt.slice(0,250)}`);
       return JSON.parse(txt);
+    }
+
+    // Conta quantos tickets batem uma JQL sem precisar baixar os issues (rapido, so o numero).
+    // Usa /search/approximate-count (API dedicada do Jira Cloud pra isso).
+    async function countByJql(jql){
+      const url = `${location.origin}/rest/api/3/search/approximate-count`;
+      const r = await fetch(url, {
+        method:'POST',
+        credentials:'same-origin',
+        headers:{ 'Accept':'application/json', 'Content-Type':'application/json' },
+        body: JSON.stringify({ jql })
+      });
+      const txt = await r.text().catch(()=> '');
+      if(!r.ok) throw new Error(`HTTP ${r.status} ao contar (${jql}): ${txt.slice(0,200)}`);
+      const j = JSON.parse(txt);
+      return Number(j.count) || 0;
+    }
+
+    // Metricas rapidas do analista logado, pro painel de Dashboards. Cada contagem e
+    // independente — se uma falhar (JQL invalida pro workflow, etc.) as outras continuam.
+    async function getMyAnalystStats(){
+      const projScope = PROJECTS.length ? `project in (${PROJECTS.map(p=>`"${p}"`).join(',')}) AND ` : '';
+      const queries = {
+        resolvedToday: `${projScope}assignee = currentUser() AND resolutiondate >= startOfDay()`,
+        resolvedWeek:  `${projScope}assignee = currentUser() AND resolutiondate >= startOfWeek()`,
+        openNow:       `${projScope}assignee = currentUser() AND statusCategory != Done`,
+        toolkitToday:  `${projScope}labels = "${SETTINGS.USAGE_LABEL || DEFAULTS.USAGE_LABEL || 'is-toolkit'}" AND assignee = currentUser() AND updated >= startOfDay()`,
+      };
+      const out = {};
+      await Promise.all(Object.entries(queries).map(async ([k, jql]) => {
+        try{ out[k] = await countByJql(jql); }
+        catch(e){ out[k] = null; console.warn(`[IS Toolkit][stats] falha em ${k}:`, e); }
+      }));
+      return out;
     }
 
     async function searchIssuesWithCache(objectId, jql){
@@ -10779,12 +10813,89 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         refreshButtons();
       }, 0);
     }
+    function isDashboardsPage(){
+      return /\/jira\/dashboards(\b|\/|\?|$)/.test(location.pathname);
+    }
+
+    // Painel dedicado pra /jira/dashboards — em vez da tela generica "Sem ticket aberto"
+    // (que continua servindo outras paginas sem ticket, tipo busca de issues vazia), aqui
+    // o foco e o analista: numeros de atendimento + os mesmos atalhos rapidos.
+    async function renderDashboardsHome(modal){
+      modal.setBody(`
+        <div style="padding: 14px 0;">
+          <div id="ml_home_health"></div>
+
+          <div style="font-weight:700;margin-bottom:10px;">Meu desempenho</div>
+          <div id="ml_dash_stats" class="homeGrid">
+            <div class="homeCard"><div class="muted">Carregando métricas...</div></div>
+          </div>
+
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin:16px 0;">
+            <button id="ml_dash_batch" class="primary" style="flex:1;min-width:180px;">&#128203; Gerenciador de fila</button>
+            ${GRID_CENTRAL_URL ? `<a href="${esc(GRID_CENTRAL_URL)}" target="_blank" rel="noopener" class="btnSecondary" style="flex:1;min-width:180px;text-decoration:none;display:flex;align-items:center;justify-content:center;">&#128194; Central Natis</a>` : ''}
+          </div>
+
+          <div>
+            <label style="display:block; font-size:12px; font-weight:700; color:var(--ml-text-mut); margin-bottom:6px;">
+              Abrir ticket diretamente (cole a key):
+            </label>
+            <div style="display:flex; gap:8px;">
+              <input id="ml_loc_jumpkey" type="text" placeholder="Ex: IS-123456" style="flex:1; background:var(--ml-bg-0); color:var(--ml-text); border:1px solid var(--ml-border-2); border-radius:6px; padding:9px 12px; font-size:13px;" />
+              <button id="ml_loc_jumpgo" class="primary">Abrir</button>
+            </div>
+            <div class="meta" style="margin-top:6px;">Abre em nova aba.</div>
+          </div>
+        </div>
+      `);
+
+      try{ await renderHealthBanner(); }catch(e){ console.warn('[IS Toolkit][dashboards] health banner falhou:', e); }
+
+      document.getElementById('ml_dash_batch')?.addEventListener('click', () => { modal.close(); openBatchModal(); });
+      const jumpInput = document.getElementById('ml_loc_jumpkey');
+      const jumpBtn   = document.getElementById('ml_loc_jumpgo');
+      const goJump = () => {
+        const k = String(jumpInput.value || '').trim().toUpperCase();
+        if(!/^[A-Z]+-\d+$/.test(k)){ jumpInput.focus(); return; }
+        window.open(`${location.origin}/browse/${k}`, '_blank', 'noopener');
+      };
+      jumpBtn?.addEventListener('click', goJump);
+      jumpInput?.addEventListener('keydown', (e) => { if(e.key === 'Enter'){ e.preventDefault(); goJump(); } });
+
+      // Metricas: carregam em paralelo, sem travar o resto da tela.
+      getMyAnalystStats().then(stats => {
+        const statsEl = document.getElementById('ml_dash_stats');
+        if(!statsEl) return;
+        const fmt = (n) => (n == null ? '—' : String(n));
+        const cards = [
+          { label: 'Resolvidos hoje',      icon: '&#9989;', value: stats.resolvedToday },
+          { label: 'Resolvidos essa semana', icon: '&#128197;', value: stats.resolvedWeek },
+          { label: 'Abertos comigo agora',  icon: '&#128203;', value: stats.openNow },
+          { label: 'Via IS Toolkit hoje',   icon: '&#9889;', value: stats.toolkitToday },
+        ];
+        statsEl.innerHTML = cards.map(c => `
+          <div class="homeCard" style="text-align:center;">
+            <div class="hcIcon">${c.icon}</div>
+            <div style="font-size:26px;font-weight:800;margin:4px 0;">${fmt(c.value)}</div>
+            <div class="muted">${esc(c.label)}</div>
+          </div>
+        `).join('');
+      }).catch(e => {
+        const statsEl = document.getElementById('ml_dash_stats');
+        if(statsEl) statsEl.innerHTML = `<div class="homeCard"><div class="err">Falha ao carregar métricas: ${esc(e.message || String(e))}</div></div>`;
+      });
+    }
+
     // =========================
     // RUNTIME — botão flutuante, atalho de teclado, bootstrap
     // =========================
     async function runApp(){
       const issueKey = getIssueKey();
       if(!issueKey){
+        if(isDashboardsPage()){
+          const modal = openModal('IS Toolkit', 'Painel do analista');
+          await renderDashboardsHome(modal);
+          return;
+        }
         // Sem ticket aberto: abre o modal mesmo assim com um conteudo neutro,
         // dando acesso ao botao de Configuracoes (gear) no header e a busca por key.
         const modal = openModal('IS Toolkit', 'Nenhum ticket detectado nesta pagina.');
