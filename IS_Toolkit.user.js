@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.68.0
+// @version      1.69.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -10801,6 +10801,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               </div>
             </div>
 
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+              <button id="ml_neutral_batch" class="primary" style="flex:1;min-width:180px;">&#128203; Gerenciador de fila</button>
+              ${GRID_CENTRAL_URL ? `<a href="${esc(GRID_CENTRAL_URL)}" target="_blank" rel="noopener" class="btnSecondary" style="flex:1;min-width:180px;text-decoration:none;display:flex;align-items:center;justify-content:center;">&#128194; Central Natis</a>` : ''}
+            </div>
+
             <div style="margin-bottom:10px;">
               <label style="display:block; font-size:12px; font-weight:700; color:var(--ml-text-mut); margin-bottom:6px;">
                 Abrir ticket diretamente (cole a key):
@@ -10813,6 +10818,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             </div>
           </div>
         `);
+        document.getElementById('ml_neutral_batch')?.addEventListener('click', () => { modal.close(); openBatchModal(); });
         const jumpInput = document.getElementById('ml_loc_jumpkey');
         const jumpBtn   = document.getElementById('ml_loc_jumpgo');
         const goJump = () => {
@@ -11045,8 +11051,15 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       try{ if(typeof _arEnsureButton === 'function') _arEnsureButton(); }catch(_){}
       try{ if(typeof _aiEnsureToggle === 'function') _aiEnsureToggle(); }catch(_){}
       const key = getIssueKey();
-      if(key){ ensureButton(); ensureProviderButton(key); _waEnsureButton(key); }
-      else { document.getElementById(IDS.btn)?.remove(); document.getElementById(PROVIDER_BTN_ID)?.remove(); document.getElementById(WA_BTN_ID)?.remove(); }
+      if(key){
+        ensureButton(); ensureProviderButton(key); _waEnsureButton(key);
+      } else {
+        document.getElementById(PROVIDER_BTN_ID)?.remove(); document.getElementById(WA_BTN_ID)?.remove();
+        // Botao principal continua aparecendo mesmo sem ticket em telas uteis (Dashboards,
+        // /issues, /queues) — da acesso ao Gerenciador de fila, Central Natis e Configuracoes
+        // mesmo quando nao ha 1 ticket especifico aberto.
+        if(isQueueOrIssuesPage()) ensureButton(); else document.getElementById(IDS.btn)?.remove();
+      }
 
       // Assistente de setup inicial: so dispara automaticamente pra instalacoes genuinamente
       // novas (nunca salvaram configuracao neste navegador), uma unica vez por carregamento
@@ -11351,7 +11364,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       // Se ja tem um ticket aberto (browse/X ou queues/issue/X), nao mostra "Gerenciador"
       // - usuario quer "Localidade" pra acoes daquele chamado.
       if(getIssueKey()) return false;
-      return /\/(issues|queues)(\b|\/|\?|$)/.test(location.pathname);
+      // Inclui /jira/dashboards: os gadgets de filtro/"atribuidos a mim" listam varios
+      // tickets, mesmo caso de uso de /issues e /queues (detectar keys da tela e processar em lote).
+      return /\/(issues|queues|dashboards)(\b|\/|\?|$)/.test(location.pathname);
     }
 
     // Extrai issue keys visiveis no DOM via varios seletores (Issue Navigator, queues, etc).
