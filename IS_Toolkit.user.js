@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.81.0
+// @version      1.82.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -8886,6 +8886,21 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             Em Dashboards, o botão "Meu Perfil" mostra cards com sua produtividade, tickets antigos,
             risco de SLA e auditorias pendentes — tudo puxado automaticamente. Não precisa de nenhum
             desses? Dá pra desligar card por card em Configurações → Avançado.
+          </div>
+        </div>
+
+        <div style="border:1px solid #7a5c1e;background:#332a12;border-radius:8px;padding:12px 14px;margin-top:14px;">
+          <label style="font-weight:600;display:block;margin-bottom:4px;color:#f0c674;">&#9888;&#65039; Suas configurações vivem só neste navegador</label>
+          <div style="font-size:12px;color:#ddc99a;line-height:1.6;">
+            Snippets, atalhos, cards ligados/desligados, tudo fica salvo só aqui. Se você limpar o
+            cache, trocar de PC ou reinstalar o navegador do zero, <b>perde tudo</b> e volta pro padrão.<br/><br/>
+            <b>Pra fazer backup:</b> Configurações → rodapé do modal → botão <b>Exportar</b> — baixa um
+            arquivo JSON com tudo. Guarde esse arquivo em algum lugar seguro (Drive, Grid etc.).<br/>
+            <b>Pra restaurar</b> (depois de limpar tudo ou numa instalação nova): Configurações →
+            rodapé → botão <b>Importar</b> → escolha o arquivo JSON que você exportou antes. Isso
+            substitui as configurações atuais e recarrega a página.<br/><br/>
+            O toolkit também lembra sozinho de fazer backup de tempos em tempos (dá pra ajustar em
+            Configurações → Avançado → "Backup das configurações").
           </div>
         </div>
 
