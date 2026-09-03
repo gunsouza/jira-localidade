@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.70.0
+// @version      1.71.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -545,6 +545,13 @@
       // Link fixo pra central de Grid do time. Aparece como atalho na Home do toolkit.
       GRID_CENTRAL_URL: 'https://grid.adminml.com/d/01KT9SR6G0F092GPTSE1G9DR71/view',
 
+      // ---- Pendencias da auditoria OFICIAL (processo do time, projeto ISSM) ----
+      // Diferente da auditoria por IA do proprio toolkit (informal, local): isso e o processo
+      // real do time. Um ticket em "Analyst approval" no projeto ISSM (request type "Audit (ISSM)"),
+      // atribuido a este analista, significa que ha algo fora de compliance pra corrigir.
+      // Usado no Painel do analista (Dashboards). Ajuste aqui se a JQL oficial mudar.
+      AUDIT_PENDING_JQL: 'project = ISSM AND "request type" = "Audit (ISSM)" AND status = "Analyst approval" AND "Analyst[User Picker (single user)]" = currentUser()',
+
       // ---- Campos customizados de auditoria (IDs por instancia Jira) ----
       // Preenchidos via "Descobrir campos" em Configuracoes → Integrações.
       // 0 = nao configurado (campo ignorado na auditoria).
@@ -605,6 +612,7 @@
     const ORDER_BY = SETTINGS.ORDER_BY;
 
     const GRID_CENTRAL_URL = SETTINGS.GRID_CENTRAL_URL || DEFAULTS.GRID_CENTRAL_URL;
+    const AUDIT_PENDING_JQL = SETTINGS.AUDIT_PENDING_JQL || DEFAULTS.AUDIT_PENDING_JQL;
 
     const DESC_PREVIEW_LEN = SETTINGS.DESC_PREVIEW_LEN;
     const DUP_LABEL_MAX_TOKENS = SETTINGS.DUP_LABEL_MAX_TOKENS;
@@ -1755,6 +1763,33 @@
         catch(e){ out[k] = null; console.warn(`[IS Toolkit][stats] falha em ${k}:`, e); }
       }));
       return out;
+    }
+
+    // Resolvidos por dia nos ultimos 7 dias corridos (hoje incluido), pro grafico de barras
+    // do Painel do analista. Retorna [{ label, count }] do mais antigo pro mais recente.
+    async function getWeeklyProductivityCounts(){
+      const projScope = PROJECTS.length ? `project in (${PROJECTS.map(p=>`"${p}"`).join(',')}) AND ` : '';
+      const days = [];
+      for(let i = 6; i >= 0; i--){
+        const jql = `${projScope}assignee = currentUser() AND resolutiondate >= startOfDay(-${i}d) AND resolutiondate < startOfDay(-${i-1}d)`;
+        days.push({ offset: i, jql });
+      }
+      const results = await Promise.all(days.map(async (d) => {
+        try{ return await countByJql(d.jql); }
+        catch(e){ console.warn(`[IS Toolkit][stats] falha na contagem do dia -${d.offset}:`, e); return null; }
+      }));
+      const now = new Date();
+      return days.map((d, idx) => {
+        const dt = new Date(now); dt.setDate(dt.getDate() - d.offset);
+        const label = dt.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
+        return { label, count: results[idx] };
+      });
+    }
+
+    // Pendencias da auditoria OFICIAL (processo do time, projeto ISSM) — ve _AUDIT_PENDING_JQL.
+    async function getPendingAuditCount(){
+      if(!AUDIT_PENDING_JQL) return null;
+      return await countByJql(AUDIT_PENDING_JQL);
     }
 
     async function searchIssuesWithCache(objectId, jql){
@@ -9040,6 +9075,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <div class="hint">Link do bot&atilde;o &quot;Central Natis&quot; que aparece na Home. Deixe vazio para esconder o atalho.</div>
                 </div>
                 <div class="full">
+                  <label>JQL &mdash; Pend&ecirc;ncias da auditoria oficial (Painel do analista)</label>
+                  <textarea id="ml_s_audit_pending_jql" style="min-height:55px;font-family:var(--ml-mono);font-size:12px;">${esc(cur.AUDIT_PENDING_JQL || def.AUDIT_PENDING_JQL || '')}</textarea>
+                  <div class="hint">JQL que identifica tickets do processo oficial de auditoria (projeto ISSM) pendentes de corre&ccedil;&atilde;o pra este analista. Aparece como card no Painel do analista (Dashboards). Deixe vazio para esconder o card.</div>
+                </div>
+                <div class="full">
                   <label>Atalho &mdash; Assumir ticket + In Progress</label>
                   <input type="text" id="ml_s_assign_shortcut" value="${esc(cur.ASSIGN_SHORTCUT || def.ASSIGN_SHORTCUT || '')}" placeholder="${esc(def.ASSIGN_SHORTCUT || 'Cmd+Shift+A')}" />
                   <div class="hint">
@@ -9682,6 +9722,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             // Integracoes
             AUDIT_WEBHOOK_URL: String(modal.querySelector('#ml_s_audit_webhook')?.value || '').trim(),
             GRID_CENTRAL_URL: String(modal.querySelector('#ml_s_grid_url')?.value || '').trim(),
+            AUDIT_PENDING_JQL: String(modal.querySelector('#ml_s_audit_pending_jql')?.value || '').replace(/\r\n/g,'\n').trim(),
 
             // Campos de auditoria
             CF_CATEGORY:        Math.max(0, Number(modal.querySelector('#ml_s_cf_category')?.value)  || 0),
@@ -10830,6 +10871,15 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             <div class="homeCard"><div class="muted">Carregando métricas...</div></div>
           </div>
 
+          <div id="ml_dash_audit" style="margin-top:14px;"></div>
+
+          <div style="margin-top:16px;">
+            <div style="font-weight:700;margin-bottom:10px;">Minha produtividade (últimos 7 dias)</div>
+            <div id="ml_dash_weekly" style="background:var(--ml-bg-2); border:1px solid var(--ml-border-2); border-radius:8px; padding:14px;">
+              <div class="muted">Carregando...</div>
+            </div>
+          </div>
+
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin:16px 0;">
             <button id="ml_dash_batch" class="primary" style="flex:1;min-width:180px;">&#128203; Gerenciador de fila</button>
             ${GRID_CENTRAL_URL ? `<a href="${esc(GRID_CENTRAL_URL)}" target="_blank" rel="noopener" class="btnSecondary" style="flex:1;min-width:180px;text-decoration:none;display:flex;align-items:center;justify-content:center;">&#128194; Central Natis</a>` : ''}
@@ -10882,6 +10932,73 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       }).catch(e => {
         const statsEl = document.getElementById('ml_dash_stats');
         if(statsEl) statsEl.innerHTML = `<div class="homeCard"><div class="err">Falha ao carregar métricas: ${esc(e.message || String(e))}</div></div>`;
+      });
+
+      // Pendencias da auditoria oficial (projeto ISSM) — card so aparece se houver JQL configurada.
+      const auditEl = document.getElementById('ml_dash_audit');
+      if(auditEl){
+        if(!AUDIT_PENDING_JQL){
+          auditEl.innerHTML = '';
+        } else {
+          auditEl.innerHTML = `<div class="homeCard"><div class="muted">Verificando pendências de auditoria...</div></div>`;
+          getPendingAuditCount().then(count => {
+            if(!document.getElementById('ml_dash_audit')) return;
+            const issuesUrl = `${location.origin}/issues/?jql=${encodeURIComponent(AUDIT_PENDING_JQL)}`;
+            if(count == null){
+              auditEl.innerHTML = `<div class="homeCard"><div class="err">Não foi possível verificar pendências de auditoria.</div></div>`;
+              return;
+            }
+            const ok = count === 0;
+            auditEl.innerHTML = `
+              <div class="homeCard" style="text-align:left; border-color:${ok ? 'var(--ml-border-2)' : 'var(--ml-warn, #d97706)'};">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+                  <div>
+                    <div style="font-weight:700;">${ok ? '&#9989;' : '&#9888;&#65039;'} Pendências de auditoria oficial</div>
+                    <div class="muted" style="margin-top:2px;">
+                      ${ok ? 'Nenhum ticket pendente no processo oficial (ISSM).' : `${count} ticket${count === 1 ? '' : 's'} aguardando correção (ISSM &middot; Analyst approval).`}
+                    </div>
+                  </div>
+                  ${ok ? '' : `<a href="${esc(issuesUrl)}" target="_blank" rel="noopener" class="btnSecondary" style="text-decoration:none;white-space:nowrap;">Ver lista</a>`}
+                </div>
+              </div>
+            `;
+          }).catch(e => {
+            if(!document.getElementById('ml_dash_audit')) return;
+            auditEl.innerHTML = `<div class="homeCard"><div class="err">Falha ao verificar pendências de auditoria: ${esc(e.message || String(e))}</div></div>`;
+          });
+        }
+      }
+
+      // Produtividade semanal (ultimos 7 dias corridos) — grafico de barras simples em SVG.
+      getWeeklyProductivityCounts().then(days => {
+        const el = document.getElementById('ml_dash_weekly');
+        if(!el) return;
+        const vals = days.map(d => (d.count == null ? 0 : d.count));
+        const max = Math.max(1, ...vals);
+        const w = 34, gap = 14, chartH = 90;
+        const totalW = days.length * (w + gap);
+        const bars = days.map((d, i) => {
+          const h = d.count == null ? 2 : Math.max(2, Math.round((d.count / max) * chartH));
+          const x = i * (w + gap);
+          const y = chartH - h;
+          const fill = (i === days.length - 1) ? 'var(--ml-accent, #2563eb)' : 'var(--ml-border-2)';
+          const label = d.count == null ? '—' : String(d.count);
+          return `
+            <g>
+              <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="${fill}"></rect>
+              <text x="${x + w/2}" y="${y - 6}" text-anchor="middle" font-size="11" font-weight="700" fill="var(--ml-text)">${esc(label)}</text>
+              <text x="${x + w/2}" y="${chartH + 16}" text-anchor="middle" font-size="10" fill="var(--ml-text-mut)">${esc(d.label)}</text>
+            </g>
+          `;
+        }).join('');
+        el.innerHTML = `
+          <svg viewBox="0 0 ${totalW} ${chartH + 26}" width="100%" height="${chartH + 26}" xmlns="http://www.w3.org/2000/svg">
+            ${bars}
+          </svg>
+        `;
+      }).catch(e => {
+        const el = document.getElementById('ml_dash_weekly');
+        if(el) el.innerHTML = `<div class="err">Falha ao carregar produtividade semanal: ${esc(e.message || String(e))}</div>`;
       });
     }
 
