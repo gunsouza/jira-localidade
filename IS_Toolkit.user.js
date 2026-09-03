@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.65.0
+// @version      1.66.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -11586,9 +11586,14 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           const statusPill = i.status
             ? `<span style="font-size:10.5px;padding:1px 8px;border-radius:999px;font-weight:600;${statusColorCss(i.statusColor)}">${esc(i.status)}</span>`
             : '';
-          const priorityImg = i.priorityIcon
-            ? `<img src="${esc(i.priorityIcon)}" alt="${esc(i.priority || '')}" title="${esc(i.priority || '')}" style="width:14px;height:14px;vertical-align:middle;" />`
-            : '';
+          const priorityImg = `
+            <button class="rowPrioIconBtn" data-key="${esc(k)}" data-cur="${esc(i.priorityId || '')}"
+              title="Clique pra mudar a prioridade (${esc(i.priority || 'sem prioridade')})"
+              style="border:none;background:transparent;padding:0;cursor:pointer;display:inline-flex;align-items:center;line-height:0;">
+              ${i.priorityIcon
+                ? `<img src="${esc(i.priorityIcon)}" alt="${esc(i.priority || '')}" style="width:14px;height:14px;" />`
+                : `<span style="font-size:10px;color:var(--ml-text-dim);text-decoration:underline dotted;">${esc(i.priority || 'prioridade?')}</span>`}
+            </button>`;
           const typeImg = i.issuetypeIcon
             ? `<img src="${esc(i.issuetypeIcon)}" alt="${esc(i.issuetype || '')}" title="${esc(i.issuetype || '')}" style="width:14px;height:14px;vertical-align:middle;" />`
             : '';
@@ -11741,6 +11746,64 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             // Fecha ao clicar fora
             const closePicker = (ev) => { if(!picker.contains(ev.target)){ picker.remove(); document.removeEventListener('click', closePicker, true); } };
             setTimeout(() => document.addEventListener('click', closePicker, true), 0);
+          });
+        });
+
+        // Icone de prioridade: clique abre um mini-picker flutuante bem na hora, sem precisar
+        // expandir "Detalhes" pra mudar so a prioridade.
+        listEl.querySelectorAll('button.rowPrioIconBtn').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            document.querySelectorAll('.ml-prio-picker-popover').forEach(p => p.remove());
+            const k = btn.getAttribute('data-key');
+            const curId = btn.getAttribute('data-cur') || '';
+
+            const picker = document.createElement('div');
+            picker.className = 'ml-prio-picker-popover';
+            picker.style.cssText = 'position:fixed;z-index:10000020;background:var(--ml-bg-3);border:1px solid var(--ml-border-2);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:4px;box-shadow:0 8px 28px rgba(0,0,0,.5);min-width:170px;max-height:260px;overflow-y:auto;';
+            const rect = btn.getBoundingClientRect();
+            const spaceBelow = window.innerHeight - rect.bottom;
+            picker.style.left = Math.min(rect.left, window.innerWidth - 190) + 'px';
+            // Se nao couber embaixo na janela visivel, abre pra cima do icone em vez de sumir da tela.
+            if(spaceBelow < 220){
+              picker.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
+            } else {
+              picker.style.top = (rect.bottom + 6) + 'px';
+            }
+            picker.innerHTML = `<div class="muted" style="font-size:11px;padding:4px 6px;">Carregando...</div>`;
+            document.body.appendChild(picker);
+
+            const closePicker = (ev) => { if(!picker.contains(ev.target)){ picker.remove(); document.removeEventListener('click', closePicker, true); } };
+            setTimeout(() => document.addEventListener('click', closePicker, true), 0);
+
+            try{
+              const priorities = await getAllPriorities();
+              if(!picker.isConnected) return; // fechado antes da resposta chegar
+              picker.innerHTML = '';
+              priorities.forEach(p => {
+                const isActive = String(p.id) === String(curId);
+                const pb = document.createElement('button');
+                pb.style.cssText = `text-align:left;padding:5px 10px;border-radius:6px;border:none;display:flex;align-items:center;gap:6px;background:${isActive?'var(--ml-blue-soft)':'transparent'};color:${isActive?'var(--ml-blue)':'var(--ml-text)'};cursor:pointer;font-size:12px;font-weight:${isActive?'700':'400'};`;
+                pb.innerHTML = `${p.iconUrl ? `<img src="${esc(p.iconUrl)}" style="width:13px;height:13px;" />` : ''}<span>${esc(p.name)}</span>`;
+                pb.onmouseenter = () => { if(!isActive) pb.style.background = 'var(--ml-bg-2)'; };
+                pb.onmouseleave = () => { if(!isActive) pb.style.background = 'transparent'; };
+                pb.onclick = async () => {
+                  picker.remove();
+                  document.removeEventListener('click', closePicker, true);
+                  if(isActive) return;
+                  try{
+                    await setIssuePriority(k, p.id);
+                    if(info[k]){ info[k].priority = p.name; info[k].priorityId = p.id; info[k].priorityIcon = p.iconUrl || ''; }
+                    renderList();
+                  }catch(err){
+                    alert(`Falha ao mudar prioridade de ${k}: ${err.message || err}`);
+                  }
+                };
+                picker.appendChild(pb);
+              });
+            }catch(err){
+              picker.innerHTML = `<div style="color:#fca5a5;font-size:11px;padding:4px 6px;">Falha ao listar: ${esc(err.message || String(err))}</div>`;
+            }
           });
         });
 
