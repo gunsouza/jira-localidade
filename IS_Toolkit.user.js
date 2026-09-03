@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.73.0
+// @version      1.74.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -11356,10 +11356,12 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         ensureButton(); ensureProviderButton(key); _waEnsureButton(key);
       } else {
         document.getElementById(PROVIDER_BTN_ID)?.remove(); document.getElementById(WA_BTN_ID)?.remove();
-        // Botao principal continua aparecendo mesmo sem ticket em telas uteis (Dashboards,
-        // /issues, /queues) — da acesso ao Gerenciador de fila, Central Natis e Configuracoes
-        // mesmo quando nao ha 1 ticket especifico aberto.
-        if(isQueueOrIssuesPage()) ensureButton(); else document.getElementById(IDS.btn)?.remove();
+        // Sem ticket aberto: o botao "IS Toolkit" nao aparece mais aqui — cada tipo de pagina
+        // sem ticket tem seu proprio botao dedicado (Gerenciador em issues/queues, Meu Perfil
+        // em dashboards, ver ensureBatchButton/ensureProfileButton mais abaixo neste tick).
+        // Evita 2 botoes na mesma posicao da tela (bug visto na v1.73.0: o Gerenciador ficava
+        // por cima do IS Toolkit, escondendo ele por completo).
+        document.getElementById(IDS.btn)?.remove();
       }
 
       // Assistente de setup inicial: so dispara automaticamente pra instalacoes genuinamente
@@ -11406,6 +11408,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       }catch(e){}
       // Botao "Gerenciador" aparece em /issues e /queues (independente de ter ticket aberto).
       try { ensureBatchButton(); } catch(_) {}
+      // Botao "Meu Perfil" aparece so em /jira/dashboards.
+      try { ensureProfileButton(); } catch(_) {}
       // Botao "Status" (antigo "Atribuir & iniciar") so em paginas de issue individual.
       ensureStatusButton(); // limpa legado
       // Chip(s) lateral(is) com link de Tshoot do Confluence (se alguma regra matchar).
@@ -11663,11 +11667,13 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
     function isQueueOrIssuesPage(){
       // Se ja tem um ticket aberto (browse/X ou queues/issue/X), nao mostra "Gerenciador"
-      // - usuario quer "Localidade" pra acoes daquele chamado.
+      // - usuario quer "IS Toolkit" pra acoes daquele chamado.
       if(getIssueKey()) return false;
-      // Inclui /jira/dashboards: os gadgets de filtro/"atribuidos a mim" listam varios
-      // tickets, mesmo caso de uso de /issues e /queues (detectar keys da tela e processar em lote).
-      return /\/(issues|queues|dashboards)(\b|\/|\?|$)/.test(location.pathname);
+      // NAO inclui /jira/dashboards de proposito: essa tela tem seu proprio botao dedicado
+      // ("Meu Perfil", ver ensureProfileButton) — 3 botoes mutuamente exclusivos por tipo de
+      // pagina (browse = IS Toolkit, issues/queues = Gerenciador, dashboards = Meu Perfil),
+      // pra nao sobrepor 2 botoes na mesma posicao da tela.
+      return /\/(issues|queues)(\b|\/|\?|$)/.test(location.pathname);
     }
 
     // Extrai issue keys visiveis no DOM via varios seletores (Issue Navigator, queues, etc).
@@ -11743,6 +11749,32 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         fontFamily: 'var(--ml-font, system-ui)', fontSize: '13px', letterSpacing: '.2px'
       });
       b.addEventListener('click', openBatchModal);
+      document.body.appendChild(b);
+    }
+
+    // Botao "Meu Perfil" — so aparece em /jira/dashboards, mutuamente exclusivo com "IS Toolkit"
+    // (browse/X) e "Gerenciador" (issues/queues). Abre direto o Painel do analista (mesmo
+    // destino que o runApp() ja resolve sozinho nesta tela: sem ticket key + isDashboardsPage()).
+    function ensureProfileButton(){
+      if(!isDashboardsPage()){
+        document.getElementById('ml_profile_btn')?.remove();
+        return;
+      }
+      ensureStyle();
+      if(document.getElementById('ml_profile_btn')) return;
+      const b = document.createElement('button');
+      b.id = 'ml_profile_btn';
+      b.textContent = 'Meu Perfil';
+      b.title = 'Painel do analista — desempenho, pendências de auditoria e SLA';
+      Object.assign(b.style, {
+        position: 'fixed', right: '20px', bottom: '70px', zIndex: '9999997',
+        background: 'linear-gradient(135deg, var(--ml-purple, #a78bfa), #6d28d9)', color: '#fff',
+        border: '0', borderRadius: '999px', padding: '11px 18px',
+        fontWeight: '700', cursor: 'pointer',
+        boxShadow: '0 12px 28px rgba(167,139,250,.35), 0 4px 10px rgba(0,0,0,.30)',
+        fontFamily: 'var(--ml-font, system-ui)', fontSize: '13px', letterSpacing: '.2px'
+      });
+      b.addEventListener('click', runApp);
       document.body.appendChild(b);
     }
 
