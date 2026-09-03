@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.76.0
+// @version      1.77.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -579,7 +579,7 @@
       // (RANKING_TEAM_GROUP) pra funcionar. Sempre escopado a IS+ISS (fixo, nao usa PROJECTS
       // geral). Metrica: so "resolvidos no periodo" (nao usa toolkit).
       RANKING_ENABLED: false,
-      RANKING_TEAM_GROUP: '',           // nome exato do grupo no Jira (ex: "is-ship-nats-n1")
+      RANKING_TEAM_GROUP: 'is-ship-nats-n1', // grupo classico do Jira (time de atendimento de fila)
       RANKING_DISPLAY_MODE: 'anonimo',  // 'anonimo' | 'posicao' | 'leaderboard'
       RANKING_SHOW_DAILY: true,
       RANKING_SHOW_MONTHLY: true,
