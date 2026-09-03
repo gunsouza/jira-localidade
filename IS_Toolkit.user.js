@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.74.0
+// @version      1.75.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -10937,32 +10937,12 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             <button id="ml_dash_batch" class="primary" style="flex:1;min-width:180px;">&#128203; Gerenciador de fila</button>
             ${GRID_CENTRAL_URL ? `<a href="${esc(GRID_CENTRAL_URL)}" target="_blank" rel="noopener" class="btnSecondary" style="flex:1;min-width:180px;text-decoration:none;display:flex;align-items:center;justify-content:center;">&#128194; Central Natis</a>` : ''}
           </div>
-
-          <div>
-            <label style="display:block; font-size:12px; font-weight:700; color:var(--ml-text-mut); margin-bottom:6px;">
-              Abrir ticket diretamente (cole a key):
-            </label>
-            <div style="display:flex; gap:8px;">
-              <input id="ml_loc_jumpkey" type="text" placeholder="Ex: IS-123456" style="flex:1; background:var(--ml-bg-0); color:var(--ml-text); border:1px solid var(--ml-border-2); border-radius:6px; padding:9px 12px; font-size:13px;" />
-              <button id="ml_loc_jumpgo" class="primary">Abrir</button>
-            </div>
-            <div class="meta" style="margin-top:6px;">Abre em nova aba.</div>
-          </div>
         </div>
       `);
 
       try{ await renderHealthBanner(); }catch(e){ console.warn('[IS Toolkit][dashboards] health banner falhou:', e); }
 
       document.getElementById('ml_dash_batch')?.addEventListener('click', () => { modal.close(); openBatchModal(); });
-      const jumpInput = document.getElementById('ml_loc_jumpkey');
-      const jumpBtn   = document.getElementById('ml_loc_jumpgo');
-      const goJump = () => {
-        const k = String(jumpInput.value || '').trim().toUpperCase();
-        if(!/^[A-Z]+-\d+$/.test(k)){ jumpInput.focus(); return; }
-        window.open(`${location.origin}/browse/${k}`, '_blank', 'noopener');
-      };
-      jumpBtn?.addEventListener('click', goJump);
-      jumpInput?.addEventListener('keydown', (e) => { if(e.key === 'Enter'){ e.preventDefault(); goJump(); } });
 
       // Metricas: carregam em paralelo, sem travar o resto da tela.
       getMyAnalystStats().then(stats => {
@@ -11048,24 +11028,24 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         if(!el) return;
         const vals = days.map(d => (d.count == null ? 0 : d.count));
         const max = Math.max(1, ...vals);
-        const w = 34, gap = 14, chartH = 90;
+        const w = 34, gap = 14, chartH = 90, topPad = 18; // topPad: espaco pro rotulo da barra mais alta nao cortar no topo do SVG
         const totalW = days.length * (w + gap);
         const bars = days.map((d, i) => {
           const h = d.count == null ? 2 : Math.max(2, Math.round((d.count / max) * chartH));
           const x = i * (w + gap);
-          const y = chartH - h;
+          const y = topPad + (chartH - h);
           const fill = (i === days.length - 1) ? 'var(--ml-accent, #2563eb)' : 'var(--ml-border-2)';
           const label = d.count == null ? '—' : String(d.count);
           return `
             <g>
               <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="${fill}"></rect>
               <text x="${x + w/2}" y="${y - 6}" text-anchor="middle" font-size="11" font-weight="700" fill="var(--ml-text)">${esc(label)}</text>
-              <text x="${x + w/2}" y="${chartH + 16}" text-anchor="middle" font-size="10" fill="var(--ml-text-mut)">${esc(d.label)}</text>
+              <text x="${x + w/2}" y="${topPad + chartH + 16}" text-anchor="middle" font-size="10" fill="var(--ml-text-mut)">${esc(d.label)}</text>
             </g>
           `;
         }).join('');
         el.innerHTML = `
-          <svg viewBox="0 0 ${totalW} ${chartH + 26}" width="100%" height="${chartH + 26}" xmlns="http://www.w3.org/2000/svg">
+          <svg viewBox="0 0 ${totalW} ${topPad + chartH + 26}" width="100%" height="${topPad + chartH + 26}" xmlns="http://www.w3.org/2000/svg">
             ${bars}
           </svg>
         `;
