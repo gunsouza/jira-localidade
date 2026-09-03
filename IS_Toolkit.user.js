@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.67.0
+// @version      1.68.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -2103,6 +2103,7 @@
 
     function extractIdentifiersFromText(text){
       const t = String(text || '');
+      const up = t.toUpperCase();
       const found = [];
 
       found.push(...extractQtyTokens(t));
@@ -2131,8 +2132,23 @@
         found.push({ type:'serial', value: tok, weight: 6 });
       }
 
-      const selbRe = /\bSELB\b/gi;
-      if(selbRe.test(t)) found.push({ type:'SELB', value:'SELB', weight: 2 });
+      // SELB (impressora): rotulo seguido do codigo de 4 caracteres (letras+numeros), com ou
+      // sem dois-pontos — ex: "SELB: A1B2" ou "SELB A1B2". Antes so flagava a palavra "SELB"
+      // (sem capturar o codigo), entao dois tickets com SELBs DIFERENTES contavam como match.
+      const selbRe = /\bSELB\s*:?\s*([A-Z0-9]{4})\b/gi;
+      for(const m of t.matchAll(selbRe)){
+        found.push({ type:'SELB', value: `SELB-${m[1].toUpperCase()}`, weight: 6 });
+      }
+
+      // Codigo curto de equipamento (camera, etc): 1-3 letras + 2-5 digitos, com ou sem
+      // separador — ex: C192, CAM-192, C-192. Heuristica mais fraca que serial/SELB (tokens
+      // curtos tem mais chance de coincidencia por acaso), por isso weight menor e NAO entra
+      // em isStrongHit — ajuda a pontuar mas nao carimba "match forte" sozinho.
+      const shortEquipRe = /\b([A-Z]{1,3})[-_]?(\d{2,5})\b/g;
+      for(const m of up.matchAll(shortEquipRe)){
+        const tok = `${m[1]}${m[2]}`;
+        found.push({ type:'equip', value: tok, weight: 4 });
+      }
 
       const serialLabelRe = /\b(?:S\/N|SN|N\/S|SERIAL(?:\s*NUMBER)?)[\s:#-]*([A-Z0-9]{6,24})\b/gi;
       for(const m of t.matchAll(serialLabelRe)){
@@ -2143,7 +2159,6 @@
       // Tokens alfanuméricos sem prefixo reconhecido (ex: 99J245103764, XY1234567890)
       // Requer: 8-24 chars, pelo menos 1 letra, pelo menos 2 dígitos, não ser MAC puro
       const strongTokenRe = /\b[A-Z0-9]{8,24}\b/g;
-      const up = t.toUpperCase();
       for(const m of up.matchAll(strongTokenRe)){
         const tok = m[0];
         if(/^\d+$/.test(tok)) continue;                        // só dígitos — não é serial
@@ -2180,7 +2195,9 @@
 
     function isStrongHit(hit){
       const t = String(hit.type || '').toUpperCase();
-      return (t === 'MAC' || t === 'ZEB' || t === 'ZPL' || t === 'SERIAL' || t === 'SERIAL?');
+      // 'EQUIP' (codigo curto tipo C192) fica de fora de proposito — e uma heuristica mais fraca,
+      // tokens curtos tem mais chance de coincidencia por acaso entre tickets sem relacao real.
+      return (t === 'MAC' || t === 'ZEB' || t === 'ZPL' || t === 'SERIAL' || t === 'SERIAL?' || t === 'SELB');
     }
 
     function isIpOnly(hits){
