@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.78.0
+// @version      1.79.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -1614,6 +1614,17 @@
     // fica intacto — restaurar e instantaneo, sem re-fetch.
     const MINI_PILL_ID = 'ml_loc_minipill';
 
+    // Identidade da pagina no momento de minimizar — usada pra descartar o modal minimizado
+    // sozinho se o usuario navegar (SPA do Jira, sem reload de pagina) pra um contexto
+    // diferente antes de restaurar. Evita restaurar e mostrar dados de outro ticket por engano.
+    let _minimizedContext = null;
+    function _pageContextSignature(){
+      const key = getIssueKey();
+      if(key) return `issue:${key}`;
+      if(isDashboardsPage()) return 'dashboards';
+      return 'other';
+    }
+
     function _removeMinimizedPill(){
       document.getElementById(MINI_PILL_ID)?.remove();
     }
@@ -1623,6 +1634,15 @@
       return !!modal && modal.style.display === 'none';
     }
 
+    // Descarta silenciosamente um modal minimizado que ficou pra tras (usuario navegou pra
+    // outro ticket/tela sem restaurar) — chamado pelo _tick() quando a pagina muda.
+    function _discardStaleMinimizedModal(){
+      document.getElementById(IDS.modal)?.remove();
+      document.getElementById(IDS.overlay)?.remove();
+      _removeMinimizedPill();
+      _minimizedContext = null;
+    }
+
     function restoreMinimizedModal(){
       const modal = document.getElementById(IDS.modal);
       const overlay = document.getElementById(IDS.overlay);
@@ -1630,6 +1650,7 @@
       modal.style.display = '';
       if(overlay) overlay.style.display = '';
       _removeMinimizedPill();
+      _minimizedContext = null;
       return true;
     }
 
@@ -1641,6 +1662,7 @@
       modal.style.display = 'none';
       if(overlay) overlay.style.display = 'none';
       _removeMinimizedPill();
+      _minimizedContext = _pageContextSignature();
       const pill = document.createElement('button');
       pill.id = MINI_PILL_ID;
       pill.textContent = `↩ ${title}`;
@@ -1662,6 +1684,7 @@
       document.getElementById(IDS.modal)?.remove();
       document.getElementById(IDS.overlay)?.remove();
       _removeMinimizedPill();
+      _minimizedContext = null;
 
       ensureStyle();
 
@@ -1685,7 +1708,7 @@
         <div class="b" id="ml_loc_body">Carregando…</div>
       `;
 
-      const close = () => { _removeMinimizedPill(); modal.remove(); overlay.remove(); };
+      const close = () => { _removeMinimizedPill(); _minimizedContext = null; modal.remove(); overlay.remove(); };
       overlay.addEventListener('click', close);
       modal.querySelector('#ml_loc_close').addEventListener('click', close);
       modal.querySelector('#ml_loc_settings').addEventListener('click', () => openSettingsModal());
@@ -1703,6 +1726,7 @@
 
     function closeModal(){
       _removeMinimizedPill();
+      _minimizedContext = null;
       document.getElementById(IDS.modal)?.remove();
       document.getElementById(IDS.overlay)?.remove();
     }
@@ -11784,6 +11808,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
     const _tick = () => {
       try{ if(typeof _arEnsureButton === 'function') _arEnsureButton(); }catch(_){}
       try{ if(typeof _aiEnsureToggle === 'function') _aiEnsureToggle(); }catch(_){}
+      // Modal minimizado em pagina/ticket diferente de onde foi minimizado (navegacao via SPA
+      // do Jira, sem reload) — descarta em vez de deixar restaurar com dados de outro contexto.
+      if(isModalMinimized() && _minimizedContext !== null && _pageContextSignature() !== _minimizedContext){
+        _discardStaleMinimizedModal();
+      }
       const key = getIssueKey();
       if(key){
         ensureButton(); ensureProviderButton(key); _waEnsureButton(key);
