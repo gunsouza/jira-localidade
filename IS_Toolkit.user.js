@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.82.0
+// @version      1.83.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -538,7 +538,7 @@
       // URL do webhook n8n que recebe os dados do ticket e retorna a analise.
       // Fixa pra todo o time (workflow central "ist-ticket-audit" no verdi-flows) — ninguem
       // precisa configurar isso na instalacao. Deixe vazio pra desabilitar o card de auditoria,
-      // ou troque aqui em Configuracoes -> Avancado -> Integracoes se o endpoint mudar de lugar.
+      // ou troque aqui em Configuracoes -> Auditoria se o endpoint mudar de lugar.
       AUDIT_WEBHOOK_URL: 'http://verdi-flows.melisystems.com/webhook/ist-ticket-audit',
 
       // ---- Central do Grid (dashboard de arquivos usados pelo time) ----
@@ -612,6 +612,18 @@
       ASSIGN_SHORTCUT: 'Cmd+Shift+A',
       // Comentario publico postado automaticamente ao mover o ticket para In Progress.
       ASSIGN_COMMENT: 'Iniciando atendimento.',
+
+      // ---- Outras acoes por atalho (Configuracoes -> Atalhos -> "Outras acoes por atalho") ----
+      // Em branco por padrao pra cada chave — nenhuma dessas roda sem o usuario escolher um
+      // atalho explicitamente. Ver ACTION_REGISTRY (mais abaixo no script) pra a lista completa
+      // com o rotulo exibido na UI e a funcao chamada.
+      ACTION_SHORTCUTS: {
+        openAudit: '',
+        openDerive: '',
+        openQueueManager: '',
+        openProfile: '',
+        toggleMinimize: ''
+      },
 
       // ---- Assistente de setup inicial ----
       // true depois que o usuario passa pelo wizard (Salvar ou Pular). Usado junto com
@@ -6945,7 +6957,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
     async function runAudit(modal, issueKey){
       if(!SETTINGS.AUDIT_WEBHOOK_URL){
-        showToast('Configure o Webhook de auditoria em Configuracoes → Avancado → Integracoes', 'warn');
+        showToast('Configure o Webhook de auditoria em Configuracoes → Auditoria', 'warn');
         return;
       }
 
@@ -7714,7 +7726,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   : null;
                 const scoreLabel = cached ? ` · ${cached.score}pts` : '';
                 return `<div class="row" style="gap:8px;flex-wrap:wrap;">
-                  <button id="ml_home_audit" class="primary" ${!SETTINGS.AUDIT_WEBHOOK_URL ? 'disabled title="Configure o Webhook em Configuracoes → Avancado → Integracoes"' : ''}>
+                  <button id="ml_home_audit" class="primary" ${!SETTINGS.AUDIT_WEBHOOK_URL ? 'disabled title="Configure o Webhook em Configuracoes → Auditoria"' : ''}>
                     ${!SETTINGS.AUDIT_WEBHOOK_URL ? 'Webhook n&atilde;o configurado' : (cached ? 'Reanalisar' : 'Auditar')}
                   </button>
                   ${tsLabel ? `<button id="ml_home_audit_cached" class="ghost" style="font-size:12px;">&#x23F1; ${tsLabel}${scoreLabel}</button>` : ''}
@@ -8844,7 +8856,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
       const overlay = document.createElement('div');
       overlay.id = 'ml_setup_wizard_overlay';
-      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100020;display:flex;align-items:center;justify-content:center;';
+      // z-index bem acima do modal de Configuracoes (10000001) — senao o tour abre atras dele
+      // quando reaberto pelo botao em Avancado, obrigando a fechar tudo pra enxergar o tour.
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10000100;display:flex;align-items:center;justify-content:center;';
 
       const box = document.createElement('div');
       box.style.cssText = 'background:#1e1e2e;color:#e0e0e0;border-radius:12px;padding:24px;max-width:640px;width:96%;max-height:88vh;overflow-y:auto;font-family:var(--ml-font,sans-serif);font-size:13px;';
@@ -8874,9 +8888,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           <label style="font-weight:600;display:block;margin-bottom:4px;color:#ccc;">&#9889; Snippets &amp; atalhos</label>
           <div style="font-size:12px;color:#bbb;line-height:1.6;">
             Digite <code>/</code> seguido do nome do snippet em qualquer caixa de comentário pra inserir
-            mensagens prontas. Também dá pra assumir o ticket e mudar pra "In Progress" com um atalho de
-            teclado (padrão <code>Cmd+Shift+A</code>). Tudo configurável em
-            Configurações → Snippets &amp; Atalhos.
+            mensagens prontas (Configurações → Snippets). Também dá pra assumir o ticket e mudar pra "In Progress"
+            com um atalho de teclado (padrão <code>Cmd+Shift+A</code>) e configurar outros atalhos —
+            tudo em Configurações → Atalhos.
           </div>
         </div>
 
@@ -8957,10 +8971,15 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           </div>
         </div>
         <div class="ml-s-tabs" role="tablist" aria-label="Categorias de configuracoes">
-          <button class="ml-s-tab" data-tab-target="status" role="tab"><span class="ml-s-tab-ic">&#x21bb;</span><span>Mudar Status</span></button>
+          <button class="ml-s-tab" data-tab-target="duplicados" role="tab"><span class="ml-s-tab-ic">&#x1F517;</span><span>Duplicados</span></button>
           <button class="ml-s-tab" data-tab-target="derive" role="tab"><span class="ml-s-tab-ic">&#x1F501;</span><span>Derivar</span></button>
-          <button class="ml-s-tab" data-tab-target="snippets" role="tab"><span class="ml-s-tab-ic">&#x26A1;</span><span>Snippets &amp; Atalhos</span></button>
           <button class="ml-s-tab" data-tab-target="iss" role="tab"><span class="ml-s-tab-ic">&#x1F4CB;</span><span>Criar ISS</span></button>
+          <button class="ml-s-tab" data-tab-target="status" role="tab"><span class="ml-s-tab-ic">&#x21bb;</span><span>Mudar Status</span></button>
+          <button class="ml-s-tab" data-tab-target="snippets" role="tab"><span class="ml-s-tab-ic">&#x1F4DD;</span><span>Snippets</span></button>
+          <button class="ml-s-tab" data-tab-target="atalhos" role="tab"><span class="ml-s-tab-ic">&#x26A1;</span><span>Atalhos</span></button>
+          <button class="ml-s-tab" data-tab-target="auditoria" role="tab"><span class="ml-s-tab-ic">&#x1F50E;</span><span>Auditoria</span></button>
+          <button class="ml-s-tab" data-tab-target="painel" role="tab"><span class="ml-s-tab-ic">&#x1F4CA;</span><span>Painel do analista</span></button>
+          <button class="ml-s-tab" data-tab-target="whatsapp" role="tab"><span class="ml-s-tab-ic">&#x1F4AC;</span><span>WhatsApp</span></button>
           <button class="ml-s-tab" data-tab-target="autoreload" role="tab"><span class="ml-s-tab-ic">&#x23F1;</span><span>Auto-reload</span></button>
           <button class="ml-s-tab" data-tab-target="confluence" role="tab"><span class="ml-s-tab-ic">&#x1F4D6;</span><span>Confluence</span></button>
           <button class="ml-s-tab" data-tab-target="advanced" role="tab"><span class="ml-s-tab-ic">&#x2699;</span><span>Avancado</span></button>
@@ -9004,32 +9023,6 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 <div>
                   <label class="checkbox"><input type="checkbox" id="ml_s_hideres" ${cur.HIDE_RESOLVED ? 'checked' : ''} /> Esconder tickets resolvidos do Assets</label>
                   <div class="hint">Quando ligado, a API de tickets vinculados ja vem filtrada.</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="group full" data-tab="advanced">
-              <h4>Cache & paginacao</h4>
-              <div class="grid">
-                <div>
-                  <label>TTL do cache (minutos)</label>
-                  <input type="number" id="ml_s_cachemin" value="${cacheMin}" min="0" />
-                  <div class="hint">Tempo que o resultado de cada localidade fica em cache (sessionStorage). 0 desliga.</div>
-                </div>
-                <div>
-                  <label>Tickets por pagina (Assets)</label>
-                  <input type="number" id="ml_s_pagesize" value="${cur.PAGE_SIZE}" min="10" max="200" />
-                  <div class="hint">Padrao ${def.PAGE_SIZE}.</div>
-                </div>
-                <div>
-                  <label>Maximo de paginas (Assets)</label>
-                  <input type="number" id="ml_s_maxpages" value="${cur.MAX_PAGES}" min="1" max="50" />
-                  <div class="hint">Padrao ${def.MAX_PAGES}. Total = pagina x tickets.</div>
-                </div>
-                <div>
-                  <label>Maximo de issues no search (JQL)</label>
-                  <input type="number" id="ml_s_maxres" value="${cur.MAX_RESULTS}" min="10" max="500" />
-                  <div class="hint">Padrao ${def.MAX_RESULTS}.</div>
                 </div>
               </div>
             </div>
@@ -9160,9 +9153,6 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <div id="ml_s_snip_list"></div>
                   <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center;">
                     <button id="ml_s_snip_add" class="ghost">+ Adicionar snippet</button>
-                    <button id="ml_s_snip_import_tb" class="ghost" title="Importa em massa de um JSON (gerado pelo Text Blaze Scraper ou TSV/CSV manual)">
-                      &#x2B07; Importar do Text Blaze
-                    </button>
                   </div>
                 </div>
               </div>
@@ -9198,18 +9188,10 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <div id="ml_s_status_list"></div>
                   <button id="ml_s_status_add" class="ghost" style="margin-top: 8px;">+ Adicionar acao de status</button>
                 </div>
-                <div class="full">
-                  <label>Atalhos de teclado para abrir o menu (um por linha)</label>
-                  <textarea id="ml_s_as_shortcuts">${esc((Array.isArray(cur.STATUS_MENU_SHORTCUTS) && cur.STATUS_MENU_SHORTCUTS.length ? cur.STATUS_MENU_SHORTCUTS : def.STATUS_MENU_SHORTCUTS).join('\n'))}</textarea>
-                  <div class="hint">
-                    Padrao: <code>${esc((def.STATUS_MENU_SHORTCUTS || []).join(', '))}</code>.<br/>
-                    Se houver so 1 acao cadastrada, o atalho executa direto. Com mais de 1, abre o menu.
-                  </div>
-                </div>
               </div>
             </div>
 
-            <div class="group full" data-tab="status">
+            <div class="group full" data-tab="duplicados">
               <h4>Vincular + Fechar (Duplicados)</h4>
               <div class="grid">
                 <div class="full">
@@ -9267,7 +9249,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               </div>
             </div>
 
-            <div class="group full" data-tab="snippets">
+            <div class="group full" data-tab="atalhos">
               <h4>Comentario rapido com snippet</h4>
               <div class="grid">
                 <div class="full">
@@ -9324,7 +9306,18 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             </div>
 
             <div class="group full" data-tab="advanced">
-              <h4>Integra&ccedil;&otilde;es</h4>
+              <h4>Links</h4>
+              <div class="grid">
+                <div class="full">
+                  <label>Central do Grid (dashboard de arquivos do time)</label>
+                  <input type="url" id="ml_s_grid_url" value="${esc(cur.GRID_CENTRAL_URL || '')}" placeholder="https://grid.adminml.com/d/..." style="font-family:var(--ml-mono);font-size:12px;" />
+                  <div class="hint">Link do bot&atilde;o &quot;Central Natis&quot; que aparece na Home. Deixe vazio para esconder o atalho.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="group full" data-tab="auditoria">
+              <h4>Webhook de auditoria por IA</h4>
               <div class="grid">
                 <div class="full">
                   <label>Webhook n8n &mdash; Auditoria de Ticket (IA)</label>
@@ -9335,20 +9328,21 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                     Deixe vazio para desabilitar o card de auditoria na home.
                   </div>
                 </div>
+              </div>
+            </div>
+
+            <div class="group full" data-tab="painel">
+              <h4>Cards do Painel do analista</h4>
+              <div class="grid">
                 <div class="full">
-                  <label>Central do Grid (dashboard de arquivos do time)</label>
-                  <input type="url" id="ml_s_grid_url" value="${esc(cur.GRID_CENTRAL_URL || '')}" placeholder="https://grid.adminml.com/d/..." style="font-family:var(--ml-mono);font-size:12px;" />
-                  <div class="hint">Link do bot&atilde;o &quot;Central Natis&quot; que aparece na Home. Deixe vazio para esconder o atalho.</div>
-                </div>
-                <div class="full">
-                  <label>JQL &mdash; Pend&ecirc;ncias da auditoria oficial (Painel do analista)</label>
+                  <label>JQL &mdash; Pend&ecirc;ncias da auditoria oficial</label>
                   <textarea id="ml_s_audit_pending_jql" style="min-height:55px;font-family:var(--ml-mono);font-size:12px;">${esc(cur.AUDIT_PENDING_JQL || def.AUDIT_PENDING_JQL || '')}</textarea>
-                  <div class="hint">JQL que identifica tickets do processo oficial de auditoria (projeto ISSM) pendentes de corre&ccedil;&atilde;o pra este analista. Aparece como card no Painel do analista (Dashboards). Deixe vazio para esconder o card.</div>
+                  <div class="hint">JQL que identifica tickets do processo oficial de auditoria (projeto ISSM) pendentes de corre&ccedil;&atilde;o pra este analista. Deixe vazio para esconder o card.</div>
                 </div>
                 <div>
                   <label>Campo de SLA (ID do customfield)</label>
                   <input type="number" id="ml_s_sla_field_id" min="0" value="${Number(cur.SLA_FIELD_ID ?? def.SLA_FIELD_ID) || 0}" />
-                  <div class="hint">ID do campo de SLA (ex: "Time to resolution"). Use "Descobrir campos" pra achar o ID. <b>0</b> = esconde os cards de SLA no Painel do analista.</div>
+                  <div class="hint">ID do campo de SLA (ex: "Time to resolution"). Use "Descobrir campos" (aba Auditoria) pra achar o ID. <b>0</b> = esconde os cards de SLA.</div>
                 </div>
                 <div>
                   <label>Risco de SLA &mdash; horas restantes</label>
@@ -9358,14 +9352,20 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 <div>
                   <label>Tickets antigos &mdash; dias desde a cria&ccedil;&atilde;o</label>
                   <input type="number" id="ml_s_old_ticket_days" min="0" value="${Number(cur.OLD_TICKET_DAYS ?? def.OLD_TICKET_DAYS) || 0}" />
-                  <div class="hint">Tickets abertos comigo criados h&aacute; mais desse tanto de dias entram no card "Tickets antigos" (Painel do analista). <b>0</b> = esconde o card.</div>
+                  <div class="hint">Tickets abertos comigo criados h&aacute; mais desse tanto de dias entram no card "Tickets antigos". <b>0</b> = esconde o card.</div>
                 </div>
                 <div>
                   <label class="checkbox"><input type="checkbox" id="ml_s_category_breakdown" ${cur.CATEGORY_BREAKDOWN_ENABLED !== false ? 'checked' : ''} /> Mostrar resolvidos da semana por categoria</label>
-                  <div class="hint">Usa o campo real de Categoria (mesmo da auditoria, CF_CATEGORY) em modo somente leitura. Precisa de CF_CATEGORY configurado.</div>
+                  <div class="hint">Usa o campo real de Categoria (mesmo da auditoria, CF_CATEGORY, configur&aacute;vel na aba Auditoria) em modo somente leitura.</div>
                 </div>
+              </div>
+            </div>
+
+            <div class="group full" data-tab="atalhos">
+              <h4>Assumir ticket + In Progress</h4>
+              <div class="grid">
                 <div class="full">
-                  <label>Atalho &mdash; Assumir ticket + In Progress</label>
+                  <label>Atalho de teclado</label>
                   <input type="text" id="ml_s_assign_shortcut" value="${esc(cur.ASSIGN_SHORTCUT || def.ASSIGN_SHORTCUT || '')}" placeholder="${esc(def.ASSIGN_SHORTCUT || 'Cmd+Shift+A')}" />
                   <div class="hint">
                     Atalho para atribuir o ticket a voc&ecirc; e mover para <em>In Progress</em>.
@@ -9386,8 +9386,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               </div>
             </div>
 
-            <div class="group full" data-tab="advanced">
-              <h4>Ranking do time (Painel do analista)</h4>
+            <div class="group full" data-tab="painel">
+              <h4>Ranking do time</h4>
               <div class="grid">
                 <div class="full" style="margin-bottom:4px;">
                   <div class="hint" style="margin:0;">
@@ -9421,7 +9421,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               </div>
             </div>
 
-            <div class="group full" data-tab="advanced">
+            <div class="group full" data-tab="auditoria">
               <h4>Campos de Auditoria (Jira Custom Fields)</h4>
               <div class="grid">
                 <div class="full" style="margin-bottom:4px;">
@@ -9462,7 +9462,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               </div>
             </div>
 
-            <div class="group full" data-tab="advanced">
+            <div class="group full" data-tab="whatsapp">
               <h4>Acionamento via WhatsApp</h4>
               <div class="grid">
                 <div class="full">
@@ -9498,8 +9498,19 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               </div>
             </div>
 
-            <div class="group full" data-tab="advanced">
-              <h4>Interface</h4>
+            <div class="group full" data-tab="duplicados">
+              <h4>Interface dos cards de duplicado</h4>
+              <div class="grid">
+                <div>
+                  <label>Preview de descricao (caracteres)</label>
+                  <input type="number" id="ml_s_preview" value="${cur.DESC_PREVIEW_LEN}" min="60" max="2000" />
+                  <div class="hint">Comprimento do preview de descricao em cada card de duplicado.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="group full" data-tab="atalhos">
+              <h4>Abrir/fechar o modal principal</h4>
               <div class="grid">
                 <div class="full">
                   <label>Atalhos de teclado (um por linha, varios em paralelo)</label>
@@ -9511,11 +9522,33 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                     <b>Aviso:</b> evite <code>Cmd+Shift+I</code> e <code>Cmd+Shift+C</code> no Mac (conflitam com DevTools do Chrome).
                   </div>
                 </div>
-                <div>
-                  <label>Preview de descricao (caracteres)</label>
-                  <input type="number" id="ml_s_preview" value="${cur.DESC_PREVIEW_LEN}" min="60" max="2000" />
-                  <div class="hint">Comprimento do preview de descricao em cada card de duplicado.</div>
+              </div>
+            </div>
+
+            <div class="group full" data-tab="atalhos">
+              <h4>Menu de Status</h4>
+              <div class="grid">
+                <div class="full">
+                  <label>Atalhos de teclado para abrir o menu (um por linha)</label>
+                  <textarea id="ml_s_as_shortcuts">${esc((Array.isArray(cur.STATUS_MENU_SHORTCUTS) && cur.STATUS_MENU_SHORTCUTS.length ? cur.STATUS_MENU_SHORTCUTS : def.STATUS_MENU_SHORTCUTS).join('\n'))}</textarea>
+                  <div class="hint">
+                    Padrao: <code>${esc((def.STATUS_MENU_SHORTCUTS || []).join(', '))}</code>.<br/>
+                    Se houver so 1 acao cadastrada, o atalho executa direto. Com mais de 1, abre o menu.
+                  </div>
                 </div>
+              </div>
+            </div>
+
+            <div class="group full" data-tab="atalhos">
+              <h4>Outras a&ccedil;&otilde;es por atalho</h4>
+              <div class="grid">
+                <div class="full">
+                  <div class="hint" style="margin:0 0 8px;">
+                    Atribua um atalho pra abrir direto uma tela do toolkit, sem precisar clicar no bot&atilde;o flutuante.
+                    Em branco = sem atalho pra essa a&ccedil;&atilde;o. S&oacute; funciona quando a p&aacute;gina j&aacute; tem o bot&atilde;o correspondente dispon&iacute;vel (ex: "Abrir auditoria" precisa de um ticket aberto).
+                  </div>
+                </div>
+                <div id="ml_s_action_shortcuts_list" class="full"></div>
               </div>
             </div>
 
@@ -9599,13 +9632,18 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
       // ---- Tabs ----
       const TAB_HINTS = {
-        status:     '<b>Mudar Status</b> &mdash; Configure as a&ccedil;&otilde;es que aparecem no modal quando voc&ecirc; clica em "Mudar status" no ticket. Cada a&ccedil;&atilde;o tem sua mensagem padr&atilde;o, p&uacute;blico/interno e se atribui pra voc&ecirc;.',
+        duplicados: '<b>Duplicados</b> &mdash; O bot&atilde;o "Vincular + Fechar" na tela de Duplicados e o tamanho do preview de descri&ccedil;&atilde;o nos cards.',
         derive:     '<b>Derivar</b> &mdash; Times dispon&iacute;veis pra derivar tickets, mensagem padr&atilde;o e sugest&otilde;es autom&aacute;ticas (baseadas em palavras-chave do ticket).',
-        snippets:   '<b>Snippets &amp; Atalhos</b> &mdash; Mensagens pr&eacute;-cadastradas com <code>/comandos</code> pra digitar r&aacute;pido em qualquer textarea + atalho do <i>Coment&aacute;rio r&aacute;pido</i>.',
         iss:        '<b>Criar ISS</b> &mdash; Configura&ccedil;&atilde;o do checkbox "Criar tarefa ISS" que aparece no Derive quando voc&ecirc; deriva pra times espec&iacute;ficos (ex: SE).',
+        status:     '<b>Mudar Status</b> &mdash; Configure as a&ccedil;&otilde;es que aparecem no modal quando voc&ecirc; clica em "Mudar status" no ticket. Cada a&ccedil;&atilde;o tem sua mensagem padr&atilde;o, p&uacute;blico/interno e se atribui pra voc&ecirc;.',
+        snippets:   '<b>Snippets</b> &mdash; Mensagens pr&eacute;-cadastradas com <code>/comandos</code> pra digitar r&aacute;pido em qualquer textarea do toolkit.',
+        atalhos:    '<b>Atalhos</b> &mdash; Todos os atalhos de teclado do toolkit num s&oacute; lugar: abrir/fechar o modal, menu de Status, coment&aacute;rio r&aacute;pido, assumir ticket, e outras a&ccedil;&otilde;es opcionais.',
+        auditoria:  '<b>Auditoria</b> &mdash; Webhook da an&aacute;lise por IA e os customfields usados nela (categoria, subcategoria, etc.). J&aacute; vem tudo preenchido pro time; s&oacute; mexa se souber que mudou.',
+        painel:     '<b>Painel do analista</b> &mdash; Cards que aparecem no bot&atilde;o "Meu Perfil" (Dashboards): pend&ecirc;ncias de auditoria, risco de SLA, tickets antigos, categoria da semana e ranking do time.',
+        whatsapp:   '<b>WhatsApp</b> &mdash; Mensagem padr&atilde;o, c&oacute;digo do pa&iacute;s e campo de telefone usados pelo bot&atilde;o de acionamento via WhatsApp.',
         autoreload: '<b>Auto-reload</b> &mdash; Recarrega a p&aacute;gina automaticamente (o Jira daqui n&atilde;o atualiza em tempo real). Liga/desliga no bot&atilde;o flutuante, <b>por aba</b>. Aqui ficam o intervalo padr&atilde;o e as pausas de seguran&ccedil;a.',
         confluence: '<b>Confluence</b> &mdash; Regras que ligam tipo do ticket a um link de troubleshooting no Confluence (chip lateral &#x1F4D6;). Regras s&atilde;o mantidas pelo admin; voc&ecirc; pode ajustar URL se o link mudar.',
-        advanced:   '<b>Avan&ccedil;ado</b> &mdash; Configura&ccedil;&otilde;es t&eacute;cnicas: projetos considerados, custom fields, paginat&ccedil;&atilde;o, cache e atalhos gerais. <b>S&oacute; mexa se souber o que est&aacute; fazendo.</b>'
+        advanced:   '<b>Avan&ccedil;ado</b> &mdash; Configura&ccedil;&otilde;es t&eacute;cnicas: projetos considerados, custom fields, backup e o tour de boas-vindas. <b>S&oacute; mexa se souber o que est&aacute; fazendo.</b>'
       };
       const TAB_STORAGE_KEY = 'ml_loc_settings_last_tab';
       const tabBtns = modal.querySelectorAll('.ml-s-tab');
@@ -9672,20 +9710,6 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       };
       (Array.isArray(cur.COMMENT_SNIPPETS) ? cur.COMMENT_SNIPPETS : []).forEach(renderSnipRow);
       if(snipAdd) snipAdd.onclick = (e) => { e.preventDefault(); renderSnipRow({}); };
-
-      // ---- Importar Text Blaze (ou TSV manual) ----
-      const snipImportTb = modal.querySelector('#ml_s_snip_import_tb');
-      if(snipImportTb){
-        snipImportTb.onclick = (e) => {
-          e.preventDefault();
-          openTextBlazeImportModal((parsed) => {
-            // Adiciona ao final das linhas existentes (usuario decide salvar)
-            parsed.forEach(s => renderSnipRow(s));
-            // Scrolla pro fim da lista pra mostrar que adicionou
-            snipList.lastElementChild?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-          });
-        };
-      }
 
       // ---- Listas dinamicas: Acoes de Status ----
       const statusList = modal.querySelector('#ml_s_status_list');
@@ -9813,8 +9837,29 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       (Array.isArray(cur.DERIVE_TEAM_SUGGESTIONS) ? cur.DERIVE_TEAM_SUGGESTIONS : []).forEach(renderSuggRow);
       if(suggAdd) suggAdd.onclick = (e) => { e.preventDefault(); renderSuggRow({}); };
 
+      // ---- Outras acoes por atalho (uma linha por acao do ACTION_REGISTRY) ----
+      const actionShortcutsList = modal.querySelector('#ml_s_action_shortcuts_list');
+      if(actionShortcutsList){
+        const curActionShortcuts = (cur.ACTION_SHORTCUTS && typeof cur.ACTION_SHORTCUTS === 'object') ? cur.ACTION_SHORTCUTS : {};
+        ACTION_REGISTRY.forEach(action => {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:grid;grid-template-columns: 1fr 200px;gap:8px;margin-bottom:8px;align-items:center;';
+          row.innerHTML = `
+            <div style="font-size:13px;color:var(--ml-text,#ccc);">${esc(action.label)}</div>
+            <input type="text" class="action-shortcut" data-action-id="${esc(action.id)}" placeholder="Sem atalho" value="${esc(curActionShortcuts[action.id] || '')}" />
+          `;
+          actionShortcutsList.appendChild(row);
+        });
+      }
+
       // Botao de descoberta de campos de auditoria
       modal.querySelector('#ml_s_reopen_wizard')?.addEventListener('click', () => {
+        // Fecha Configuracoes primeiro (respeitando o aviso de alteracoes nao salvas) pra nao
+        // empilhar os 2 modais — antes o tour abria atras de Configuracoes e obrigava a fechar
+        // tudo pra enxergar. Se houver edicao nao salva e o usuario optar por nao descartar,
+        // cancela a reabertura (nao empilha o tour por cima mesmo assim).
+        if(_settingsDirty && !confirm('Há alterações não salvas nas Configurações. Descartar e abrir o tour?')) return;
+        _hardClose();
         try{ openSetupWizard({ forced: true }); }catch(e){ alert('Erro ao abrir o assistente: ' + (e.message || e)); }
       });
 
@@ -9843,19 +9888,19 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
           const cfAsset = Number(modal.querySelector('#ml_s_cf_asset').value);
           const cfTeam  = Number(modal.querySelector('#ml_s_cf_team').value);
-          const cacheMinN = Number(modal.querySelector('#ml_s_cachemin').value);
-          const pageSize  = Number(modal.querySelector('#ml_s_pagesize').value);
-          const maxPages  = Number(modal.querySelector('#ml_s_maxpages').value);
-          const maxRes    = Number(modal.querySelector('#ml_s_maxres').value);
+          // Cache/paginacao (TTL, tickets por pagina, max paginas, max resultados JQL): parametros
+          // tecnicos de tuning, removidos da UI (nao fazem sentido pra analista mexer e podiam
+          // quebrar a busca se mudados sem saber). Preserva o valor atual/default em vez de ler
+          // de um input que nao existe mais.
+          const cacheMinN = Number.isFinite(Number(cur.CACHE_TTL_MS)) ? Math.round(Number(cur.CACHE_TTL_MS ?? def.CACHE_TTL_MS) / 60000) : Math.round(def.CACHE_TTL_MS / 60000);
+          const pageSize  = Number(cur.PAGE_SIZE ?? def.PAGE_SIZE) || def.PAGE_SIZE;
+          const maxPages  = Number(cur.MAX_PAGES ?? def.MAX_PAGES) || def.MAX_PAGES;
+          const maxRes    = Number(cur.MAX_RESULTS ?? def.MAX_RESULTS) || def.MAX_RESULTS;
           const previewN  = Number(modal.querySelector('#ml_s_preview').value);
 
           if(!projects.length) return showErr('Informe pelo menos um projeto.');
           if(!Number.isInteger(cfAsset) || cfAsset <= 0) return showErr('cf id de IS Ubicacion invalido.');
           if(!Number.isInteger(cfTeam)  || cfTeam  <= 0) return showErr('cf id de Resolution team invalido.');
-          if(!Number.isInteger(cacheMinN) || cacheMinN < 0) return showErr('TTL do cache invalido.');
-          if(!Number.isInteger(pageSize) || pageSize < 1) return showErr('Tickets por pagina invalido.');
-          if(!Number.isInteger(maxPages) || maxPages < 1) return showErr('Maximo de paginas invalido.');
-          if(!Number.isInteger(maxRes)   || maxRes   < 1) return showErr('Maximo de issues invalido.');
           if(!Number.isInteger(previewN) || previewN < 30) return showErr('Preview de descricao deve ser >= 30.');
 
           const shortcutLines = String(modal.querySelector('#ml_s_shortcuts').value || '')
@@ -9879,6 +9924,19 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           // Atalho "Assumir ticket + In Progress"
           const assignShortcutVal = String(modal.querySelector('#ml_s_assign_shortcut')?.value || '').trim() || DEFAULTS.ASSIGN_SHORTCUT;
           if(!parseShortcut(assignShortcutVal)) return showErr(`Atalho invalido (Assumir ticket): "${assignShortcutVal}". Ex: Cmd+Shift+A, Ctrl+Shift+T.`);
+
+          // Outras acoes por atalho (em branco = sem atalho pra aquela acao, valido)
+          const actionShortcutsVal = {};
+          for(const inputEl of modal.querySelectorAll('.action-shortcut')){
+            const actionId = inputEl.dataset.actionId;
+            const val = String(inputEl.value || '').trim();
+            if(!val){ actionShortcutsVal[actionId] = ''; continue; }
+            if(!parseShortcut(val)){
+              const rowLabel = inputEl.previousElementSibling?.textContent || actionId;
+              return showErr(`Atalho invalido ("${rowLabel}"): "${val}". Ex: Cmd+Shift+D, Ctrl+Alt+Q.`);
+            }
+            actionShortcutsVal[actionId] = val;
+          }
 
           // ISS Task fields
           const issTriggers = String(modal.querySelector('#ml_s_iss_triggers').value || '')
@@ -10067,6 +10125,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             WHATSAPP_MSG_TEMPLATE: String(modal.querySelector('#ml_s_wa_msg')?.value || '').replace(/\r\n/g,'\n').trim() || DEFAULTS.WHATSAPP_MSG_TEMPLATE,
             ASSIGN_SHORTCUT: String(modal.querySelector('#ml_s_assign_shortcut')?.value || '').trim() || DEFAULTS.ASSIGN_SHORTCUT,
             ASSIGN_COMMENT: String(modal.querySelector('#ml_s_assign_comment')?.value || '').replace(/\r\n/g, '\n').replace(/^\n+|\n+$/g, '') || DEFAULTS.ASSIGN_COMMENT,
+            ACTION_SHORTCUTS: actionShortcutsVal,
             CF_USAGE_MARK: Math.max(0, Number(modal.querySelector('#ml_s_cf_usage_mark')?.value) || 0),
             USAGE_MARK_TEXT: String(modal.querySelector('#ml_s_usage_mark_text')?.value || '').trim() || DEFAULTS.USAGE_MARK_TEXT
           };
@@ -10159,327 +10218,6 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       });
     }
 
-    // =========================
-    // IMPORT TEXT BLAZE: modal autocontido pra colar JSON ou TSV manual
-    // (usa estilos inline pra nao depender do CSS do modal pai)
-    // =========================
-    function openTextBlazeImportModal(onConfirm){
-      document.getElementById('ml_tb_import_overlay')?.remove();
-      document.getElementById('ml_tb_import_modal')?.remove();
-
-      // Tokens de cor (fallback se variaveis nao estiverem definidas)
-      const C = {
-        bg0:'#0a0e17', bg1:'#0f172a', bg2:'#1e293b',
-        border:'#2a3a55', text:'#e6ecf6', dim:'#9ca3af',
-        blue:'#5b8def', red:'#ef4444', redSoft:'#3b1620',
-        mono:'ui-monospace,SFMono-Regular,Menlo,monospace'
-      };
-
-      const overlay = document.createElement('div');
-      overlay.id = 'ml_tb_import_overlay';
-      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10000060;';
-
-      const modal = document.createElement('div');
-      modal.id = 'ml_tb_import_modal';
-      modal.style.cssText = [
-        'position:fixed','top:8vh','left:50%','transform:translateX(-50%)',
-        'width:min(680px,94vw)','max-height:84vh',
-        `background:${C.bg1}`, `color:${C.text}`,
-        `border:1px solid ${C.border}`, 'border-radius:12px',
-        'z-index:10000061','display:flex','flex-direction:column',
-        'box-shadow:0 24px 60px rgba(0,0,0,.55)',
-        'font:13px/1.45 system-ui,-apple-system,sans-serif'
-      ].join(';');
-
-      modal.innerHTML = `
-        <!-- HEADER -->
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid ${C.border};flex-shrink:0;">
-          <div>
-            <div style="font-size:15px;font-weight:700;">&#x2B07; Importar snippets do Text Blaze</div>
-            <div style="font-size:12px;color:${C.dim};margin-top:3px;">Cole abaixo o JSON do scraper ou uma lista manual.</div>
-          </div>
-          <button id="ml_tb_close" style="background:${C.bg2};color:${C.text};border:1px solid ${C.border};border-radius:6px;padding:6px 12px;font:600 12px system-ui;cursor:pointer;">Fechar</button>
-        </div>
-
-        <!-- BODY (rolavel) -->
-        <div style="flex:1;overflow-y:auto;padding:18px 20px;">
-
-          <!-- Tabs: Scraper / Manual -->
-          <div id="ml_tb_tabs" style="display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid ${C.border};">
-            <button data-mode="scraper" class="ml_tb_tab active" style="background:transparent;color:${C.text};border:0;border-bottom:2px solid ${C.blue};padding:8px 12px;font:600 12px system-ui;cursor:pointer;">
-              \uD83E\uDD16 Do Scraper (JSON)
-            </button>
-            <button data-mode="manual" class="ml_tb_tab" style="background:transparent;color:${C.dim};border:0;border-bottom:2px solid transparent;padding:8px 12px;font:600 12px system-ui;cursor:pointer;">
-              \u270F\uFE0F Manual (lista)
-            </button>
-          </div>
-
-          <!-- Hint dinamico por tab (sem background fixo pra nao brigar com cards internos) -->
-          <div id="ml_tb_hint" style="font-size:12px;color:${C.dim};line-height:1.5;margin-bottom:14px;"></div>
-
-          <!-- Textarea unica -->
-          <textarea id="ml_tb_input" spellcheck="false"
-            style="width:100%;box-sizing:border-box;min-height:200px;max-height:340px;
-                   background:${C.bg0};color:${C.text};border:1px solid ${C.border};border-radius:8px;
-                   padding:10px 12px;font:12px ${C.mono};resize:vertical;"></textarea>
-
-          <!-- Preview (aparece depois do Validar) -->
-          <div id="ml_tb_preview" style="display:none;margin-top:14px;">
-            <div style="font-size:12px;font-weight:700;color:${C.text};margin-bottom:6px;">
-              \u2705 Preview: <span id="ml_tb_count">0</span> snippet(s) ser\u00e3o adicionados
-            </div>
-            <div id="ml_tb_preview_list" style="max-height:220px;overflow-y:auto;background:${C.bg0};border:1px solid ${C.border};border-radius:8px;"></div>
-            <div style="margin-top:8px;font-size:11px;color:${C.dim};">
-              <b>Lembre:</b> ap\u00f3s importar, ainda \u00e9 preciso clicar <b>"Salvar e recarregar p\u00e1gina"</b> nas Configura\u00e7\u00f5es.
-            </div>
-          </div>
-
-          <!-- Erro -->
-          <div id="ml_tb_err" style="display:none;margin-top:12px;color:#ffd8d8;background:${C.redSoft};border:1px solid ${C.red};padding:10px 12px;border-radius:8px;font-size:12px;"></div>
-        </div>
-
-        <!-- FOOTER fixo -->
-        <div style="display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid ${C.border};background:${C.bg1};flex-shrink:0;">
-          <button id="ml_tb_cancel" style="background:${C.bg2};color:${C.text};border:1px solid ${C.border};border-radius:6px;padding:8px 14px;font:600 12px system-ui;cursor:pointer;">Cancelar</button>
-          <button id="ml_tb_validate" style="background:${C.bg2};color:${C.text};border:1px solid ${C.border};border-radius:6px;padding:8px 14px;font:600 12px system-ui;cursor:pointer;">Validar</button>
-          <button id="ml_tb_import" disabled style="background:${C.blue};color:#fff;border:0;border-radius:6px;padding:8px 14px;font:600 12px system-ui;cursor:not-allowed;opacity:.5;">Importar</button>
-        </div>
-      `;
-
-      document.body.appendChild(overlay);
-      document.body.appendChild(modal);
-
-      const close = () => { overlay.remove(); modal.remove(); };
-      overlay.onclick = close;
-      modal.querySelector('#ml_tb_close').onclick = close;
-      modal.querySelector('#ml_tb_cancel').onclick = close;
-
-      const input = modal.querySelector('#ml_tb_input');
-      const hintBox = modal.querySelector('#ml_tb_hint');
-      const errBox = modal.querySelector('#ml_tb_err');
-      const previewBox = modal.querySelector('#ml_tb_preview');
-      const previewList = modal.querySelector('#ml_tb_preview_list');
-      const previewCount = modal.querySelector('#ml_tb_count');
-      const importBtn = modal.querySelector('#ml_tb_import');
-
-      // Bookmarklet com o scraper COMPLETO inline (URL-encoded).
-      // Necessario porque dashboards modernos (como blaze.today) tem CSP estrito
-      // que bloqueia carregar scripts externos via <script src=...>.
-      // O placeholder %2F%2A%0A%20%2A%20Text%20Blaze%20-%3E%20Jira%20Localidade%20%28Snippet%20Scraper%29%20%E2%80%94%20versao%20BOOKMARKLET%0A%20%2A%0A%20%2A%20Este%20arquivo%20eh%20carregado%20dinamicamente%20quando%20o%20usuario%20clica%20no%0A%20%2A%20bookmarklet%20%22%F0%9F%93%8B%20Capturar%20TB%22%20arrastado%20pros%20favoritos.%0A%20%2A%0A%20%2A%20O%20bookmarklet%20em%20si%20eh%20apenas%20um%201-liner%20que%20faz%3A%0A%20%2A%20%20%20javascript%3A%28function%28%29%7Bvar%20s%3Ddocument.createElement%28%27script%27%29%3B%0A%20%2A%20%20%20s.src%3D%27https%3A%2F%2Fraw.githubusercontent.com%2Fgunsouza%2Fjira-localidade%2Fmain%2Ftools%2Ftextblaze-scraper.bookmarklet.js%3Fv%3D%27%2BDate.now%28%29%3B%0A%20%2A%20%20%20document.body.appendChild%28s%29%3B%7D%29%28%29%3B%0A%20%2A%0A%20%2A%20Diferencas%20pra%20versao%20.user.js%20%28Tampermonkey%29%3A%0A%20%2A%20%20-%20Sem%20header%20%3D%3DUserScript%3D%3D%0A%20%2A%20%20-%20Auto-executa%20o%20scrape%20ao%20carregar%20%28sem%20precisar%20clicar%20em%20botao%29%0A%20%2A%20%20-%20Se%20ja%20foi%20carregado%2C%20apenas%20re-executa%0A%20%2A%2F%0A%0A%28function%28%29%7B%0A%20%20%27use%20strict%27%3B%0A%0A%20%20const%20LOG%20%3D%20%28...a%29%20%3D%3E%20console.log%28%27%5Btb-scraper%5D%27%2C%20...a%29%3B%0A%0A%20%20%2F%2F%20Re-executa%20direto%20se%20ja%20carregou%20antes%20%28evita%20duplicar%20listeners%2FIDs%29%0A%20%20if%28window.__tbScraperStart%29%7B%0A%20%20%20%20LOG%28%27ja%20carregado%2C%20re-executando...%27%29%3B%0A%20%20%20%20window.__tbScraperStart%28%29%3B%0A%20%20%20%20return%3B%0A%20%20%7D%0A%0A%20%20function%20findSnippetRows%28%29%7B%0A%20%20%20%20const%20tries%20%3D%20%5B%0A%20%20%20%20%20%20%27a%5Bhref%2A%3D%22%2Fsnippet%2F%22%5D%27%2C%0A%20%20%20%20%20%20%27%5Bdata-test%3D%22snippet-row%22%5D%27%2C%0A%20%20%20%20%20%20%27%5Bdata-snippet-id%5D%27%2C%0A%20%20%20%20%20%20%27%5Brole%3D%22row%22%5D%27%2C%0A%20%20%20%20%20%20%27%5Brole%3D%22listitem%22%5D%27%2C%0A%20%20%20%20%20%20%27.MuiListItem-root%27%2C%0A%20%20%20%20%20%20%27li%5Bclass%2A%3D%22snippet%22%20i%5D%27%2C%0A%20%20%20%20%20%20%27div%5Bclass%2A%3D%22snippet-row%22%20i%5D%27%2C%0A%20%20%20%20%20%20%27div%5Bclass%2A%3D%22snippetItem%22%20i%5D%27%0A%20%20%20%20%5D%3B%0A%20%20%20%20for%28const%20sel%20of%20tries%29%7B%0A%20%20%20%20%20%20const%20found%20%3D%20document.querySelectorAll%28sel%29%3B%0A%20%20%20%20%20%20if%28found.length%20%3E%3D%202%29%7B%0A%20%20%20%20%20%20%20%20LOG%28%60achou%20%24%7Bfound.length%7D%20linhas%20usando%20seletor%20%22%24%7Bsel%7D%22%60%29%3B%0A%20%20%20%20%20%20%20%20return%20Array.from%28found%29%3B%0A%20%20%20%20%20%20%7D%0A%20%20%20%20%7D%0A%20%20%20%20LOG%28%27nenhum%20seletor%20padrao%20casou.%20Heuristica%20por%20shortcut%20texto...%27%29%3B%0A%20%20%20%20const%20all%20%3D%20document.querySelectorAll%28%27a%2C%20%5Brole%3D%22button%22%5D%2C%20li%2C%20div%27%29%3B%0A%20%20%20%20const%20rows%20%3D%20%5B%5D%3B%0A%20%20%20%20const%20seen%20%3D%20new%20Set%28%29%3B%0A%20%20%20%20all.forEach%28el%20%3D%3E%20%7B%0A%20%20%20%20%20%20const%20txt%20%3D%20%28el.textContent%20%7C%7C%20%27%27%29.trim%28%29%3B%0A%20%20%20%20%20%20if%28%21txt%20%7C%7C%20txt.length%20%3E%20300%29%20return%3B%0A%20%20%20%20%20%20if%28%21%2F%5C%2F%5Ba-z%5D%5B%5Cw-%5D%7B0%2C30%7D%5Cb%2Fi.test%28txt%29%29%20return%3B%0A%20%20%20%20%20%20const%20hasChildShortcut%20%3D%20Array.from%28el.children%29.some%28c%20%3D%3E%20%2F%5C%2F%5Ba-z%5D%2Fi.test%28%28c.textContent%20%7C%7C%20%27%27%29%29%29%3B%0A%20%20%20%20%20%20if%28hasChildShortcut%29%20return%3B%0A%20%20%20%20%20%20if%28seen.has%28el%29%29%20return%3B%0A%20%20%20%20%20%20seen.add%28el%29%3B%0A%20%20%20%20%20%20rows.push%28el%29%3B%0A%20%20%20%20%7D%29%3B%0A%20%20%20%20LOG%28%60heuristica%20achou%20%24%7Brows.length%7D%20candidatos%60%29%3B%0A%20%20%20%20return%20rows%3B%0A%20%20%7D%0A%0A%20%20function%20extractShortcut%28row%29%7B%0A%20%20%20%20const%20txt%20%3D%20%28row.textContent%20%7C%7C%20%27%27%29.trim%28%29%3B%0A%20%20%20%20const%20m%20%3D%20txt.match%28%2F%5C%2F%5Ba-z%5D%5B%5Cw-%5D%7B0%2C40%7D%2Fi%29%3B%0A%20%20%20%20return%20m%20%3F%20m%5B0%5D%20%3A%20%27%27%3B%0A%20%20%7D%0A%0A%20%20function%20extractName%28row%29%7B%0A%20%20%20%20const%20cand%20%3D%20Array.from%28row.querySelectorAll%28%27%2A%27%29%29.map%28n%20%3D%3E%20%28n.textContent%20%7C%7C%20%27%27%29.trim%28%29%29%0A%20%20%20%20%20%20.filter%28t%20%3D%3E%20t%20%26%26%20t.length%20%3E%201%20%26%26%20t.length%20%3C%20120%20%26%26%20%21t.startsWith%28%27%2F%27%29%29%3B%0A%20%20%20%20return%20cand%5B0%5D%20%7C%7C%20%27%27%3B%0A%20%20%7D%0A%0A%20%20function%20findEditor%28%29%7B%0A%20%20%20%20const%20sels%20%3D%20%5B%0A%20%20%20%20%20%20%27.ProseMirror%27%2C%0A%20%20%20%20%20%20%27%5Bcontenteditable%3D%22true%22%5D%5Bclass%2A%3D%22editor%22%20i%5D%27%2C%0A%20%20%20%20%20%20%27%5Bcontenteditable%3D%22true%22%5D%27%2C%0A%20%20%20%20%20%20%27.cm-content%27%2C%0A%20%20%20%20%20%20%27textarea%5Bclass%2A%3D%22snippet%22%20i%5D%27%2C%0A%20%20%20%20%20%20%27textarea%27%0A%20%20%20%20%5D%3B%0A%20%20%20%20for%28const%20sel%20of%20sels%29%7B%0A%20%20%20%20%20%20const%20el%20%3D%20document.querySelector%28sel%29%3B%0A%20%20%20%20%20%20if%28el%20%26%26%20%28el.offsetWidth%20%3E%20200%20%7C%7C%20el.value%29%29%7B%0A%20%20%20%20%20%20%20%20return%20el%3B%0A%20%20%20%20%20%20%7D%0A%20%20%20%20%7D%0A%20%20%20%20return%20null%3B%0A%20%20%7D%0A%0A%20%20function%20extractEditorText%28editor%29%7B%0A%20%20%20%20if%28%21editor%29%20return%20%27%27%3B%0A%20%20%20%20if%28editor.tagName%20%3D%3D%3D%20%27TEXTAREA%27%29%20return%20editor.value%20%7C%7C%20%27%27%3B%0A%20%20%20%20return%20%28editor.innerText%20%7C%7C%20editor.textContent%20%7C%7C%20%27%27%29.trim%28%29%3B%0A%20%20%7D%0A%0A%20%20function%20extractMainContentFallback%28%29%7B%0A%20%20%20%20const%20sidebarWidth%20%3D%20320%3B%0A%20%20%20%20const%20rightPanelStart%20%3D%20Math.max%28window.innerWidth%20-%20320%2C%20700%29%3B%0A%20%20%20%20const%20candidates%20%3D%20Array.from%28document.querySelectorAll%28%27div%2C%20article%2C%20section%2C%20p%27%29%29%3B%0A%20%20%20%20let%20best%20%3D%20null%3B%0A%20%20%20%20let%20bestScore%20%3D%200%3B%0A%20%20%20%20for%28const%20el%20of%20candidates%29%7B%0A%20%20%20%20%20%20const%20rect%20%3D%20el.getBoundingClientRect%28%29%3B%0A%20%20%20%20%20%20if%28rect.width%20%3C%20200%20%7C%7C%20rect.height%20%3C%2030%29%20continue%3B%0A%20%20%20%20%20%20if%28rect.left%20%3C%20sidebarWidth%29%20continue%3B%0A%20%20%20%20%20%20if%28rect.right%20%3E%20rightPanelStart%20%2B%20200%29%20continue%3B%0A%20%20%20%20%20%20const%20txt%20%3D%20%28el.innerText%20%7C%7C%20%27%27%29.trim%28%29%3B%0A%20%20%20%20%20%20if%28%21txt%20%7C%7C%20txt.length%20%3C%2020%20%7C%7C%20txt.length%20%3E%208000%29%20continue%3B%0A%20%20%20%20%20%20const%20hasInnerCandidate%20%3D%20Array.from%28el.children%29.some%28c%20%3D%3E%20%7B%0A%20%20%20%20%20%20%20%20const%20t%20%3D%20%28c.innerText%20%7C%7C%20%27%27%29.trim%28%29%3B%0A%20%20%20%20%20%20%20%20return%20t%20%26%26%20t.length%20%3E%20txt.length%20%2A%200.85%3B%0A%20%20%20%20%20%20%7D%29%3B%0A%20%20%20%20%20%20if%28hasInnerCandidate%29%20continue%3B%0A%20%20%20%20%20%20const%20score%20%3D%20txt.length%3B%0A%20%20%20%20%20%20if%28score%20%3E%20bestScore%29%7B%20bestScore%20%3D%20score%3B%20best%20%3D%20el%3B%20%7D%0A%20%20%20%20%7D%0A%20%20%20%20if%28%21best%29%20return%20%27%27%3B%0A%20%20%20%20const%20txt%20%3D%20%28best.innerText%20%7C%7C%20%27%27%29.trim%28%29%3B%0A%20%20%20%20LOG%28%60fallback%20main%20content%3A%20%24%7Btxt.length%7D%20chars%20%28score%3D%24%7BbestScore%7D%29%60%29%3B%0A%20%20%20%20return%20txt%3B%0A%20%20%7D%0A%0A%20%20async%20function%20tryEnterEditMode%28%29%7B%0A%20%20%20%20const%20editBtns%20%3D%20Array.from%28document.querySelectorAll%28%27button%2C%20%5Brole%3D%22button%22%5D%2C%20%5Brole%3D%22tab%22%5D%27%29%29%0A%20%20%20%20%20%20.filter%28b%20%3D%3E%20%7B%0A%20%20%20%20%20%20%20%20const%20txt%20%3D%20%28b.textContent%20%7C%7C%20%27%27%29.trim%28%29%3B%0A%20%20%20%20%20%20%20%20return%20%2F%5Eedit%24%2Fi.test%28txt%29%20%26%26%20b.offsetWidth%20%3E%200%20%26%26%20b.offsetHeight%20%3E%200%3B%0A%20%20%20%20%20%20%7D%29%3B%0A%20%20%20%20if%28editBtns.length%29%7B%0A%20%20%20%20%20%20try%7B%20editBtns%5B0%5D.click%28%29%3B%20await%20delay%28300%29%3B%20return%20true%3B%20%7Dcatch%28_%29%7B%7D%0A%20%20%20%20%7D%0A%20%20%20%20return%20false%3B%0A%20%20%7D%0A%0A%20%20async%20function%20delay%28ms%29%7B%20return%20new%20Promise%28r%20%3D%3E%20setTimeout%28r%2C%20ms%29%29%3B%20%7D%0A%0A%20%20async%20function%20openAndReadSnippet%28row%29%7B%0A%20%20%20%20const%20clickTarget%20%3D%20row.matches%28%27a%27%29%20%3F%20row%20%3A%20%28row.querySelector%28%27a%27%29%20%7C%7C%20row%29%3B%0A%20%20%20%20const%20beforeEditor%20%3D%20findEditor%28%29%3B%0A%20%20%20%20const%20beforeText%20%3D%20beforeEditor%20%3F%20extractEditorText%28beforeEditor%29%20%3A%20null%3B%0A%20%20%20%20try%7B%20clickTarget.click%28%29%3B%20%7Dcatch%28e%29%7B%20LOG%28%27falha%20ao%20clicar%27%2C%20e%29%3B%20return%20null%3B%20%7D%0A%20%20%20%20let%20editor%20%3D%20null%3B%0A%20%20%20%20for%28let%20i%20%3D%200%3B%20i%20%3C%2015%3B%20i%2B%2B%29%7B%0A%20%20%20%20%20%20await%20delay%28100%29%3B%0A%20%20%20%20%20%20const%20e%20%3D%20findEditor%28%29%3B%0A%20%20%20%20%20%20if%28e%20%26%26%20extractEditorText%28e%29%20%21%3D%3D%20beforeText%29%7B%20editor%20%3D%20e%3B%20break%3B%20%7D%0A%20%20%20%20%7D%0A%20%20%20%20if%28%21editor%29%20editor%20%3D%20findEditor%28%29%3B%0A%20%20%20%20let%20text%20%3D%20editor%20%3F%20extractEditorText%28editor%29%20%3A%20%27%27%3B%0A%20%20%20%20if%28%21text%20%7C%7C%20text.length%20%3C%205%29%7B%0A%20%20%20%20%20%20const%20entered%20%3D%20await%20tryEnterEditMode%28%29%3B%0A%20%20%20%20%20%20if%28entered%29%7B%0A%20%20%20%20%20%20%20%20await%20delay%28200%29%3B%0A%20%20%20%20%20%20%20%20editor%20%3D%20findEditor%28%29%3B%0A%20%20%20%20%20%20%20%20text%20%3D%20editor%20%3F%20extractEditorText%28editor%29%20%3A%20%27%27%3B%0A%20%20%20%20%20%20%7D%0A%20%20%20%20%7D%0A%20%20%20%20if%28%21text%20%7C%7C%20text.length%20%3C%205%29%7B%0A%20%20%20%20%20%20text%20%3D%20extractMainContentFallback%28%29%3B%0A%20%20%20%20%7D%0A%20%20%20%20return%20text%3B%0A%20%20%7D%0A%0A%20%20function%20escapeHtml%28s%29%7B%0A%20%20%20%20return%20String%28s%20%3D%3D%20null%20%3F%20%27%27%20%3A%20s%29%0A%20%20%20%20%20%20.replace%28%2F%26%2Fg%2C%20%27%26amp%3B%27%29.replace%28%2F%3C%2Fg%2C%20%27%26lt%3B%27%29.replace%28%2F%3E%2Fg%2C%20%27%26gt%3B%27%29%0A%20%20%20%20%20%20.replace%28%2F%22%2Fg%2C%20%27%26quot%3B%27%29.replace%28%2F%27%2Fg%2C%20%27%26%2339%3B%27%29%3B%0A%20%20%7D%0A%0A%20%20function%20copyToClipboard%28text%29%7B%0A%20%20%20%20try%7B%0A%20%20%20%20%20%20navigator.clipboard.writeText%28text%29%3B%0A%20%20%20%20%20%20LOG%28%27JSON%20copiado%20pro%20clipboard%27%29%3B%0A%20%20%20%20%7Dcatch%28_%29%7B%0A%20%20%20%20%20%20const%20ta%20%3D%20document.createElement%28%27textarea%27%29%3B%0A%20%20%20%20%20%20ta.value%20%3D%20text%3B%20document.body.appendChild%28ta%29%3B%0A%20%20%20%20%20%20ta.select%28%29%3B%20document.execCommand%28%27copy%27%29%3B%20ta.remove%28%29%3B%0A%20%20%20%20%7D%0A%20%20%7D%0A%0A%20%20function%20downloadJson%28text%29%7B%0A%20%20%20%20const%20blob%20%3D%20new%20Blob%28%5Btext%5D%2C%20%7B%20type%3A%20%27application%2Fjson%27%20%7D%29%3B%0A%20%20%20%20const%20url%20%3D%20URL.createObjectURL%28blob%29%3B%0A%20%20%20%20const%20a%20%3D%20document.createElement%28%27a%27%29%3B%0A%20%20%20%20a.href%20%3D%20url%3B%0A%20%20%20%20a.download%20%3D%20%60textblaze-snippets-%24%7Bnew%20Date%28%29.toISOString%28%29.slice%280%2C10%29%7D.json%60%3B%0A%20%20%20%20document.body.appendChild%28a%29%3B%20a.click%28%29%3B%20a.remove%28%29%3B%0A%20%20%20%20setTimeout%28%28%29%20%3D%3E%20URL.revokeObjectURL%28url%29%2C%201000%29%3B%0A%20%20%7D%0A%0A%20%20function%20showResultPanel%28snippets%29%7B%0A%20%20%20%20document.getElementById%28%27tb_scraper_panel%27%29%3F.remove%28%29%3B%0A%20%20%20%20const%20json%20%3D%20JSON.stringify%28snippets%2C%20null%2C%202%29%3B%0A%20%20%20%20const%20panel%20%3D%20document.createElement%28%27div%27%29%3B%0A%20%20%20%20panel.id%20%3D%20%27tb_scraper_panel%27%3B%0A%20%20%20%20panel.style.cssText%20%3D%20%5B%0A%20%20%20%20%20%20%27position%3Afixed%27%2C%27top%3A60px%27%2C%27right%3A14px%27%2C%27z-index%3A2147483647%27%2C%0A%20%20%20%20%20%20%27background%3A%230b1220%27%2C%27color%3A%23e6ecf6%27%2C%27border%3A1px%20solid%20%232a3a55%27%2C%0A%20%20%20%20%20%20%27border-radius%3A12px%27%2C%27padding%3A14px%27%2C%27width%3Amin%28560px%2C%2090vw%29%27%2C%0A%20%20%20%20%20%20%27max-height%3A80vh%27%2C%27overflow%3Aauto%27%2C%27font%3A13px%20system-ui%2Csans-serif%27%2C%0A%20%20%20%20%20%20%27box-shadow%3A0%2012px%2040px%20rgba%280%2C0%2C0%2C.55%29%27%0A%20%20%20%20%5D.join%28%27%3B%27%29%3B%0A%20%20%20%20panel.innerHTML%20%3D%20%60%0A%20%20%20%20%20%20%3Cdiv%20style%3D%22display%3Aflex%3Bjustify-content%3Aspace-between%3Balign-items%3Acenter%3Bmargin-bottom%3A10px%3B%22%3E%0A%20%20%20%20%20%20%20%20%3Cdiv%20style%3D%22font-weight%3A700%3Bfont-size%3A14px%3B%22%3ECapturados%3A%20%24%7Bsnippets.length%7D%20snippets%3C%2Fdiv%3E%0A%20%20%20%20%20%20%20%20%3Cbutton%20id%3D%22tb_scraper_close%22%20style%3D%22background%3Atransparent%3Bcolor%3A%239ca3af%3Bborder%3A0%3Bfont-size%3A18px%3Bcursor%3Apointer%3B%22%3E%5Cu00d7%3C%2Fbutton%3E%0A%20%20%20%20%20%20%3C%2Fdiv%3E%0A%20%20%20%20%20%20%3Cdiv%20style%3D%22font-size%3A12px%3Bcolor%3A%239ca3af%3Bmargin-bottom%3A10px%3B%22%3E%0A%20%20%20%20%20%20%20%20JSON%20%3Cb%3Ecopiado%20automaticamente%3C%2Fb%3E%20pro%20clipboard.%20Cole%20no%20plugin%20Jira%3A%20%3Cb%3EConfiguracoes%20%5Cu2192%20Snippets%20%5Cu2192%20Importar%20do%20Text%20Blaze%3C%2Fb%3E.%0A%20%20%20%20%20%20%3C%2Fdiv%3E%0A%20%20%20%20%20%20%3Cdiv%20style%3D%22display%3Aflex%3Bgap%3A8px%3Bmargin-bottom%3A10px%3B%22%3E%0A%20%20%20%20%20%20%20%20%3Cbutton%20id%3D%22tb_scraper_copy%22%20style%3D%22background%3A%237c3aed%3Bcolor%3A%23fff%3Bborder%3A0%3Bborder-radius%3A6px%3Bpadding%3A8px%2012px%3Bfont-weight%3A600%3Bcursor%3Apointer%3B%22%3E%5CuD83D%5CuDCCB%20Copiar%20JSON%3C%2Fbutton%3E%0A%20%20%20%20%20%20%20%20%3Cbutton%20id%3D%22tb_scraper_download%22%20style%3D%22background%3A%230ea5e9%3Bcolor%3A%23fff%3Bborder%3A0%3Bborder-radius%3A6px%3Bpadding%3A8px%2012px%3Bfont-weight%3A600%3Bcursor%3Apointer%3B%22%3E%5Cu2B07%20Baixar%20.json%3C%2Fbutton%3E%0A%20%20%20%20%20%20%3C%2Fdiv%3E%0A%20%20%20%20%20%20%3Cdetails%20open%3E%0A%20%20%20%20%20%20%20%20%3Csummary%20style%3D%22cursor%3Apointer%3Bfont-size%3A12px%3Bcolor%3A%239ca3af%3Bmargin-bottom%3A6px%3B%22%3EPreview%20da%20lista%3C%2Fsummary%3E%0A%20%20%20%20%20%20%20%20%3Ctable%20style%3D%22width%3A100%25%3Bfont-size%3A11px%3Bborder-collapse%3Acollapse%3Bmargin-top%3A6px%3B%22%3E%0A%20%20%20%20%20%20%20%20%20%20%3Cthead%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%3Ctr%20style%3D%22border-bottom%3A1px%20solid%20%232a3a55%3Btext-align%3Aleft%3Bcolor%3A%239ca3af%3B%22%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3Cth%20style%3D%22padding%3A4px%3B%22%3EShortcut%3C%2Fth%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3Cth%20style%3D%22padding%3A4px%3B%22%3ENome%3C%2Fth%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3Cth%20style%3D%22padding%3A4px%3B%22%3ETexto%20%28preview%29%3C%2Fth%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%3C%2Ftr%3E%0A%20%20%20%20%20%20%20%20%20%20%3C%2Fthead%3E%0A%20%20%20%20%20%20%20%20%20%20%3Ctbody%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%24%7Bsnippets.map%28s%20%3D%3E%20%60%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3Ctr%20style%3D%22border-bottom%3A1px%20solid%20%231f2937%3B%22%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3Ctd%20style%3D%22padding%3A4px%3Bfont-family%3Amonospace%3Bcolor%3A%23a78bfa%3B%22%3E%24%7BescapeHtml%28s.command%20%7C%7C%20%27-%27%29%7D%3C%2Ftd%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3Ctd%20style%3D%22padding%3A4px%3B%22%3E%24%7BescapeHtml%28s.name%20%7C%7C%20%27-%27%29%7D%3C%2Ftd%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3Ctd%20style%3D%22padding%3A4px%3Bcolor%3A%23cbd5e1%3B%22%3E%24%7BescapeHtml%28%28s.text%20%7C%7C%20%27%27%29.slice%280%2C%2060%29%29%7D%24%7Bs.text%20%26%26%20s.text.length%20%3E%2060%20%3F%20%27...%27%20%3A%20%27%27%7D%3C%2Ftd%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3C%2Ftr%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%60%29.join%28%27%27%29%7D%0A%20%20%20%20%20%20%20%20%20%20%3C%2Ftbody%3E%0A%20%20%20%20%20%20%20%20%3C%2Ftable%3E%0A%20%20%20%20%20%20%3C%2Fdetails%3E%0A%20%20%20%20%20%20%3Cdetails%20style%3D%22margin-top%3A10px%3B%22%3E%0A%20%20%20%20%20%20%20%20%3Csummary%20style%3D%22cursor%3Apointer%3Bfont-size%3A12px%3Bcolor%3A%239ca3af%3B%22%3EVer%20JSON%20completo%3C%2Fsummary%3E%0A%20%20%20%20%20%20%20%20%3Ctextarea%20readonly%20style%3D%22width%3A100%25%3Bheight%3A200px%3Bmargin-top%3A6px%3Bbackground%3A%230a0e17%3Bcolor%3A%23e6ecf6%3Bborder%3A1px%20solid%20%231f2937%3Bborder-radius%3A6px%3Bpadding%3A8px%3Bfont-family%3Amonospace%3Bfont-size%3A11px%3B%22%3E%24%7BescapeHtml%28json%29%7D%3C%2Ftextarea%3E%0A%20%20%20%20%20%20%3C%2Fdetails%3E%0A%20%20%20%20%60%3B%0A%20%20%20%20document.body.appendChild%28panel%29%3B%0A%20%20%20%20panel.querySelector%28%27%23tb_scraper_close%27%29.onclick%20%3D%20%28%29%20%3D%3E%20panel.remove%28%29%3B%0A%20%20%20%20panel.querySelector%28%27%23tb_scraper_copy%27%29.onclick%20%3D%20%28%29%20%3D%3E%20copyToClipboard%28json%29%3B%0A%20%20%20%20panel.querySelector%28%27%23tb_scraper_download%27%29.onclick%20%3D%20%28%29%20%3D%3E%20downloadJson%28json%29%3B%0A%20%20%20%20copyToClipboard%28json%29%3B%0A%20%20%7D%0A%0A%20%20function%20showProgressToast%28text%29%7B%0A%20%20%20%20let%20t%20%3D%20document.getElementById%28%27tb_scraper_toast%27%29%3B%0A%20%20%20%20if%28%21t%29%7B%0A%20%20%20%20%20%20t%20%3D%20document.createElement%28%27div%27%29%3B%0A%20%20%20%20%20%20t.id%20%3D%20%27tb_scraper_toast%27%3B%0A%20%20%20%20%20%20t.style.cssText%20%3D%20%5B%0A%20%20%20%20%20%20%20%20%27position%3Afixed%27%2C%27top%3A14px%27%2C%27right%3A14px%27%2C%27z-index%3A2147483646%27%2C%0A%20%20%20%20%20%20%20%20%27background%3A%237c3aed%27%2C%27color%3A%23fff%27%2C%27border-radius%3A8px%27%2C%0A%20%20%20%20%20%20%20%20%27padding%3A10px%2016px%27%2C%27font%3A600%2013px%20system-ui%27%2C%0A%20%20%20%20%20%20%20%20%27box-shadow%3A0%206px%2016px%20rgba%28124%2C58%2C237%2C.4%29%27%0A%20%20%20%20%20%20%5D.join%28%27%3B%27%29%3B%0A%20%20%20%20%20%20document.body.appendChild%28t%29%3B%0A%20%20%20%20%7D%0A%20%20%20%20t.textContent%20%3D%20text%3B%0A%20%20%7D%0A%20%20function%20clearProgressToast%28%29%7B%20document.getElementById%28%27tb_scraper_toast%27%29%3F.remove%28%29%3B%20%7D%0A%0A%20%20async%20function%20startScrape%28%29%7B%0A%20%20%20%20try%7B%0A%20%20%20%20%20%20const%20rows%20%3D%20findSnippetRows%28%29%3B%0A%20%20%20%20%20%20if%28rows.length%20%3D%3D%3D%200%29%7B%0A%20%20%20%20%20%20%20%20alert%28%27Nao%20encontrei%20nenhum%20snippet%20na%20pagina.%5Cn%5CnDicas%3A%5Cn-%20Confira%20se%20voce%20esta%20no%20dashboard%20do%20Text%20Blaze%20%28dashboard.blaze.today%29%5Cn-%20Abra%20uma%20pasta%20de%20snippets%20%28clique%20na%20sidebar%29%5Cn-%20Abra%20o%20Console%20%28F12%29%20e%20veja%20os%20logs%20%5Btb-scraper%5D%27%29%3B%0A%20%20%20%20%20%20%20%20return%3B%0A%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20LOG%28%60processando%20%24%7Brows.length%7D%20linhas...%60%29%3B%0A%20%20%20%20%20%20const%20snippets%20%3D%20%5B%5D%3B%0A%20%20%20%20%20%20for%28let%20i%20%3D%200%3B%20i%20%3C%20rows.length%3B%20i%2B%2B%29%7B%0A%20%20%20%20%20%20%20%20const%20row%20%3D%20rows%5Bi%5D%3B%0A%20%20%20%20%20%20%20%20showProgressToast%28%60%5Cu23F3%20Capturando%20%24%7Bi%2B1%7D%2F%24%7Brows.length%7D...%60%29%3B%0A%20%20%20%20%20%20%20%20const%20command%20%3D%20extractShortcut%28row%29%3B%0A%20%20%20%20%20%20%20%20const%20name%20%3D%20extractName%28row%29%3B%0A%20%20%20%20%20%20%20%20const%20text%20%3D%20await%20openAndReadSnippet%28row%29%3B%0A%20%20%20%20%20%20%20%20if%28command%20%7C%7C%20name%29%7B%0A%20%20%20%20%20%20%20%20%20%20snippets.push%28%7B%20command%2C%20name%2C%20text%3A%20text%20%7C%7C%20%27%27%20%7D%29%3B%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20await%20delay%28150%29%3B%0A%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20clearProgressToast%28%29%3B%0A%20%20%20%20%20%20LOG%28%27total%20capturado%3A%27%2C%20snippets.length%2C%20snippets%29%3B%0A%20%20%20%20%20%20showResultPanel%28snippets%29%3B%0A%20%20%20%20%7Dcatch%28e%29%7B%0A%20%20%20%20%20%20clearProgressToast%28%29%3B%0A%20%20%20%20%20%20LOG%28%27ERRO%3A%27%2C%20e%29%3B%0A%20%20%20%20%20%20alert%28%27Erro%20durante%20captura%3A%20%27%20%2B%20%28e.message%20%7C%7C%20e%29%20%2B%20%27%5CnVer%20console%20%28F12%29%20pra%20detalhes.%27%29%3B%0A%20%20%20%20%7D%0A%20%20%7D%0A%0A%20%20%2F%2F%20Expoe%20pra%20que%20cliques%20subsequentes%20no%20bookmarklet%20apenas%20re-executem%0A%20%20window.__tbScraperStart%20%3D%20startScrape%3B%0A%0A%20%20%2F%2F%20Auto-executa%20na%20primeira%20vez%0A%20%20startScrape%28%29%3B%0A%7D%29%28%29%3B%0A eh substituido no build.sh pelo
-      // conteudo de tools/textblaze-scraper.bookmarklet.js URL-encoded.
-      // Bookmarklets bypassam CSP no Chrome/Firefox/Edge, entao eval() funciona.
-      const TB_SCRAPER_ENCODED = '%2F%2A%0A%20%2A%20Text%20Blaze%20-%3E%20Jira%20Localidade%20%28Snippet%20Scraper%29%20%E2%80%94%20versao%20BOOKMARKLET%0A%20%2A%0A%20%2A%20Este%20arquivo%20eh%20carregado%20dinamicamente%20quando%20o%20usuario%20clica%20no%0A%20%2A%20bookmarklet%20%22%F0%9F%93%8B%20Capturar%20TB%22%20arrastado%20pros%20favoritos.%0A%20%2A%0A%20%2A%20O%20bookmarklet%20em%20si%20eh%20apenas%20um%201-liner%20que%20faz%3A%0A%20%2A%20%20%20javascript%3A%28function%28%29%7Bvar%20s%3Ddocument.createElement%28%27script%27%29%3B%0A%20%2A%20%20%20s.src%3D%27https%3A%2F%2Fraw.githubusercontent.com%2Fgunsouza%2Fjira-localidade%2Fmain%2Ftools%2Ftextblaze-scraper.bookmarklet.js%3Fv%3D%27%2BDate.now%28%29%3B%0A%20%2A%20%20%20document.body.appendChild%28s%29%3B%7D%29%28%29%3B%0A%20%2A%0A%20%2A%20Diferencas%20pra%20versao%20.user.js%20%28Tampermonkey%29%3A%0A%20%2A%20%20-%20Sem%20header%20%3D%3DUserScript%3D%3D%0A%20%2A%20%20-%20Auto-executa%20o%20scrape%20ao%20carregar%20%28sem%20precisar%20clicar%20em%20botao%29%0A%20%2A%20%20-%20Se%20ja%20foi%20carregado%2C%20apenas%20re-executa%0A%20%2A%2F%0A%0A%28function%28%29%7B%0A%20%20%27use%20strict%27%3B%0A%0A%20%20const%20LOG%20%3D%20%28...a%29%20%3D%3E%20console.log%28%27%5Btb-scraper%5D%27%2C%20...a%29%3B%0A%0A%20%20%2F%2F%20Re-executa%20direto%20se%20ja%20carregou%20antes%20%28evita%20duplicar%20listeners%2FIDs%29%0A%20%20if%28window.__tbScraperStart%29%7B%0A%20%20%20%20LOG%28%27ja%20carregado%2C%20re-executando...%27%29%3B%0A%20%20%20%20window.__tbScraperStart%28%29%3B%0A%20%20%20%20return%3B%0A%20%20%7D%0A%0A%20%20function%20findSnippetRows%28%29%7B%0A%20%20%20%20const%20tries%20%3D%20%5B%0A%20%20%20%20%20%20%27a%5Bhref%2A%3D%22%2Fsnippet%2F%22%5D%27%2C%0A%20%20%20%20%20%20%27%5Bdata-test%3D%22snippet-row%22%5D%27%2C%0A%20%20%20%20%20%20%27%5Bdata-snippet-id%5D%27%2C%0A%20%20%20%20%20%20%27%5Brole%3D%22row%22%5D%27%2C%0A%20%20%20%20%20%20%27%5Brole%3D%22listitem%22%5D%27%2C%0A%20%20%20%20%20%20%27.MuiListItem-root%27%2C%0A%20%20%20%20%20%20%27li%5Bclass%2A%3D%22snippet%22%20i%5D%27%2C%0A%20%20%20%20%20%20%27div%5Bclass%2A%3D%22snippet-row%22%20i%5D%27%2C%0A%20%20%20%20%20%20%27div%5Bclass%2A%3D%22snippetItem%22%20i%5D%27%0A%20%20%20%20%5D%3B%0A%20%20%20%20for%28const%20sel%20of%20tries%29%7B%0A%20%20%20%20%20%20const%20found%20%3D%20document.querySelectorAll%28sel%29%3B%0A%20%20%20%20%20%20if%28found.length%20%3E%3D%202%29%7B%0A%20%20%20%20%20%20%20%20LOG%28%60achou%20%24%7Bfound.length%7D%20linhas%20usando%20seletor%20%22%24%7Bsel%7D%22%60%29%3B%0A%20%20%20%20%20%20%20%20return%20Array.from%28found%29%3B%0A%20%20%20%20%20%20%7D%0A%20%20%20%20%7D%0A%20%20%20%20LOG%28%27nenhum%20seletor%20padrao%20casou.%20Heuristica%20por%20shortcut%20texto...%27%29%3B%0A%20%20%20%20const%20all%20%3D%20document.querySelectorAll%28%27a%2C%20%5Brole%3D%22button%22%5D%2C%20li%2C%20div%27%29%3B%0A%20%20%20%20const%20rows%20%3D%20%5B%5D%3B%0A%20%20%20%20const%20seen%20%3D%20new%20Set%28%29%3B%0A%20%20%20%20all.forEach%28el%20%3D%3E%20%7B%0A%20%20%20%20%20%20const%20txt%20%3D%20%28el.textContent%20%7C%7C%20%27%27%29.trim%28%29%3B%0A%20%20%20%20%20%20if%28%21txt%20%7C%7C%20txt.length%20%3E%20300%29%20return%3B%0A%20%20%20%20%20%20if%28%21%2F%5C%2F%5Ba-z%5D%5B%5Cw-%5D%7B0%2C30%7D%5Cb%2Fi.test%28txt%29%29%20return%3B%0A%20%20%20%20%20%20const%20hasChildShortcut%20%3D%20Array.from%28el.children%29.some%28c%20%3D%3E%20%2F%5C%2F%5Ba-z%5D%2Fi.test%28%28c.textContent%20%7C%7C%20%27%27%29%29%29%3B%0A%20%20%20%20%20%20if%28hasChildShortcut%29%20return%3B%0A%20%20%20%20%20%20if%28seen.has%28el%29%29%20return%3B%0A%20%20%20%20%20%20seen.add%28el%29%3B%0A%20%20%20%20%20%20rows.push%28el%29%3B%0A%20%20%20%20%7D%29%3B%0A%20%20%20%20LOG%28%60heuristica%20achou%20%24%7Brows.length%7D%20candidatos%60%29%3B%0A%20%20%20%20return%20rows%3B%0A%20%20%7D%0A%0A%20%20function%20extractShortcut%28row%29%7B%0A%20%20%20%20const%20txt%20%3D%20%28row.textContent%20%7C%7C%20%27%27%29.trim%28%29%3B%0A%20%20%20%20const%20m%20%3D%20txt.match%28%2F%5C%2F%5Ba-z%5D%5B%5Cw-%5D%7B0%2C40%7D%2Fi%29%3B%0A%20%20%20%20return%20m%20%3F%20m%5B0%5D%20%3A%20%27%27%3B%0A%20%20%7D%0A%0A%20%20function%20extractName%28row%29%7B%0A%20%20%20%20const%20cand%20%3D%20Array.from%28row.querySelectorAll%28%27%2A%27%29%29.map%28n%20%3D%3E%20%28n.textContent%20%7C%7C%20%27%27%29.trim%28%29%29%0A%20%20%20%20%20%20.filter%28t%20%3D%3E%20t%20%26%26%20t.length%20%3E%201%20%26%26%20t.length%20%3C%20120%20%26%26%20%21t.startsWith%28%27%2F%27%29%29%3B%0A%20%20%20%20return%20cand%5B0%5D%20%7C%7C%20%27%27%3B%0A%20%20%7D%0A%0A%20%20function%20findEditor%28%29%7B%0A%20%20%20%20const%20sels%20%3D%20%5B%0A%20%20%20%20%20%20%27.ProseMirror%27%2C%0A%20%20%20%20%20%20%27%5Bcontenteditable%3D%22true%22%5D%5Bclass%2A%3D%22editor%22%20i%5D%27%2C%0A%20%20%20%20%20%20%27%5Bcontenteditable%3D%22true%22%5D%27%2C%0A%20%20%20%20%20%20%27.cm-content%27%2C%0A%20%20%20%20%20%20%27textarea%5Bclass%2A%3D%22snippet%22%20i%5D%27%2C%0A%20%20%20%20%20%20%27textarea%27%0A%20%20%20%20%5D%3B%0A%20%20%20%20for%28const%20sel%20of%20sels%29%7B%0A%20%20%20%20%20%20const%20el%20%3D%20document.querySelector%28sel%29%3B%0A%20%20%20%20%20%20if%28el%20%26%26%20%28el.offsetWidth%20%3E%20200%20%7C%7C%20el.value%29%29%7B%0A%20%20%20%20%20%20%20%20return%20el%3B%0A%20%20%20%20%20%20%7D%0A%20%20%20%20%7D%0A%20%20%20%20return%20null%3B%0A%20%20%7D%0A%0A%20%20function%20extractEditorText%28editor%29%7B%0A%20%20%20%20if%28%21editor%29%20return%20%27%27%3B%0A%20%20%20%20if%28editor.tagName%20%3D%3D%3D%20%27TEXTAREA%27%29%20return%20editor.value%20%7C%7C%20%27%27%3B%0A%20%20%20%20return%20%28editor.innerText%20%7C%7C%20editor.textContent%20%7C%7C%20%27%27%29.trim%28%29%3B%0A%20%20%7D%0A%0A%20%20function%20extractMainContentFallback%28%29%7B%0A%20%20%20%20const%20sidebarWidth%20%3D%20320%3B%0A%20%20%20%20const%20rightPanelStart%20%3D%20Math.max%28window.innerWidth%20-%20320%2C%20700%29%3B%0A%20%20%20%20const%20candidates%20%3D%20Array.from%28document.querySelectorAll%28%27div%2C%20article%2C%20section%2C%20p%27%29%29%3B%0A%20%20%20%20let%20best%20%3D%20null%3B%0A%20%20%20%20let%20bestScore%20%3D%200%3B%0A%20%20%20%20for%28const%20el%20of%20candidates%29%7B%0A%20%20%20%20%20%20const%20rect%20%3D%20el.getBoundingClientRect%28%29%3B%0A%20%20%20%20%20%20if%28rect.width%20%3C%20200%20%7C%7C%20rect.height%20%3C%2030%29%20continue%3B%0A%20%20%20%20%20%20if%28rect.left%20%3C%20sidebarWidth%29%20continue%3B%0A%20%20%20%20%20%20if%28rect.right%20%3E%20rightPanelStart%20%2B%20200%29%20continue%3B%0A%20%20%20%20%20%20const%20txt%20%3D%20%28el.innerText%20%7C%7C%20%27%27%29.trim%28%29%3B%0A%20%20%20%20%20%20if%28%21txt%20%7C%7C%20txt.length%20%3C%2020%20%7C%7C%20txt.length%20%3E%208000%29%20continue%3B%0A%20%20%20%20%20%20const%20hasInnerCandidate%20%3D%20Array.from%28el.children%29.some%28c%20%3D%3E%20%7B%0A%20%20%20%20%20%20%20%20const%20t%20%3D%20%28c.innerText%20%7C%7C%20%27%27%29.trim%28%29%3B%0A%20%20%20%20%20%20%20%20return%20t%20%26%26%20t.length%20%3E%20txt.length%20%2A%200.85%3B%0A%20%20%20%20%20%20%7D%29%3B%0A%20%20%20%20%20%20if%28hasInnerCandidate%29%20continue%3B%0A%20%20%20%20%20%20const%20score%20%3D%20txt.length%3B%0A%20%20%20%20%20%20if%28score%20%3E%20bestScore%29%7B%20bestScore%20%3D%20score%3B%20best%20%3D%20el%3B%20%7D%0A%20%20%20%20%7D%0A%20%20%20%20if%28%21best%29%20return%20%27%27%3B%0A%20%20%20%20const%20txt%20%3D%20%28best.innerText%20%7C%7C%20%27%27%29.trim%28%29%3B%0A%20%20%20%20LOG%28%60fallback%20main%20content%3A%20%24%7Btxt.length%7D%20chars%20%28score%3D%24%7BbestScore%7D%29%60%29%3B%0A%20%20%20%20return%20txt%3B%0A%20%20%7D%0A%0A%20%20async%20function%20tryEnterEditMode%28%29%7B%0A%20%20%20%20const%20editBtns%20%3D%20Array.from%28document.querySelectorAll%28%27button%2C%20%5Brole%3D%22button%22%5D%2C%20%5Brole%3D%22tab%22%5D%27%29%29%0A%20%20%20%20%20%20.filter%28b%20%3D%3E%20%7B%0A%20%20%20%20%20%20%20%20const%20txt%20%3D%20%28b.textContent%20%7C%7C%20%27%27%29.trim%28%29%3B%0A%20%20%20%20%20%20%20%20return%20%2F%5Eedit%24%2Fi.test%28txt%29%20%26%26%20b.offsetWidth%20%3E%200%20%26%26%20b.offsetHeight%20%3E%200%3B%0A%20%20%20%20%20%20%7D%29%3B%0A%20%20%20%20if%28editBtns.length%29%7B%0A%20%20%20%20%20%20try%7B%20editBtns%5B0%5D.click%28%29%3B%20await%20delay%28300%29%3B%20return%20true%3B%20%7Dcatch%28_%29%7B%7D%0A%20%20%20%20%7D%0A%20%20%20%20return%20false%3B%0A%20%20%7D%0A%0A%20%20async%20function%20delay%28ms%29%7B%20return%20new%20Promise%28r%20%3D%3E%20setTimeout%28r%2C%20ms%29%29%3B%20%7D%0A%0A%20%20async%20function%20openAndReadSnippet%28row%29%7B%0A%20%20%20%20const%20clickTarget%20%3D%20row.matches%28%27a%27%29%20%3F%20row%20%3A%20%28row.querySelector%28%27a%27%29%20%7C%7C%20row%29%3B%0A%20%20%20%20const%20beforeEditor%20%3D%20findEditor%28%29%3B%0A%20%20%20%20const%20beforeText%20%3D%20beforeEditor%20%3F%20extractEditorText%28beforeEditor%29%20%3A%20null%3B%0A%20%20%20%20try%7B%20clickTarget.click%28%29%3B%20%7Dcatch%28e%29%7B%20LOG%28%27falha%20ao%20clicar%27%2C%20e%29%3B%20return%20null%3B%20%7D%0A%20%20%20%20let%20editor%20%3D%20null%3B%0A%20%20%20%20for%28let%20i%20%3D%200%3B%20i%20%3C%2015%3B%20i%2B%2B%29%7B%0A%20%20%20%20%20%20await%20delay%28100%29%3B%0A%20%20%20%20%20%20const%20e%20%3D%20findEditor%28%29%3B%0A%20%20%20%20%20%20if%28e%20%26%26%20extractEditorText%28e%29%20%21%3D%3D%20beforeText%29%7B%20editor%20%3D%20e%3B%20break%3B%20%7D%0A%20%20%20%20%7D%0A%20%20%20%20if%28%21editor%29%20editor%20%3D%20findEditor%28%29%3B%0A%20%20%20%20let%20text%20%3D%20editor%20%3F%20extractEditorText%28editor%29%20%3A%20%27%27%3B%0A%20%20%20%20if%28%21text%20%7C%7C%20text.length%20%3C%205%29%7B%0A%20%20%20%20%20%20const%20entered%20%3D%20await%20tryEnterEditMode%28%29%3B%0A%20%20%20%20%20%20if%28entered%29%7B%0A%20%20%20%20%20%20%20%20await%20delay%28200%29%3B%0A%20%20%20%20%20%20%20%20editor%20%3D%20findEditor%28%29%3B%0A%20%20%20%20%20%20%20%20text%20%3D%20editor%20%3F%20extractEditorText%28editor%29%20%3A%20%27%27%3B%0A%20%20%20%20%20%20%7D%0A%20%20%20%20%7D%0A%20%20%20%20if%28%21text%20%7C%7C%20text.length%20%3C%205%29%7B%0A%20%20%20%20%20%20text%20%3D%20extractMainContentFallback%28%29%3B%0A%20%20%20%20%7D%0A%20%20%20%20return%20text%3B%0A%20%20%7D%0A%0A%20%20function%20escapeHtml%28s%29%7B%0A%20%20%20%20return%20String%28s%20%3D%3D%20null%20%3F%20%27%27%20%3A%20s%29%0A%20%20%20%20%20%20.replace%28%2F%26%2Fg%2C%20%27%26amp%3B%27%29.replace%28%2F%3C%2Fg%2C%20%27%26lt%3B%27%29.replace%28%2F%3E%2Fg%2C%20%27%26gt%3B%27%29%0A%20%20%20%20%20%20.replace%28%2F%22%2Fg%2C%20%27%26quot%3B%27%29.replace%28%2F%27%2Fg%2C%20%27%26%2339%3B%27%29%3B%0A%20%20%7D%0A%0A%20%20function%20copyToClipboard%28text%29%7B%0A%20%20%20%20try%7B%0A%20%20%20%20%20%20navigator.clipboard.writeText%28text%29%3B%0A%20%20%20%20%20%20LOG%28%27JSON%20copiado%20pro%20clipboard%27%29%3B%0A%20%20%20%20%7Dcatch%28_%29%7B%0A%20%20%20%20%20%20const%20ta%20%3D%20document.createElement%28%27textarea%27%29%3B%0A%20%20%20%20%20%20ta.value%20%3D%20text%3B%20document.body.appendChild%28ta%29%3B%0A%20%20%20%20%20%20ta.select%28%29%3B%20document.execCommand%28%27copy%27%29%3B%20ta.remove%28%29%3B%0A%20%20%20%20%7D%0A%20%20%7D%0A%0A%20%20function%20downloadJson%28text%29%7B%0A%20%20%20%20const%20blob%20%3D%20new%20Blob%28%5Btext%5D%2C%20%7B%20type%3A%20%27application%2Fjson%27%20%7D%29%3B%0A%20%20%20%20const%20url%20%3D%20URL.createObjectURL%28blob%29%3B%0A%20%20%20%20const%20a%20%3D%20document.createElement%28%27a%27%29%3B%0A%20%20%20%20a.href%20%3D%20url%3B%0A%20%20%20%20a.download%20%3D%20%60textblaze-snippets-%24%7Bnew%20Date%28%29.toISOString%28%29.slice%280%2C10%29%7D.json%60%3B%0A%20%20%20%20document.body.appendChild%28a%29%3B%20a.click%28%29%3B%20a.remove%28%29%3B%0A%20%20%20%20setTimeout%28%28%29%20%3D%3E%20URL.revokeObjectURL%28url%29%2C%201000%29%3B%0A%20%20%7D%0A%0A%20%20function%20showResultPanel%28snippets%29%7B%0A%20%20%20%20document.getElementById%28%27tb_scraper_panel%27%29%3F.remove%28%29%3B%0A%20%20%20%20const%20json%20%3D%20JSON.stringify%28snippets%2C%20null%2C%202%29%3B%0A%20%20%20%20const%20panel%20%3D%20document.createElement%28%27div%27%29%3B%0A%20%20%20%20panel.id%20%3D%20%27tb_scraper_panel%27%3B%0A%20%20%20%20panel.style.cssText%20%3D%20%5B%0A%20%20%20%20%20%20%27position%3Afixed%27%2C%27top%3A60px%27%2C%27right%3A14px%27%2C%27z-index%3A2147483647%27%2C%0A%20%20%20%20%20%20%27background%3A%230b1220%27%2C%27color%3A%23e6ecf6%27%2C%27border%3A1px%20solid%20%232a3a55%27%2C%0A%20%20%20%20%20%20%27border-radius%3A12px%27%2C%27padding%3A14px%27%2C%27width%3Amin%28560px%2C%2090vw%29%27%2C%0A%20%20%20%20%20%20%27max-height%3A80vh%27%2C%27overflow%3Aauto%27%2C%27font%3A13px%20system-ui%2Csans-serif%27%2C%0A%20%20%20%20%20%20%27box-shadow%3A0%2012px%2040px%20rgba%280%2C0%2C0%2C.55%29%27%0A%20%20%20%20%5D.join%28%27%3B%27%29%3B%0A%20%20%20%20panel.innerHTML%20%3D%20%60%0A%20%20%20%20%20%20%3Cdiv%20style%3D%22display%3Aflex%3Bjustify-content%3Aspace-between%3Balign-items%3Acenter%3Bmargin-bottom%3A10px%3B%22%3E%0A%20%20%20%20%20%20%20%20%3Cdiv%20style%3D%22font-weight%3A700%3Bfont-size%3A14px%3B%22%3ECapturados%3A%20%24%7Bsnippets.length%7D%20snippets%3C%2Fdiv%3E%0A%20%20%20%20%20%20%20%20%3Cbutton%20id%3D%22tb_scraper_close%22%20style%3D%22background%3Atransparent%3Bcolor%3A%239ca3af%3Bborder%3A0%3Bfont-size%3A18px%3Bcursor%3Apointer%3B%22%3E%5Cu00d7%3C%2Fbutton%3E%0A%20%20%20%20%20%20%3C%2Fdiv%3E%0A%20%20%20%20%20%20%3Cdiv%20style%3D%22font-size%3A12px%3Bcolor%3A%239ca3af%3Bmargin-bottom%3A10px%3B%22%3E%0A%20%20%20%20%20%20%20%20JSON%20%3Cb%3Ecopiado%20automaticamente%3C%2Fb%3E%20pro%20clipboard.%20Cole%20no%20plugin%20Jira%3A%20%3Cb%3EConfiguracoes%20%5Cu2192%20Snippets%20%5Cu2192%20Importar%20do%20Text%20Blaze%3C%2Fb%3E.%0A%20%20%20%20%20%20%3C%2Fdiv%3E%0A%20%20%20%20%20%20%3Cdiv%20style%3D%22display%3Aflex%3Bgap%3A8px%3Bmargin-bottom%3A10px%3B%22%3E%0A%20%20%20%20%20%20%20%20%3Cbutton%20id%3D%22tb_scraper_copy%22%20style%3D%22background%3A%237c3aed%3Bcolor%3A%23fff%3Bborder%3A0%3Bborder-radius%3A6px%3Bpadding%3A8px%2012px%3Bfont-weight%3A600%3Bcursor%3Apointer%3B%22%3E%5CuD83D%5CuDCCB%20Copiar%20JSON%3C%2Fbutton%3E%0A%20%20%20%20%20%20%20%20%3Cbutton%20id%3D%22tb_scraper_download%22%20style%3D%22background%3A%230ea5e9%3Bcolor%3A%23fff%3Bborder%3A0%3Bborder-radius%3A6px%3Bpadding%3A8px%2012px%3Bfont-weight%3A600%3Bcursor%3Apointer%3B%22%3E%5Cu2B07%20Baixar%20.json%3C%2Fbutton%3E%0A%20%20%20%20%20%20%3C%2Fdiv%3E%0A%20%20%20%20%20%20%3Cdetails%20open%3E%0A%20%20%20%20%20%20%20%20%3Csummary%20style%3D%22cursor%3Apointer%3Bfont-size%3A12px%3Bcolor%3A%239ca3af%3Bmargin-bottom%3A6px%3B%22%3EPreview%20da%20lista%3C%2Fsummary%3E%0A%20%20%20%20%20%20%20%20%3Ctable%20style%3D%22width%3A100%25%3Bfont-size%3A11px%3Bborder-collapse%3Acollapse%3Bmargin-top%3A6px%3B%22%3E%0A%20%20%20%20%20%20%20%20%20%20%3Cthead%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%3Ctr%20style%3D%22border-bottom%3A1px%20solid%20%232a3a55%3Btext-align%3Aleft%3Bcolor%3A%239ca3af%3B%22%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3Cth%20style%3D%22padding%3A4px%3B%22%3EShortcut%3C%2Fth%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3Cth%20style%3D%22padding%3A4px%3B%22%3ENome%3C%2Fth%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3Cth%20style%3D%22padding%3A4px%3B%22%3ETexto%20%28preview%29%3C%2Fth%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%3C%2Ftr%3E%0A%20%20%20%20%20%20%20%20%20%20%3C%2Fthead%3E%0A%20%20%20%20%20%20%20%20%20%20%3Ctbody%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%24%7Bsnippets.map%28s%20%3D%3E%20%60%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3Ctr%20style%3D%22border-bottom%3A1px%20solid%20%231f2937%3B%22%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3Ctd%20style%3D%22padding%3A4px%3Bfont-family%3Amonospace%3Bcolor%3A%23a78bfa%3B%22%3E%24%7BescapeHtml%28s.command%20%7C%7C%20%27-%27%29%7D%3C%2Ftd%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3Ctd%20style%3D%22padding%3A4px%3B%22%3E%24%7BescapeHtml%28s.name%20%7C%7C%20%27-%27%29%7D%3C%2Ftd%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3Ctd%20style%3D%22padding%3A4px%3Bcolor%3A%23cbd5e1%3B%22%3E%24%7BescapeHtml%28%28s.text%20%7C%7C%20%27%27%29.slice%280%2C%2060%29%29%7D%24%7Bs.text%20%26%26%20s.text.length%20%3E%2060%20%3F%20%27...%27%20%3A%20%27%27%7D%3C%2Ftd%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%3C%2Ftr%3E%0A%20%20%20%20%20%20%20%20%20%20%20%20%60%29.join%28%27%27%29%7D%0A%20%20%20%20%20%20%20%20%20%20%3C%2Ftbody%3E%0A%20%20%20%20%20%20%20%20%3C%2Ftable%3E%0A%20%20%20%20%20%20%3C%2Fdetails%3E%0A%20%20%20%20%20%20%3Cdetails%20style%3D%22margin-top%3A10px%3B%22%3E%0A%20%20%20%20%20%20%20%20%3Csummary%20style%3D%22cursor%3Apointer%3Bfont-size%3A12px%3Bcolor%3A%239ca3af%3B%22%3EVer%20JSON%20completo%3C%2Fsummary%3E%0A%20%20%20%20%20%20%20%20%3Ctextarea%20readonly%20style%3D%22width%3A100%25%3Bheight%3A200px%3Bmargin-top%3A6px%3Bbackground%3A%230a0e17%3Bcolor%3A%23e6ecf6%3Bborder%3A1px%20solid%20%231f2937%3Bborder-radius%3A6px%3Bpadding%3A8px%3Bfont-family%3Amonospace%3Bfont-size%3A11px%3B%22%3E%24%7BescapeHtml%28json%29%7D%3C%2Ftextarea%3E%0A%20%20%20%20%20%20%3C%2Fdetails%3E%0A%20%20%20%20%60%3B%0A%20%20%20%20document.body.appendChild%28panel%29%3B%0A%20%20%20%20panel.querySelector%28%27%23tb_scraper_close%27%29.onclick%20%3D%20%28%29%20%3D%3E%20panel.remove%28%29%3B%0A%20%20%20%20panel.querySelector%28%27%23tb_scraper_copy%27%29.onclick%20%3D%20%28%29%20%3D%3E%20copyToClipboard%28json%29%3B%0A%20%20%20%20panel.querySelector%28%27%23tb_scraper_download%27%29.onclick%20%3D%20%28%29%20%3D%3E%20downloadJson%28json%29%3B%0A%20%20%20%20copyToClipboard%28json%29%3B%0A%20%20%7D%0A%0A%20%20function%20showProgressToast%28text%29%7B%0A%20%20%20%20let%20t%20%3D%20document.getElementById%28%27tb_scraper_toast%27%29%3B%0A%20%20%20%20if%28%21t%29%7B%0A%20%20%20%20%20%20t%20%3D%20document.createElement%28%27div%27%29%3B%0A%20%20%20%20%20%20t.id%20%3D%20%27tb_scraper_toast%27%3B%0A%20%20%20%20%20%20t.style.cssText%20%3D%20%5B%0A%20%20%20%20%20%20%20%20%27position%3Afixed%27%2C%27top%3A14px%27%2C%27right%3A14px%27%2C%27z-index%3A2147483646%27%2C%0A%20%20%20%20%20%20%20%20%27background%3A%237c3aed%27%2C%27color%3A%23fff%27%2C%27border-radius%3A8px%27%2C%0A%20%20%20%20%20%20%20%20%27padding%3A10px%2016px%27%2C%27font%3A600%2013px%20system-ui%27%2C%0A%20%20%20%20%20%20%20%20%27box-shadow%3A0%206px%2016px%20rgba%28124%2C58%2C237%2C.4%29%27%0A%20%20%20%20%20%20%5D.join%28%27%3B%27%29%3B%0A%20%20%20%20%20%20document.body.appendChild%28t%29%3B%0A%20%20%20%20%7D%0A%20%20%20%20t.textContent%20%3D%20text%3B%0A%20%20%7D%0A%20%20function%20clearProgressToast%28%29%7B%20document.getElementById%28%27tb_scraper_toast%27%29%3F.remove%28%29%3B%20%7D%0A%0A%20%20async%20function%20startScrape%28%29%7B%0A%20%20%20%20try%7B%0A%20%20%20%20%20%20const%20rows%20%3D%20findSnippetRows%28%29%3B%0A%20%20%20%20%20%20if%28rows.length%20%3D%3D%3D%200%29%7B%0A%20%20%20%20%20%20%20%20alert%28%27Nao%20encontrei%20nenhum%20snippet%20na%20pagina.%5Cn%5CnDicas%3A%5Cn-%20Confira%20se%20voce%20esta%20no%20dashboard%20do%20Text%20Blaze%20%28dashboard.blaze.today%29%5Cn-%20Abra%20uma%20pasta%20de%20snippets%20%28clique%20na%20sidebar%29%5Cn-%20Abra%20o%20Console%20%28F12%29%20e%20veja%20os%20logs%20%5Btb-scraper%5D%27%29%3B%0A%20%20%20%20%20%20%20%20return%3B%0A%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20LOG%28%60processando%20%24%7Brows.length%7D%20linhas...%60%29%3B%0A%20%20%20%20%20%20const%20snippets%20%3D%20%5B%5D%3B%0A%20%20%20%20%20%20for%28let%20i%20%3D%200%3B%20i%20%3C%20rows.length%3B%20i%2B%2B%29%7B%0A%20%20%20%20%20%20%20%20const%20row%20%3D%20rows%5Bi%5D%3B%0A%20%20%20%20%20%20%20%20showProgressToast%28%60%5Cu23F3%20Capturando%20%24%7Bi%2B1%7D%2F%24%7Brows.length%7D...%60%29%3B%0A%20%20%20%20%20%20%20%20const%20command%20%3D%20extractShortcut%28row%29%3B%0A%20%20%20%20%20%20%20%20const%20name%20%3D%20extractName%28row%29%3B%0A%20%20%20%20%20%20%20%20const%20text%20%3D%20await%20openAndReadSnippet%28row%29%3B%0A%20%20%20%20%20%20%20%20if%28command%20%7C%7C%20name%29%7B%0A%20%20%20%20%20%20%20%20%20%20snippets.push%28%7B%20command%2C%20name%2C%20text%3A%20text%20%7C%7C%20%27%27%20%7D%29%3B%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20await%20delay%28150%29%3B%0A%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20clearProgressToast%28%29%3B%0A%20%20%20%20%20%20LOG%28%27total%20capturado%3A%27%2C%20snippets.length%2C%20snippets%29%3B%0A%20%20%20%20%20%20showResultPanel%28snippets%29%3B%0A%20%20%20%20%7Dcatch%28e%29%7B%0A%20%20%20%20%20%20clearProgressToast%28%29%3B%0A%20%20%20%20%20%20LOG%28%27ERRO%3A%27%2C%20e%29%3B%0A%20%20%20%20%20%20alert%28%27Erro%20durante%20captura%3A%20%27%20%2B%20%28e.message%20%7C%7C%20e%29%20%2B%20%27%5CnVer%20console%20%28F12%29%20pra%20detalhes.%27%29%3B%0A%20%20%20%20%7D%0A%20%20%7D%0A%0A%20%20%2F%2F%20Expoe%20pra%20que%20cliques%20subsequentes%20no%20bookmarklet%20apenas%20re-executem%0A%20%20window.__tbScraperStart%20%3D%20startScrape%3B%0A%0A%20%20%2F%2F%20Auto-executa%20na%20primeira%20vez%0A%20%20startScrape%28%29%3B%0A%7D%29%28%29%3B%0A';
-      const BOOKMARKLET_HREF = `javascript:(function(){try{(0,eval)(decodeURIComponent('${TB_SCRAPER_ENCODED}'));}catch(e){alert('Erro: '+e.message+'\\n\\nVoce esta no dashboard.blaze.today?');}})();void 0;`;
-
-      // URL do userscript do scraper no GitHub (Tampermonkey detecta e oferece instalar)
-      const USERSCRIPT_URL = 'https://raw.githubusercontent.com/gunsouza/jira-localidade/main/tools/textblaze-scraper.user.js';
-
-      // Conteudo por tab
-      const TAB_CONTENT = {
-        scraper: {
-          hint: `
-            <!-- OPCAO A: Userscript Tampermonkey (RECOMENDADO pra blaze.today) -->
-            <div style="background:linear-gradient(135deg,#0f3a2a,#093520);border:1px solid #10b981;border-radius:10px;padding:14px 16px;margin:-4px 0 14px;">
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-                <span style="background:#10b981;color:#053026;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:800;letter-spacing:.5px;">RECOMENDADO</span>
-                <span style="font-size:13px;color:#fff;font-weight:700;">Opc\u00e3o A \u2014 Instalar no Tampermonkey</span>
-              </div>
-              <div style="font-size:12.5px;color:#a7f3d0;line-height:1.55;margin-bottom:10px;">
-                O <b>dashboard.blaze.today</b> tem CSP restrita que <b>bloqueia bookmarklets</b> no Chrome moderno.
-                Use o userscript: como voc\u00ea j\u00e1 tem Tampermonkey instalado, basta 1 clique.
-              </div>
-              <a href="${USERSCRIPT_URL}" target="_blank"
-                 style="display:inline-block;background:#10b981;color:#053026;text-decoration:none;
-                        padding:9px 16px;border-radius:6px;font-weight:800;font-size:13px;">
-                \u{1F4E5} Instalar no Tampermonkey
-              </a>
-              <div style="font-size:11px;color:${C.dim};margin-top:8px;">
-                \u279C Abre o arquivo no Tampermonkey, clique <b>"Instalar"</b>. Depois v\u00e1 ao dashboard.blaze.today e clique no bot\u00e3o roxo "Capturar snippets" que aparecer\u00e1 no canto superior direito.
-              </div>
-            </div>
-
-            <!-- OPCAO B: Bookmarklet (alternativa pra outros sites/casos) -->
-            <details style="margin-bottom:14px;">
-              <summary style="cursor:pointer;font-size:12px;color:${C.dim};font-weight:600;padding:6px 0;">
-                \u{1F4DA} Op\u00e7\u00e3o B \u2014 Bookmarklet (arrastar pros favoritos)
-              </summary>
-              <div style="margin-top:10px;padding:14px 16px;background:linear-gradient(135deg,#3b1e6e,#1e1340);border:1px solid #7c3aed;border-radius:10px;">
-                <div style="font-size:11.5px;color:#c4b5fd;line-height:1.5;margin-bottom:10px;">
-                  <b>Aviso:</b> bookmarklets <b>n\u00e3o funcionam</b> em <code>blaze.today</code> por causa do CSP do site.
-                  Use s\u00f3 se voc\u00ea quiser testar o scraper em outro site (ou tiver navegador antigo onde bookmarklets bypassam CSP).
-                </div>
-                <div style="font-size:13px;color:#fff;margin-bottom:8px;">
-                  <b>Arraste</b> este bot\u00e3o pra barra de favoritos:
-                </div>
-                <a id="ml_tb_bookmarklet" href="${BOOKMARKLET_HREF.replace(/"/g, '&quot;')}" draggable="true"
-                   style="display:inline-block;background:#fff;color:#5b21b6;text-decoration:none;
-                          padding:8px 14px;border-radius:6px;font-weight:800;font-size:13px;cursor:grab;
-                          box-shadow:0 6px 16px rgba(0,0,0,.4);user-select:none;border:2px dashed #c4b5fd;">
-                  \uD83D\uDCCB Capturar TB
-                </a>
-              </div>
-            </details>
-
-            <div style="font-size:12.5px;line-height:1.7;">
-              <b>Depois de capturar (qualquer op\u00e7\u00e3o):</b><br/>
-              \u279C O JSON \u00e9 <b>copiado automaticamente</b> pro clipboard.<br/>
-              \u279C Volta aqui e cole no campo abaixo (Cmd/Ctrl+V) \u2192 Validar \u2192 Importar.
-            </div>`,
-          placeholder: `Cole aqui o JSON gerado pelo scraper. Exemplo:\n\n[\n  { "command": "/ola", "name": "Saudacao", "text": "Ola, tudo bem?" },\n  { "command": "/obg", "name": "Agradecimento", "text": "Obrigado pelo retorno!" }\n]`
-        },
-        manual: {
-          hint: `<div style="background:${C.bg2};border-left:3px solid ${C.blue};border-radius:6px;padding:10px 12px;line-height:1.6;">
-                   <b>Formato:</b> uma linha por snippet, separador <code>|</code> ou <kbd>Tab</kbd>.<br/>
-                   Layout aceito:<br/>
-                   \u2022 <code>/comando | nome | texto</code> (completo)<br/>
-                   \u2022 <code>/comando | texto</code> (sem nome \u2014 vira o pr\u00f3prio comando)<br/>
-                   \u2022 <code>texto</code> (s\u00f3 o texto, sem cmd)
-                 </div>`,
-          placeholder: `Cole uma linha por snippet. Exemplo:\n\n/ola | Saudacao | Ola, tudo bem?\n/obg | Agradecimento | Obrigado pelo retorno!\n/aguarda | Aguardando cliente | Aguardando retorno do cliente para prosseguir.`
-        }
-      };
-
-      const setTab = (mode) => {
-        modal.querySelectorAll('.ml_tb_tab').forEach(t => {
-          const active = t.dataset.mode === mode;
-          t.style.color = active ? C.text : C.dim;
-          t.style.borderBottomColor = active ? C.blue : 'transparent';
-          t.classList.toggle('active', active);
-        });
-        const tc = TAB_CONTENT[mode];
-        hintBox.innerHTML = tc.hint;
-        input.placeholder = tc.placeholder;
-        // Quando ativa a tab scraper, intercepta click no link do bookmarklet
-        // (so faz sentido se ele for ARRASTADO; clicar aqui no Jira nao tem efeito util)
-        if(mode === 'scraper'){
-          const link = hintBox.querySelector('#ml_tb_bookmarklet');
-          if(link){
-            link.addEventListener('click', (e) => {
-              e.preventDefault();
-              alert('\u2139\uFE0F Este bot\u00e3o serve pra ser ARRASTADO pra barra de favoritos.\n\nSe voc\u00ea clic\u00e1-lo aqui no Jira, ele tenta capturar snippets do Text Blaze - que n\u00e3o existe nesta p\u00e1gina.\n\nArraste pros favoritos primeiro. Depois abra dashboard.blaze.today e clique nele de l\u00e1.');
-            });
-          }
-        }
-      };
-      modal.querySelectorAll('.ml_tb_tab').forEach(t => {
-        t.addEventListener('click', () => setTab(t.dataset.mode));
-      });
-      setTab('scraper');
-
-      let parsed = [];
-      const showErr = (msg) => { errBox.textContent = msg; errBox.style.display = 'block'; };
-      const hideErr = () => { errBox.style.display = 'none'; };
-      const setImportEnabled = (on) => {
-        importBtn.disabled = !on;
-        importBtn.style.opacity = on ? '1' : '.5';
-        importBtn.style.cursor = on ? 'pointer' : 'not-allowed';
-      };
-
-      const validate = () => {
-        hideErr();
-        const raw = (input.value || '').trim();
-        if(!raw){
-          showErr('Cole algum conteudo no campo acima primeiro.');
-          previewBox.style.display='none'; setImportEnabled(false); return;
-        }
-        parsed = parseTextBlazeInput(raw);
-        if(!parsed.length){
-          showErr('Nao consegui interpretar nada. Confira o formato (veja a dica acima).');
-          previewBox.style.display = 'none'; setImportEnabled(false); return;
-        }
-        previewCount.textContent = parsed.length;
-        previewList.innerHTML = parsed.map((s, i) => `
-          <div style="padding:8px 10px;${i > 0 ? `border-top:1px solid ${C.border};` : ''}">
-            <div style="display:flex;gap:8px;align-items:baseline;margin-bottom:3px;">
-              <code style="color:${C.blue};font-family:${C.mono};font-size:12px;">${esc(s.command || '(sem cmd)')}</code>
-              <b style="font-size:12px;">${esc(s.name || '(sem nome)')}</b>
-            </div>
-            <div style="color:${C.dim};font-size:11px;white-space:pre-wrap;word-break:break-word;">${esc((s.text || '').slice(0, 180))}${s.text && s.text.length > 180 ? '...' : ''}</div>
-          </div>
-        `).join('');
-        previewBox.style.display = 'block';
-        setImportEnabled(true);
-      };
-
-      modal.querySelector('#ml_tb_validate').onclick = validate;
-      input.addEventListener('input', () => { hideErr(); setImportEnabled(false); previewBox.style.display='none'; });
-
-      importBtn.onclick = () => {
-        if(!parsed.length) return;
-        try{ onConfirm(parsed); }catch(e){ showErr('Erro ao adicionar: ' + (e.message || e)); return; }
-        close();
-      };
-
-      setTimeout(() => input.focus(), 50);
-    }
-
-    // Parser flexivel: tenta JSON primeiro, depois TSV/pipe.
-    function parseTextBlazeInput(raw){
-      // Tentativa 1: JSON puro (array ou {snippets: [...]})
-      try{
-        const j = JSON.parse(raw);
-        const arr = Array.isArray(j) ? j : (Array.isArray(j?.snippets) ? j.snippets : null);
-        if(arr){
-          return arr.map(normalizeSnippet).filter(s => s.command || s.name || s.text);
-        }
-      }catch(_){ /* nao eh json, segue */ }
-
-      // Tentativa 2: linhas com separador pipe ou tab
-      const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-      const out = [];
-      for(const line of lines){
-        // Separadores aceitos (em ordem de prioridade): tab, pipe duplo, pipe simples
-        let parts;
-        if(line.includes('\t')) parts = line.split('\t');
-        else if(line.includes('||')) parts = line.split('||');
-        else if(line.includes('|')) parts = line.split('|');
-        else parts = [line]; // 1 campo so = vira o texto
-
-        parts = parts.map(p => p.trim());
-
-        // Layouts aceitos:
-        // 3 campos: cmd | nome | texto    (ordem padrao)
-        // 2 campos: cmd | texto           (sem nome -> usa cmd como nome)
-        // 1 campo:  texto                 (sem cmd nem nome)
-        let command = '', name = '', text = '';
-        if(parts.length >= 3){
-          command = parts[0]; name = parts[1]; text = parts.slice(2).join(' | ');
-        }else if(parts.length === 2){
-          command = parts[0]; text = parts[1];
-        }else{
-          text = parts[0];
-        }
-
-        // Se o primeiro campo nao comeca com / e parece texto longo, tenta swap: pode ser "nome | texto"
-        if(parts.length === 2 && !/^\//.test(command) && command.length > 30){
-          text = parts.join(' '); command = '';
-        }
-        // Auto-prefixa / no command
-        if(command && !command.startsWith('/')) command = '/' + command;
-        if(command) command = command.replace(/\s+/g, '');
-
-        const norm = normalizeSnippet({ command, name, text });
-        if(norm.command || norm.text) out.push(norm);
-      }
-      return out;
-    }
-
-    function normalizeSnippet(s){
-      s = s || {};
-      let command = String(s.command || s.shortcut || s.cmd || '').trim();
-      let name    = String(s.name || s.label || s.title || '').trim();
-      let text    = String(s.text || s.content || s.body || s.snippet || '').trim();
-
-      if(command && !command.startsWith('/')) command = '/' + command;
-      command = command.replace(/\s+/g, '');
-
-      // Fallback de nome: usa o command sem /
-      if(!name && command) name = command.replace(/^\//, '');
-      // Fallback final: primeira palavra do texto
-      if(!name && text) name = text.split(/\s+/).slice(0, 3).join(' ').slice(0, 40);
-
-      return { command, name, text };
-    }
     // =========================
     // BACKUP REMINDER
     //
@@ -11586,6 +11324,45 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       runApp();
     }
 
+    // ---- Acoes disponiveis por atalho configuravel ----
+    // Configuraveis em Configuracoes -> Atalhos -> "Outras acoes por atalho" (em branco por
+    // padrao). Cada entrada: id (chave salva em ACTION_SHORTCUTS), label (texto na UI) e run
+    // (funcao chamada quando o atalho configurado for pressionado).
+    function _actionOpenAudit(){
+      const key = getIssueKey();
+      if(!key){ showToast('Abra um ticket primeiro.', 'warn'); return; }
+      const go = () => { const modal = document.getElementById(IDS.modal); if(modal) runAudit(modal, key); };
+      if(isModalMinimized()){ restoreMinimizedModal(); setTimeout(go, 50); }
+      else if(isModalOpen()){ go(); }
+      else { runApp().then(go); }
+    }
+    function _actionOpenDerive(){
+      const key = getIssueKey();
+      if(!key){ showToast('Abra um ticket primeiro.', 'warn'); return; }
+      openDeriveFlow(key);
+    }
+    function _actionOpenQueueManager(){
+      if(!isQueueOrIssuesPage()){ showToast('So funciona numa tela de fila/busca.', 'warn'); return; }
+      openBatchModal();
+    }
+    function _actionOpenProfile(){
+      if(!isDashboardsPage()){ showToast('So funciona em Dashboards.', 'warn'); return; }
+      runAppOrRestore();
+    }
+    function _actionToggleMinimize(){
+      if(isModalMinimized()) restoreMinimizedModal();
+      else if(isModalOpen()) minimizeModal();
+    }
+    const ACTION_REGISTRY = [
+      { id: 'openAudit',        label: 'Abrir auditoria do ticket atual',        run: _actionOpenAudit },
+      { id: 'openDerive',       label: 'Abrir Derivar (ticket atual)',           run: _actionOpenDerive },
+      { id: 'openQueueManager', label: 'Abrir Gerenciador de fila',              run: _actionOpenQueueManager },
+      { id: 'openProfile',      label: 'Abrir Meu Perfil (Painel do analista)',  run: _actionOpenProfile },
+      { id: 'toggleMinimize',   label: 'Minimizar / restaurar o modal principal', run: _actionToggleMinimize }
+    ];
+    const ACTION_SHORTCUTS = { ...DEFAULTS.ACTION_SHORTCUTS,
+      ...(SETTINGS.ACTION_SHORTCUTS && typeof SETTINGS.ACTION_SHORTCUTS === 'object' ? SETTINGS.ACTION_SHORTCUTS : {}) };
+
     function ensureButton(){
       ensureStyle();
       if(document.getElementById(IDS.btn)) return;
@@ -11899,6 +11676,20 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         ev.stopPropagation();
         openQuickCommentPopover();
         return;
+      }
+
+      // Outras acoes por atalho (Configuracoes -> Atalhos -> "Outras acoes por atalho").
+      // Em branco por padrao — so dispara se o usuario configurou um atalho pra essa acao.
+      for(const action of ACTION_REGISTRY){
+        const spec = ACTION_SHORTCUTS[action.id];
+        if(!spec) continue;
+        const parsed = parseShortcut(spec);
+        if(parsed && matchesShortcut(ev, parsed)){
+          ev.preventDefault();
+          ev.stopPropagation();
+          action.run();
+          return;
+        }
       }
     }, true);
 
@@ -13138,7 +12929,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
       modal.querySelector('#ml_batch_audit_run')?.addEventListener('click', async () => {
         if(!SETTINGS.AUDIT_WEBHOOK_URL){
-          showToast('Configure o Webhook de auditoria em Configuracoes → Avancado → Integracoes', 'warn');
+          showToast('Configure o Webhook de auditoria em Configuracoes → Auditoria', 'warn');
           return;
         }
         const targetKeys = [...selected];
