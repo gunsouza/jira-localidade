@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.71.0
+// @version      1.72.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -552,6 +552,15 @@
       // Usado no Painel do analista (Dashboards). Ajuste aqui se a JQL oficial mudar.
       AUDIT_PENDING_JQL: 'project = ISSM AND "request type" = "Audit (ISSM)" AND status = "Analyst approval" AND "Analyst[User Picker (single user)]" = currentUser()',
 
+      // ---- SLA (Painel do analista — Meu risco de SLA / tickets sem risco agora) ----
+      // ID do customfield de SLA (ex: "Time to resolution"), referenciado em JQL via cf[ID]
+      // (funciona igual pra campos de SLA, sem depender do nome exato do campo).
+      // 0 = nao configurado (esconde os 2 cards de SLA no Painel do analista).
+      // Preenchido via "Descobrir campos" em Configuracoes → Integrações.
+      SLA_FIELD_ID: 0,
+      // Quantas horas ou menos de tempo restante contam como "em risco" de estourar o SLA.
+      SLA_RISK_HOURS: 4,
+
       // ---- Campos customizados de auditoria (IDs por instancia Jira) ----
       // Preenchidos via "Descobrir campos" em Configuracoes → Integrações.
       // 0 = nao configurado (campo ignorado na auditoria).
@@ -613,6 +622,8 @@
 
     const GRID_CENTRAL_URL = SETTINGS.GRID_CENTRAL_URL || DEFAULTS.GRID_CENTRAL_URL;
     const AUDIT_PENDING_JQL = SETTINGS.AUDIT_PENDING_JQL || DEFAULTS.AUDIT_PENDING_JQL;
+    const SLA_FIELD_ID = Number(SETTINGS.SLA_FIELD_ID ?? DEFAULTS.SLA_FIELD_ID) || 0;
+    const SLA_RISK_HOURS = Number(SETTINGS.SLA_RISK_HOURS ?? DEFAULTS.SLA_RISK_HOURS) || 4;
 
     const DESC_PREVIEW_LEN = SETTINGS.DESC_PREVIEW_LEN;
     const DUP_LABEL_MAX_TOKENS = SETTINGS.DUP_LABEL_MAX_TOKENS;
@@ -1790,6 +1801,29 @@
     async function getPendingAuditCount(){
       if(!AUDIT_PENDING_JQL) return null;
       return await countByJql(AUDIT_PENDING_JQL);
+    }
+
+    // ---- SLA (Painel do analista) ----
+    // Referencia o campo de SLA via cf[ID] (mesma sintaxe funciona pra campos de SLA em JQL,
+    // sem depender do nome exato/traducao do campo). remaining()/breached() sao funcoes nativas
+    // de SLA do Jira Service Management; remaining() so aceita operadores <, <=, >, >= (nao aceita
+    // =/!=). Negativo = ja estourou ha esse tanto de tempo.
+    function _slaScope(){
+      return PROJECTS.length ? `project in (${PROJECTS.map(p=>`"${p}"`).join(',')}) AND ` : '';
+    }
+
+    // Tickets comigo com SLA ainda dentro do prazo, mas a X horas (ou menos) de estourar.
+    async function getSlaRiskCount(){
+      if(!SLA_FIELD_ID) return null;
+      const jql = `${_slaScope()}assignee = currentUser() AND cf[${SLA_FIELD_ID}] <= remaining("${SLA_RISK_HOURS}h") AND cf[${SLA_FIELD_ID}] > remaining("0h")`;
+      return await countByJql(jql);
+    }
+
+    // Tickets comigo com SLA tranquilo agora (mais que X horas de folga antes de estourar).
+    async function getSlaSafeCount(){
+      if(!SLA_FIELD_ID) return null;
+      const jql = `${_slaScope()}assignee = currentUser() AND cf[${SLA_FIELD_ID}] > remaining("${SLA_RISK_HOURS}h")`;
+      return await countByJql(jql);
     }
 
     async function searchIssuesWithCache(objectId, jql){
@@ -8469,6 +8503,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         { key: 'CF_USER_VALIDATION', label: 'Validação do usuário' },
         { key: 'CF_SOLUTION_TYPE',   label: 'Solução aplicada' },
         { key: 'CF_USAGE_MARK',      label: 'Categorias (marcação de uso — texto livre)' },
+        { key: 'SLA_FIELD_ID',       label: 'Campo de SLA (ex: "Time to resolution") — Painel do analista' },
       ];
 
       const overlay = document.createElement('div');
@@ -8540,6 +8575,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             CF_USER_VALIDATION: 'ml_s_cf_user_validation',
             CF_SOLUTION_TYPE:   'ml_s_cf_solution_type',
             CF_USAGE_MARK:      'ml_s_cf_usage_mark',
+            SLA_FIELD_ID:       'ml_s_sla_field_id',
           }[role];
           if(inputId && settingsModal){
             const inp = settingsModal.querySelector('#' + inputId);
@@ -9078,6 +9114,16 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <label>JQL &mdash; Pend&ecirc;ncias da auditoria oficial (Painel do analista)</label>
                   <textarea id="ml_s_audit_pending_jql" style="min-height:55px;font-family:var(--ml-mono);font-size:12px;">${esc(cur.AUDIT_PENDING_JQL || def.AUDIT_PENDING_JQL || '')}</textarea>
                   <div class="hint">JQL que identifica tickets do processo oficial de auditoria (projeto ISSM) pendentes de corre&ccedil;&atilde;o pra este analista. Aparece como card no Painel do analista (Dashboards). Deixe vazio para esconder o card.</div>
+                </div>
+                <div>
+                  <label>Campo de SLA (ID do customfield)</label>
+                  <input type="number" id="ml_s_sla_field_id" min="0" value="${Number(cur.SLA_FIELD_ID ?? def.SLA_FIELD_ID) || 0}" />
+                  <div class="hint">ID do campo de SLA (ex: "Time to resolution"). Use "Descobrir campos" pra achar o ID. <b>0</b> = esconde os cards de SLA no Painel do analista.</div>
+                </div>
+                <div>
+                  <label>Risco de SLA &mdash; horas restantes</label>
+                  <input type="number" id="ml_s_sla_risk_hours" min="1" value="${Number(cur.SLA_RISK_HOURS ?? def.SLA_RISK_HOURS) || 4}" />
+                  <div class="hint">Tickets com esse tanto de horas (ou menos) restantes antes de estourar o SLA entram no card "Risco de SLA".</div>
                 </div>
                 <div class="full">
                   <label>Atalho &mdash; Assumir ticket + In Progress</label>
@@ -9723,6 +9769,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             AUDIT_WEBHOOK_URL: String(modal.querySelector('#ml_s_audit_webhook')?.value || '').trim(),
             GRID_CENTRAL_URL: String(modal.querySelector('#ml_s_grid_url')?.value || '').trim(),
             AUDIT_PENDING_JQL: String(modal.querySelector('#ml_s_audit_pending_jql')?.value || '').replace(/\r\n/g,'\n').trim(),
+            SLA_FIELD_ID:      Math.max(0, Number(modal.querySelector('#ml_s_sla_field_id')?.value) || 0),
+            SLA_RISK_HOURS:    Math.max(1, Number(modal.querySelector('#ml_s_sla_risk_hours')?.value) || 4),
 
             // Campos de auditoria
             CF_CATEGORY:        Math.max(0, Number(modal.querySelector('#ml_s_cf_category')?.value)  || 0),
@@ -10929,6 +10977,26 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             <div class="muted">${esc(c.label)}</div>
           </div>
         `).join('');
+
+        // Cards de SLA — busca separada (so roda se SLA_FIELD_ID estiver configurado),
+        // acrescentados ao mesmo grid sem sobrescrever os 4 cards ja renderizados acima.
+        if(SLA_FIELD_ID){
+          Promise.all([getSlaRiskCount(), getSlaSafeCount()]).then(([risk, safe]) => {
+            const el = document.getElementById('ml_dash_stats');
+            if(!el) return;
+            const slaCards = [
+              { label: `Risco de SLA (&le;${SLA_RISK_HOURS}h)`, icon: '&#9888;&#65039;', value: risk },
+              { label: 'Sem risco de SLA agora', icon: '&#128737;&#65039;', value: safe },
+            ];
+            el.insertAdjacentHTML('beforeend', slaCards.map(c => `
+              <div class="homeCard" style="text-align:center;">
+                <div class="hcIcon">${c.icon}</div>
+                <div style="font-size:26px;font-weight:800;margin:4px 0;">${fmt(c.value)}</div>
+                <div class="muted">${esc(c.label)}</div>
+              </div>
+            `).join(''));
+          }).catch(e => console.warn('[IS Toolkit][stats] falha ao carregar SLA:', e));
+        }
       }).catch(e => {
         const statsEl = document.getElementById('ml_dash_stats');
         if(statsEl) statsEl.innerHTML = `<div class="homeCard"><div class="err">Falha ao carregar métricas: ${esc(e.message || String(e))}</div></div>`;
