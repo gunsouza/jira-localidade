@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.77.0
+// @version      1.78.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -1607,9 +1607,61 @@
     // =========================
     // BASE MODAL
     // =========================
+    // Minimizar: em vez de fechar (que destroi o DOM e obriga recarregar tudo de novo — util
+    // pra quem so quer dar uma espiada rapida no ticket por tras do modal e voltar exatamente
+    // pro que estava fazendo), esconde modal+overlay (display:none) sem remover nada do DOM, e
+    // mostra uma pilulazinha flutuante pra restaurar. Estado (dados ja buscados, scroll, etc.)
+    // fica intacto — restaurar e instantaneo, sem re-fetch.
+    const MINI_PILL_ID = 'ml_loc_minipill';
+
+    function _removeMinimizedPill(){
+      document.getElementById(MINI_PILL_ID)?.remove();
+    }
+
+    function isModalMinimized(){
+      const modal = document.getElementById(IDS.modal);
+      return !!modal && modal.style.display === 'none';
+    }
+
+    function restoreMinimizedModal(){
+      const modal = document.getElementById(IDS.modal);
+      const overlay = document.getElementById(IDS.overlay);
+      if(!modal) return false;
+      modal.style.display = '';
+      if(overlay) overlay.style.display = '';
+      _removeMinimizedPill();
+      return true;
+    }
+
+    function minimizeModal(){
+      const modal = document.getElementById(IDS.modal);
+      const overlay = document.getElementById(IDS.overlay);
+      if(!modal) return;
+      const title = modal.querySelector('.title')?.textContent?.trim() || 'IS Toolkit';
+      modal.style.display = 'none';
+      if(overlay) overlay.style.display = 'none';
+      _removeMinimizedPill();
+      const pill = document.createElement('button');
+      pill.id = MINI_PILL_ID;
+      pill.textContent = `↩ ${title}`;
+      pill.title = 'Restaurar (estado preservado, sem recarregar)';
+      Object.assign(pill.style, {
+        position: 'fixed', left: '20px', bottom: '70px', zIndex: '9999997',
+        background: 'linear-gradient(135deg,var(--ml-blue),var(--ml-blue-3))', color: '#fff',
+        border: '0', borderRadius: '999px', padding: '11px 18px',
+        fontWeight: '700', cursor: 'pointer', maxWidth: '260px',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        boxShadow: 'var(--ml-shadow-blue), 0 4px 12px rgba(0,0,0,.40)',
+        fontFamily: 'var(--ml-font, system-ui)', fontSize: '13px', letterSpacing: '.2px'
+      });
+      pill.addEventListener('click', restoreMinimizedModal);
+      document.body.appendChild(pill);
+    }
+
     function openModal(title, subtitle) {
       document.getElementById(IDS.modal)?.remove();
       document.getElementById(IDS.overlay)?.remove();
+      _removeMinimizedPill();
 
       ensureStyle();
 
@@ -1626,16 +1678,18 @@
           </div>
           <div class="headerActions">
             <button id="ml_loc_settings" class="gear" title="Configuracoes">&#9881;</button>
+            <button id="ml_loc_minimize" class="gear" title="Minimizar (preserva o estado, restaura na hora)">&#8211;</button>
             <button id="ml_loc_close">Fechar</button>
           </div>
         </div>
         <div class="b" id="ml_loc_body">Carregando…</div>
       `;
 
-      const close = () => { modal.remove(); overlay.remove(); };
+      const close = () => { _removeMinimizedPill(); modal.remove(); overlay.remove(); };
       overlay.addEventListener('click', close);
       modal.querySelector('#ml_loc_close').addEventListener('click', close);
       modal.querySelector('#ml_loc_settings').addEventListener('click', () => openSettingsModal());
+      modal.querySelector('#ml_loc_minimize').addEventListener('click', () => minimizeModal());
 
       document.body.appendChild(overlay);
       document.body.appendChild(modal);
@@ -1648,12 +1702,13 @@
     }
 
     function closeModal(){
+      _removeMinimizedPill();
       document.getElementById(IDS.modal)?.remove();
       document.getElementById(IDS.overlay)?.remove();
     }
 
     function isModalOpen(){
-      return !!document.getElementById(IDS.modal);
+      return !!document.getElementById(IDS.modal) && !isModalMinimized();
     }
     // =========================
     // JIRA CORE API (issues, search, comments, links)
@@ -11133,6 +11188,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         <div style="padding: 14px 0;">
           <div id="ml_home_health"></div>
 
+          <div id="ml_dash_hidden_notice"></div>
+
           <div style="font-weight:700;margin-bottom:10px;">Meu desempenho</div>
           <div id="ml_dash_stats" class="homeGrid">
             <div class="homeCard"><div class="muted">Carregando métricas...</div></div>
@@ -11161,6 +11218,29 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       `);
 
       try{ await renderHealthBanner(); }catch(e){ console.warn('[IS Toolkit][dashboards] health banner falhou:', e); }
+
+      // Aviso quando cards do Painel ficam escondidos por falta de configuracao — sem isso,
+      // um card que simplesmente nao aparece pode parecer bug (ja aconteceu com os botoes
+      // flutuantes, ver v1.74.0). So checa constantes, sem rede, entao roda na hora.
+      (() => {
+        const notice = document.getElementById('ml_dash_hidden_notice');
+        if(!notice) return;
+        const hidden = [];
+        if(!SLA_FIELD_ID) hidden.push('Risco de SLA');
+        if(!AUDIT_PENDING_JQL) hidden.push('Pendências de auditoria oficial');
+        if(!OLD_TICKET_DAYS) hidden.push('Tickets antigos');
+        const cfCategoryId = Number(SETTINGS.CF_CATEGORY || DEFAULTS.CF_CATEGORY || 0);
+        if(!CATEGORY_BREAKDOWN_ENABLED || !cfCategoryId) hidden.push('Resolvidos por categoria');
+        if(!RANKING_ENABLED || !RANKING_TEAM_GROUP || (!RANKING_SHOW_DAILY && !RANKING_SHOW_MONTHLY)) hidden.push('Ranking do time');
+        if(!hidden.length){ notice.innerHTML = ''; return; }
+        notice.innerHTML = `
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; background:var(--ml-bg-2); border:1px dashed var(--ml-border-2); border-radius:8px; padding:10px 14px; margin-bottom:14px; font-size:12.5px; color:var(--ml-text-mut);">
+            <div>&#8505;&#65039; ${hidden.length} card${hidden.length === 1 ? '' : 's'} escondido${hidden.length === 1 ? '' : 's'} por falta de configuração: ${hidden.map(esc).join(', ')}.</div>
+            <button id="ml_dash_hidden_gear" class="btnSecondary" style="white-space:nowrap;">&#9881; Configurações</button>
+          </div>
+        `;
+        document.getElementById('ml_dash_hidden_gear')?.addEventListener('click', () => openSettingsModal());
+      })();
 
       document.getElementById('ml_dash_batch')?.addEventListener('click', () => { modal.close(); openBatchModal(); });
 
@@ -11481,11 +11561,20 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
     }
 
     function toggleApp(){
-      if(isModalOpen()){
+      if(isModalMinimized()){
+        restoreMinimizedModal();
+      } else if(isModalOpen()){
         closeModal();
       } else {
         runApp();
       }
+    }
+
+    // Usado pelos botoes flutuantes (IS Toolkit / Meu Perfil): se ha um modal minimizado,
+    // restaura em vez de destruir o estado preservado e abrir um do zero.
+    function runAppOrRestore(){
+      if(isModalMinimized()){ restoreMinimizedModal(); return; }
+      runApp();
     }
 
     function ensureButton(){
@@ -11495,7 +11584,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       b.id = IDS.btn;
       b.textContent = 'IS Toolkit';
       b.title = `IS Toolkit — atalhos: ${SHORTCUTS.join(' ou ')}`;
-      b.addEventListener('click', runApp);
+      b.addEventListener('click', runAppOrRestore);
       document.body.appendChild(b);
     }
 
@@ -12118,7 +12207,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         boxShadow: '0 12px 28px rgba(167,139,250,.35), 0 4px 10px rgba(0,0,0,.30)',
         fontFamily: 'var(--ml-font, system-ui)', fontSize: '13px', letterSpacing: '.2px'
       });
-      b.addEventListener('click', runApp);
+      b.addEventListener('click', runAppOrRestore);
       document.body.appendChild(b);
     }
 
