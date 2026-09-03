@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.79.0
+// @version      1.80.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -9260,9 +9260,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               <div class="grid">
                 <div class="full">
                   <div class="hint" style="margin-bottom: 10px;">
-                    As regras sao mantidas <b>centralmente pelo admin</b> (Gustavo).
+                    As regras sao mantidas <b>centralmente pelo administrador do toolkit</b>.
                     Voce pode ajustar <b>apenas a URL</b> caso o link do Confluence mude.<br/>
-                    Pra <b>adicionar uma nova regra</b> ou alterar criterios, fale com o admin com o exemplo do ticket.
+                    Pra <b>adicionar uma nova regra</b> ou alterar criterios, fale com quem administra o toolkit no seu time, com o exemplo do ticket.
                   </div>
                   <div id="ml_s_conf_list"></div>
                   <details style="margin-top: 14px;">
