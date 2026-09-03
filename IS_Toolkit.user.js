@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.63.0
+// @version      1.64.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -1780,6 +1780,7 @@
               status: f.status?.name || '',
               statusColor: f.status?.statusCategory?.colorName || 'medium-gray',
               priority: f.priority?.name || '',
+              priorityId: f.priority?.id || '',
               priorityIcon: f.priority?.iconUrl || '',
               assignee: f.assignee?.displayName || '',
               issuetype: f.issuetype?.name || '',
@@ -7356,8 +7357,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
           ${GRID_CENTRAL_URL ? `
           <div style="margin-top:10px;display:flex;justify-content:center;">
-            <a href="${esc(GRID_CENTRAL_URL)}" target="_blank" rel="noopener" class="btnSecondary" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:7px 14px;">
-              &#128194; Abrir central do Grid
+            <a href="${esc(GRID_CENTRAL_URL)}" target="_blank" rel="noopener" class="primary" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:9px 18px;">
+              &#128194; Central Natis
             </a>
           </div>` : ''}
         </div>
@@ -8959,7 +8960,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 <div class="full">
                   <label>Central do Grid (dashboard de arquivos do time)</label>
                   <input type="url" id="ml_s_grid_url" value="${esc(cur.GRID_CENTRAL_URL || '')}" placeholder="https://grid.adminml.com/d/..." style="font-family:var(--ml-mono);font-size:12px;" />
-                  <div class="hint">Link do atalho &quot;Abrir central do Grid&quot; que aparece na Home. Deixe vazio para esconder o atalho.</div>
+                  <div class="hint">Link do bot&atilde;o &quot;Central Natis&quot; que aparece na Home. Deixe vazio para esconder o atalho.</div>
                 </div>
                 <div class="full">
                   <label>Atalho &mdash; Assumir ticket + In Progress</label>
@@ -11438,6 +11439,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               <li>Use o filtro pra achar e <b>marque</b> os chamados que quer processar (ou "Marcar todos").</li>
               <li>Escolha a acao (Derivar para time X / com ISS) e clique "Executar".</li>
               <li>Ou clique "Auditar selecionados" pra rodar a auditoria por IA nos marcados sem derivar nada (precisa do Webhook de auditoria configurado).</li>
+              <li>Clique "Detalhes" num chamado pra ver a descri&ccedil;&atilde;o completa e mudar a prioridade individualmente, ou marque v&aacute;rios e use "Prioridade selecionados" pra aplicar a mesma prioridade em todos de uma vez.</li>
             </ol>
           </details>
 
@@ -11483,6 +11485,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
           <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
             <button id="ml_batch_cancel" class="btnSecondary">Cancelar</button>
+            <button id="ml_batch_prio_run" class="btnSecondary" title="Aplica uma prioridade escolhida a todos os chamados marcados (campo Prioridade direto, sem transicao).">&#9888; Prioridade selecionados</button>
             <button id="ml_batch_audit_run" class="btnSecondary" title="Roda a auditoria por IA em cada chamado marcado — não deriva, só analisa e salva o resultado." ${SETTINGS.AUDIT_WEBHOOK_URL ? '' : 'disabled'}>&#128269; Auditar selecionados</button>
             <button id="ml_batch_run" class="btnPrimary">Executar</button>
           </div>
@@ -11629,6 +11632,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 selecionar ✎
                </button>`;
 
+          const curPrioId = i.priorityId || '';
+          const curPrioName = i.priority || '—';
+
           return `
             <tr data-key="${esc(k)}" style="border-bottom:1px solid var(--ml-border);">
               <td style="padding:6px 8px;width:28px;vertical-align:top;">
@@ -11641,6 +11647,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   ${priorityImg}
                 </div>
                 <div style="margin-top:4px;">${statusPill}</div>
+                <button class="rowDetailsBtn" data-key="${esc(k)}" style="margin-top:4px;font-size:10.5px;padding:1px 7px;border-radius:6px;border:1px dashed var(--ml-border-2);background:transparent;color:var(--ml-text-dim);cursor:pointer;">Detalhes</button>
               </td>
               <td style="padding:6px 8px;vertical-align:top;font-size:12px;line-height:1.35;">
                 ${esc(summary)}
@@ -11649,6 +11656,27 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               <td style="padding:6px 8px;vertical-align:top;width:160px;">${asset}</td>
               <td style="padding:6px 8px;vertical-align:top;width:140px;">${team}</td>
               <td style="padding:6px 8px;vertical-align:top;width:150px;">${destBtn}</td>
+            </tr>
+            <tr class="rowExpand" data-expand-for="${esc(k)}" style="display:none;border-bottom:1px solid var(--ml-border);background:var(--ml-bg-1,rgba(255,255,255,.02));">
+              <td></td>
+              <td colspan="5" style="padding:10px 8px;">
+                <div style="font-size:11px;color:var(--ml-text-mut);font-weight:700;margin-bottom:4px;">Descrição completa</div>
+                <div class="rowFullDesc" style="font-size:12px;line-height:1.5;margin-bottom:10px;white-space:pre-wrap;">carregando...</div>
+                <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;">
+                  <div>
+                    <div style="font-size:11px;color:var(--ml-text-mut);font-weight:700;margin-bottom:4px;">Localidade</div>
+                    <div style="font-size:12px;">${esc(i.asset || '—')}</div>
+                  </div>
+                  <div>
+                    <div style="font-size:11px;color:var(--ml-text-mut);font-weight:700;margin-bottom:4px;">Prioridade</div>
+                    <select class="rowPrioSelect" data-key="${esc(k)}" data-cur="${esc(curPrioId)}" style="min-width:140px;background:var(--ml-bg-0);color:var(--ml-text);border:1px solid var(--ml-border-2);border-radius:var(--ml-radius-sm);padding:6px 8px;font-size:12.5px;">
+                      <option value="">${esc(curPrioName)} (carregando...)</option>
+                    </select>
+                  </div>
+                  <button class="rowPrioSaveBtn btnSecondary" data-key="${esc(k)}" style="padding:6px 12px;">Salvar prioridade</button>
+                  <span class="rowPrioStatus muted" style="font-size:11px;"></span>
+                </div>
+              </td>
             </tr>
           `;
         }).join('');
@@ -11715,6 +11743,67 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             setTimeout(() => document.addEventListener('click', closePicker, true), 0);
           });
         });
+
+        // "Detalhes" por linha: expande descricao completa + localidade + prioridade editavel.
+        listEl.querySelectorAll('button.rowDetailsBtn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const k = btn.getAttribute('data-key');
+            const expandRow = listEl.querySelector(`tr.rowExpand[data-expand-for="${CSS.escape(k)}"]`);
+            if(!expandRow) return;
+            const isOpen = expandRow.style.display !== 'none';
+            if(isOpen){ expandRow.style.display = 'none'; return; }
+            expandRow.style.display = '';
+
+            const descEl = expandRow.querySelector('.rowFullDesc');
+            const sel = expandRow.querySelector('.rowPrioSelect');
+            const saveBtn = expandRow.querySelector('.rowPrioSaveBtn');
+            const statusEl = expandRow.querySelector('.rowPrioStatus');
+            const curPrioId = sel.getAttribute('data-cur') || '';
+
+            // Descricao completa: busca sob demanda (nao vem no batch inicial) e cacheia em info[k].
+            if(info[k]?.descriptionText != null){
+              descEl.textContent = info[k].descriptionText || '(sem descrição)';
+            } else {
+              try{
+                const data = await getIssueFields(k, ['description']);
+                const txt = descriptionToText(data?.fields?.description) || '';
+                if(info[k]) info[k].descriptionText = txt;
+                descEl.textContent = txt || '(sem descrição)';
+              }catch(e){
+                descEl.textContent = 'Falha ao carregar descrição: ' + (e.message || e);
+              }
+            }
+
+            // Select de prioridade
+            getAllPriorities().then(list => {
+              if(!sel.isConnected) return;
+              sel.innerHTML = (list || []).map(p =>
+                `<option value="${esc(p.id)}" ${String(p.id) === String(curPrioId) ? 'selected' : ''}>${esc(p.name)}</option>`
+              ).join('');
+            }).catch(e => {
+              console.warn('[IS Toolkit][prioridade] falha ao listar prioridades:', e);
+            });
+
+            saveBtn.onclick = async () => {
+              const newId = sel.value;
+              if(!newId){ statusEl.textContent = 'Escolha uma prioridade.'; return; }
+              saveBtn.disabled = true;
+              statusEl.textContent = 'Salvando...';
+              try{
+                await setIssuePriority(k, newId);
+                const newName = sel.options[sel.selectedIndex]?.text || '';
+                if(info[k]){ info[k].priority = newName; info[k].priorityId = newId; }
+                statusEl.textContent = 'Atualizado!';
+                setTimeout(() => { statusEl.textContent = ''; renderList(); }, 900);
+              }catch(e){
+                statusEl.textContent = 'Falha: ' + (e.message || e);
+              }finally{
+                saveBtn.disabled = false;
+              }
+            };
+          });
+        });
+
         updateGlobalTeamsState();
       }
 
@@ -12098,6 +12187,54 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       // chamado marcado. NÃO deriva, não muda status: só analisa e salva o resultado
       // (fica disponível no card do ticket e no modo auditoria inline). Não some da
       // lista depois — o chamado normalmente ainda precisa de outra ação (derivar etc.).
+      modal.querySelector('#ml_batch_prio_run')?.addEventListener('click', async () => {
+        const targetKeys = [...selected];
+        if(!targetKeys.length){ alert('Selecione pelo menos 1 chamado.'); return; }
+
+        let priorities = [];
+        try{ priorities = await getAllPriorities(); }catch(e){
+          alert('Falha ao listar prioridades: ' + (e.message || e));
+          return;
+        }
+        if(!priorities.length){ alert('Nenhuma prioridade encontrada.'); return; }
+
+        const choice = await pickPriorityInteractive(priorities, { count: targetKeys.length });
+        if(!choice) return;
+
+        const prioBtn = modal.querySelector('#ml_batch_prio_run');
+        const runBtn = modal.querySelector('#ml_batch_run');
+        const origLabel = prioBtn.innerHTML;
+        prioBtn.disabled = true;
+        if(runBtn) runBtn.disabled = true;
+
+        const p = modal.querySelector('#ml_batch_progress');
+        p.innerHTML = `<div style="font-weight:700;color:var(--ml-text);margin-bottom:8px;">Aplicando prioridade "${esc(choice.name)}" (0/${targetKeys.length})</div>`;
+        const counter = (i) => p.firstChild.textContent = `Aplicando prioridade "${choice.name}" (${i}/${targetKeys.length})`;
+
+        let ok = 0, fail = 0;
+        for(let i = 0; i < targetKeys.length; i++){
+          const key = targetKeys[i];
+          counter(i);
+          prioBtn.innerHTML = `<span class="mlSpin"></span> ${key}...`;
+          try{
+            await setIssuePriority(key, choice.id);
+            if(info[key]){ info[key].priority = choice.name; info[key].priorityId = choice.id; }
+            progressLog(`<b style="color:#86efac;">[OK]</b> ${esc(key)} &mdash; prioridade agora: <b>${esc(choice.name)}</b>`);
+            ok++;
+          }catch(e){
+            progressLog(`<b style="color:#fca5a5;">[FAIL]</b> ${esc(key)}: ${esc(e.message || String(e))}`);
+            fail++;
+          }
+        }
+        counter(targetKeys.length);
+        p.insertAdjacentHTML('beforeend', `<div style="margin-top:6px;">Concluído: <b style="color:#86efac;">${ok} OK</b>${fail ? `, <b style="color:#fca5a5;">${fail} falhou</b>` : ''}.</div>`);
+
+        prioBtn.disabled = false;
+        if(runBtn) runBtn.disabled = false;
+        prioBtn.innerHTML = origLabel;
+        renderList();
+      });
+
       modal.querySelector('#ml_batch_audit_run')?.addEventListener('click', async () => {
         if(!SETTINGS.AUDIT_WEBHOOK_URL){
           showToast('Configure o Webhook de auditoria em Configuracoes → Avancado → Integracoes', 'warn');
