@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.62.0
+// @version      1.63.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -490,6 +490,14 @@
         }
       ],
 
+      // ---- Vincular + Fechar (tela de Duplicados) ----
+      // Transicao aplicada em cada ticket apos vincula-lo como duplicado. {vinculado} = key do
+      // ticket que permanece aberto; {meu_nome} = quem esta logado. Campos exigidos pela
+      // transicao (Resolucao, custom fields, etc.) sao pedidos na hora via formulario generico.
+      DUPLICATE_CLOSE_TRANSITION: 'Resolve',
+      DUPLICATE_CLOSE_COMMENT: 'Chamado duplicado e sendo atendido através do: {vinculado}\n\nAtenciosamente,',
+      DUPLICATE_CLOSE_INTERNAL: false,
+
       // Label adicionado automaticamente a cada ticket processado (para metricas de uso).
       // Filtre no Jira com: labels = "is-toolkit"
       USAGE_LABEL: 'is-toolkit',
@@ -532,6 +540,10 @@
       // precisa configurar isso na instalacao. Deixe vazio pra desabilitar o card de auditoria,
       // ou troque aqui em Configuracoes -> Avancado -> Integracoes se o endpoint mudar de lugar.
       AUDIT_WEBHOOK_URL: 'http://verdi-flows.melisystems.com/webhook/ist-ticket-audit',
+
+      // ---- Central do Grid (dashboard de arquivos usados pelo time) ----
+      // Link fixo pra central de Grid do time. Aparece como atalho na Home do toolkit.
+      GRID_CENTRAL_URL: 'https://grid.adminml.com/d/01KT9SR6G0F092GPTSE1G9DR71/view',
 
       // ---- Campos customizados de auditoria (IDs por instancia Jira) ----
       // Preenchidos via "Descobrir campos" em Configuracoes → Integrações.
@@ -591,6 +603,8 @@
     const HIDE_RESOLVED = SETTINGS.HIDE_RESOLVED;
     const OPEN_FILTER = SETTINGS.OPEN_FILTER;
     const ORDER_BY = SETTINGS.ORDER_BY;
+
+    const GRID_CENTRAL_URL = SETTINGS.GRID_CENTRAL_URL || DEFAULTS.GRID_CENTRAL_URL;
 
     const DESC_PREVIEW_LEN = SETTINGS.DESC_PREVIEW_LEN;
     const DUP_LABEL_MAX_TOKENS = SETTINGS.DUP_LABEL_MAX_TOKENS;
@@ -1603,6 +1617,36 @@
       return JSON.parse(txt);
     }
 
+    // Lista global de prioridades do Jira (Highest/High/Medium/... ou o esquema custom da instancia).
+    // Cacheada em memoria pra sessao inteira — as opcoes de prioridade nao mudam em runtime.
+    let _priorityListCache = null;
+    async function getAllPriorities(){
+      if(_priorityListCache) return _priorityListCache;
+      const url = `${location.origin}/rest/api/3/priority`;
+      const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
+      const txt = await r.text().catch(()=> '');
+      if(!r.ok) throw new Error(`HTTP ${r.status} ao listar prioridades: ${txt.slice(0,200)}`);
+      _priorityListCache = JSON.parse(txt);
+      return _priorityListCache;
+    }
+
+    // Muda a prioridade de um ticket direto (campo padrao "priority", sem passar por transicao).
+    async function setIssuePriority(issueKey, priorityId){
+      const url = `${location.origin}/rest/api/3/issue/${encodeURIComponent(issueKey)}`;
+      const r = await fetch(url, {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Accept':'application/json', 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields: { priority: { id: String(priorityId) } } })
+      });
+      if(!r.ok){
+        const txt = await r.text().catch(()=> '');
+        throw new Error(`HTTP ${r.status} ao mudar prioridade de ${issueKey}: ${txt.slice(0,250)}`);
+      }
+      _markToolkitUsage(issueKey).catch(()=>{});
+      return true;
+    }
+
     // Preview leve de um ticket: campos essenciais pra UI rapida.
     // Faz uma chamada extra (em paralelo) na Assets API pra resolver o NOME legivel do asset
     // (do contrario so temos o objectId numerico).
@@ -1666,7 +1710,7 @@
       const payload = {
         jql,
         maxResults: MAX_RESULTS,
-        fields: ["summary","description","assignee","issuetype","project","updated", `customfield_${CF_RES_TEAM}`]
+        fields: ["summary","description","assignee","issuetype","project","updated","priority", `customfield_${CF_RES_TEAM}`, `customfield_${CF_ASSET}`]
       };
       const r = await fetch(url, {
         method:'POST',
@@ -4912,6 +4956,58 @@
       });
     }
 
+    // Modal pra escolher UMA prioridade de uma lista (usado no "Prioridade selecionados" dos
+    // Duplicados). Retorna Promise<{ id, name } | null>. null = usuario cancelou.
+    function pickPriorityInteractive(priorities, opts){
+      opts = opts || {};
+      return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'mlCapOverlay';
+        const modal = document.createElement('div');
+        modal.className = 'mlCapModal';
+        modal.style.maxWidth = 'min(420px, 96vw)';
+
+        modal.innerHTML = `
+          <div class="ch">
+            <div>
+              <div class="title">Aplicar prioridade a ${Number(opts.count)||0} ticket(s)</div>
+              <div class="subtitle">Escolha a prioridade abaixo. Isso muda o campo Prioridade direto (sem passar por transi&ccedil;&atilde;o).</div>
+            </div>
+            <button id="ml_pp_cancel" class="ghost">Cancelar (Esc)</button>
+          </div>
+          <div class="cb">
+            <select id="ml_pp_select" style="width:100%;background:var(--ml-bg-0);color:var(--ml-text);border:1px solid var(--ml-border-2);border-radius:var(--ml-radius-sm);padding:8px 10px;font-size:13px;margin-bottom:12px;">
+              ${(priorities || []).map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
+            </select>
+            <div style="display:flex;justify-content:flex-end;gap:8px;">
+              <button id="ml_pp_cancel2" class="ghost">Cancelar</button>
+              <button id="ml_pp_apply" class="primary">Aplicar</button>
+            </div>
+          </div>
+        `;
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        const close = (val) => {
+          overlay.remove();
+          document.removeEventListener('keydown', onKey, true);
+          resolve(val);
+        };
+        const onKey = (e) => { if(e.key === 'Escape') close(null); };
+        document.addEventListener('keydown', onKey, true);
+        modal.querySelector('#ml_pp_cancel').onclick = () => close(null);
+        modal.querySelector('#ml_pp_cancel2').onclick = () => close(null);
+        overlay.addEventListener('click', (e) => { if(e.target === overlay) close(null); });
+        modal.querySelector('#ml_pp_apply').onclick = () => {
+          const sel = modal.querySelector('#ml_pp_select');
+          const id = sel.value;
+          const name = sel.options[sel.selectedIndex]?.text || '';
+          if(!id){ close(null); return; }
+          close({ id, name });
+        };
+      });
+    }
+
     // Executa uma acao de status especifica.
     // action: { label, transition, comment, internal, assignToMe }
     // Estrategia robusta pra workflows com validadores customizados:
@@ -7257,6 +7353,13 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 </div>`;
               })()}
           </div>
+
+          ${GRID_CENTRAL_URL ? `
+          <div style="margin-top:10px;display:flex;justify-content:center;">
+            <a href="${esc(GRID_CENTRAL_URL)}" target="_blank" rel="noopener" class="btnSecondary" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:7px 14px;">
+              &#128194; Abrir central do Grid
+            </a>
+          </div>` : ''}
         </div>
       `);
 
@@ -8728,6 +8831,36 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               </div>
             </div>
 
+            <div class="group full" data-tab="status">
+              <h4>Vincular + Fechar (Duplicados)</h4>
+              <div class="grid">
+                <div class="full">
+                  <div class="hint" style="margin-bottom: 10px;">
+                    Na tela de <b>Duplicados</b>, o botao <b>"Vincular + Fechar"</b> vincula o(s) ticket(s) selecionado(s) como
+                    duplicado e, em seguida, aplica esta transicao de fechamento em cada um. Campos exigidos pela transicao
+                    (Resolucao, campos custom, etc.) aparecem num formulario na hora — igual as outras Acoes de Status.
+                  </div>
+                </div>
+                <div>
+                  <label>Nome da transicao de fechamento</label>
+                  <input type="text" id="ml_s_dupclose_transition" value="${esc(cur.DUPLICATE_CLOSE_TRANSITION || def.DUPLICATE_CLOSE_TRANSITION || '')}" placeholder="Resolve" />
+                  <div class="hint">Nome exato da transicao no workflow (ex: <code>Resolve</code>). Se nao bater com o ticket, abre um seletor com as transicoes disponiveis.</div>
+                </div>
+                <div>
+                  <label>Comentario &eacute; p&uacute;blico ou interno?</label>
+                  <select id="ml_s_dupclose_internal">
+                    <option value="0" ${cur.DUPLICATE_CLOSE_INTERNAL === false || cur.DUPLICATE_CLOSE_INTERNAL == null ? 'selected' : ''}>P&uacute;blico (vis&iacute;vel ao cliente)</option>
+                    <option value="1" ${cur.DUPLICATE_CLOSE_INTERNAL === true ? 'selected' : ''}>Interno (obs)</option>
+                  </select>
+                </div>
+                <div class="full">
+                  <label>Mensagem de fechamento</label>
+                  <textarea id="ml_s_dupclose_comment" style="min-height:70px;">${esc(cur.DUPLICATE_CLOSE_COMMENT || def.DUPLICATE_CLOSE_COMMENT || '')}</textarea>
+                  <div class="hint">Placeholders: <code>{vinculado}</code> (key do ticket que ficou aberto, ao qual este foi marcado como duplicado), <code>{meu_nome}</code> (seu nome, via login do Jira).</div>
+                </div>
+              </div>
+            </div>
+
             <div class="group full" data-tab="confluence">
               <h4>Tshoot Confluence (chip lateral)</h4>
               <div class="grid">
@@ -8822,6 +8955,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                     J&aacute; vem preenchida com o endpoint central do time (fixo em <code>DEFAULTS</code>) &mdash; s&oacute; troque aqui se o workflow mudar de lugar.
                     Deixe vazio para desabilitar o card de auditoria na home.
                   </div>
+                </div>
+                <div class="full">
+                  <label>Central do Grid (dashboard de arquivos do time)</label>
+                  <input type="url" id="ml_s_grid_url" value="${esc(cur.GRID_CENTRAL_URL || '')}" placeholder="https://grid.adminml.com/d/..." style="font-family:var(--ml-mono);font-size:12px;" />
+                  <div class="hint">Link do atalho &quot;Abrir central do Grid&quot; que aparece na Home. Deixe vazio para esconder o atalho.</div>
                 </div>
                 <div class="full">
                   <label>Atalho &mdash; Assumir ticket + In Progress</label>
@@ -9454,6 +9592,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 .split(/\r?\n/).map(s => s.trim()).filter(Boolean);
               return lines.length ? lines : DEFAULTS.STATUS_MENU_SHORTCUTS.slice();
             })(),
+            DUPLICATE_CLOSE_TRANSITION: String(modal.querySelector('#ml_s_dupclose_transition')?.value || '').trim() || DEFAULTS.DUPLICATE_CLOSE_TRANSITION,
+            DUPLICATE_CLOSE_COMMENT: String(modal.querySelector('#ml_s_dupclose_comment')?.value || '').replace(/\r\n/g,'\n'),
+            DUPLICATE_CLOSE_INTERNAL: modal.querySelector('#ml_s_dupclose_internal')?.value === '1',
             QUICK_COMMENT_SHORTCUTS: (() => {
               const lines = String(modal.querySelector('#ml_s_qc_shortcuts').value || '')
                 .split(/\r?\n/).map(s => s.trim()).filter(Boolean);
@@ -9462,6 +9603,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
             // Integracoes
             AUDIT_WEBHOOK_URL: String(modal.querySelector('#ml_s_audit_webhook')?.value || '').trim(),
+            GRID_CENTRAL_URL: String(modal.querySelector('#ml_s_grid_url')?.value || '').trim(),
 
             // Campos de auditoria
             CF_CATEGORY:        Math.max(0, Number(modal.querySelector('#ml_s_cf_category')?.value)  || 0),
@@ -10137,6 +10279,14 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const resTeam = (rt && (rt.value || rt.name)) ? (rt.value || rt.name) : (rt ? String(rt) : '—');
       const assignee = f.assignee?.displayName || '—';
 
+      const assetRaw = f[`customfield_${CF_ASSET}`];
+      const assetArr = Array.isArray(assetRaw) ? assetRaw : (assetRaw ? [assetRaw] : []);
+      const locationLabel = assetArr.map(a => a?.objectKey || a?.label || a?.name).filter(Boolean).join(', ') || '—';
+
+      const priorityName = f.priority?.name || '—';
+      const priorityId = f.priority?.id || '';
+      const priorityIcon = f.priority?.iconUrl || '';
+
       const hitVals = hits.map(h => h.value);
       const hitAttr = hitVals.join('|');
       const labelTokens = hitVals.slice(0, DUP_LABEL_MAX_TOKENS).join(', ');
@@ -10147,6 +10297,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         strongMatch ? `<span class="badge strong">forte</span>` : '',
         ipOnlyMatch ? `<span class="badge ip">ip</span>` : '',
         `<span class="badge">${esc(resTeam)}</span>`,
+        `<span class="badge prioBadge" title="Prioridade">${priorityIcon ? `<img src="${esc(priorityIcon)}" alt="" style="width:12px;height:12px;vertical-align:middle;margin-right:3px;" />` : ''}${esc(priorityName)}</span>`,
         `<button class="detailsBtn" data-details="1" title="Ver detalhes">Detalhes</button>`
       ].filter(Boolean).join('');
 
@@ -10162,7 +10313,10 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
              data-link="${esc(link)}"
              data-full="${fullEsc}"
              data-hits="${esc(hitAttr)}"
-             data-hitstext="${esc(hitVals.join('|'))}">
+             data-hitstext="${esc(hitVals.join('|'))}"
+             data-location="${esc(locationLabel)}"
+             data-priority-id="${esc(priorityId)}"
+             data-priority-name="${esc(priorityName)}">
           <div class="line1">
             <div class="kblock">
               <div class="key"><a href="${esc(link)}" target="_blank" rel="noopener">${esc(key)}</a></div>
@@ -10254,10 +10408,12 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               <a href="${esc(issuesUrl)}" target="_blank" rel="noopener">Abrir busca no Jira</a>
               <button id="ml_loc_comment" class="disabled">Obs interna (0)</button>
               <button id="ml_loc_linkdup" class="disabled danger">Vincular duplicado (0)</button>
+              <button id="ml_loc_linkclose" class="disabled danger" title="Vincula como duplicado e ja aplica a transicao de fechamento configurada">Vincular + Fechar (0)</button>
+              <button id="ml_loc_prio" class="disabled">Prioridade selecionados (0)</button>
               <button id="ml_loc_batch" class="disabled">Derivar selecionados (0)</button>
             </div>
           </div>
-          <div class="meta">Clique em um ID para filtrar. Clique no card para selecionar. Use “Detalhes” para ver a descrição completa.</div>
+          <div class="meta">Clique em um ID para filtrar. Clique no card para selecionar. Use “Detalhes” para ver a descrição completa, a localidade e mudar a prioridade (individual ou em “Prioridade selecionados”).</div>
           <div class="chips" id="ml_loc_chips">${chipsHtml}</div>
         </div>
       `;
@@ -10279,8 +10435,10 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         const list = document.getElementById('ml_loc_list');
         const commentBtn = document.getElementById('ml_loc_comment');
         const linkBtn = document.getElementById('ml_loc_linkdup');
+        const linkCloseBtn = document.getElementById('ml_loc_linkclose');
+        const prioBtn = document.getElementById('ml_loc_prio');
         const batchBtn = document.getElementById('ml_loc_batch');
-        if(!chipWrap || !list || !commentBtn || !linkBtn || !batchBtn) return;
+        if(!chipWrap || !list || !commentBtn || !linkBtn || !linkCloseBtn || !prioBtn || !batchBtn) return;
 
         let activeFilter = '';
         const selected = new Set();
@@ -10288,14 +10446,20 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         const refreshButtons = () => {
           commentBtn.textContent = `Obs interna (${selected.size})`;
           linkBtn.textContent = `Vincular duplicado (${selected.size})`;
+          linkCloseBtn.textContent = `Vincular + Fechar (${selected.size})`;
+          prioBtn.textContent = `Prioridade selecionados (${selected.size})`;
           batchBtn.textContent = `Derivar selecionados (${selected.size})`;
           if(selected.size > 0){
             commentBtn.classList.remove('disabled'); commentBtn.classList.add('primary');
             linkBtn.classList.remove('disabled');
+            linkCloseBtn.classList.remove('disabled');
+            prioBtn.classList.remove('disabled');
             batchBtn.classList.remove('disabled'); batchBtn.classList.add('primary');
           } else {
             commentBtn.classList.add('disabled'); commentBtn.classList.remove('primary');
             linkBtn.classList.add('disabled');
+            linkCloseBtn.classList.add('disabled');
+            prioBtn.classList.add('disabled');
             batchBtn.classList.add('disabled'); batchBtn.classList.remove('primary');
           }
         };
@@ -10339,12 +10503,63 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             [...list.querySelectorAll('.expand')].forEach(e => e.remove());
 
             const full = card.getAttribute('data-full') || '';
+            const cardKey = card.getAttribute('data-key') || '';
+            const locationLabel = card.getAttribute('data-location') || '—';
+            const curPrioId = card.getAttribute('data-priority-id') || '';
+            const curPrioName = card.getAttribute('data-priority-name') || '—';
             card.insertAdjacentHTML('beforeend', `
               <div class="expand">
                 <div class="title">Descrição completa</div>
                 <div class="fulldesc">${full || '<span class="muted">Sem descrição.</span>'}</div>
+                <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;align-items:flex-end;">
+                  <div>
+                    <div class="title" style="margin-bottom:2px;">Localidade</div>
+                    <div class="muted">${esc(locationLabel)}</div>
+                  </div>
+                  <div>
+                    <div class="title" style="margin-bottom:2px;">Prioridade</div>
+                    <select class="prioSelect" data-cur="${esc(curPrioId)}" style="min-width:140px;background:var(--ml-bg-0);color:var(--ml-text);border:1px solid var(--ml-border-2);border-radius:var(--ml-radius-sm);padding:6px 8px;font-size:12.5px;">
+                      <option value="">${esc(curPrioName)} (carregando...)</option>
+                    </select>
+                  </div>
+                  <button class="prioSaveBtn btnSecondary" style="padding:6px 12px;">Salvar prioridade</button>
+                  <span class="prioStatus muted"></span>
+                </div>
               </div>
             `);
+
+            const sel = card.querySelector('.prioSelect');
+            const saveBtn = card.querySelector('.prioSaveBtn');
+            const statusEl = card.querySelector('.prioStatus');
+            getAllPriorities().then(list => {
+              if(!sel.isConnected) return; // card pode ter sido re-renderizado nesse meio tempo
+              sel.innerHTML = (list || []).map(p =>
+                `<option value="${esc(p.id)}" ${String(p.id) === String(curPrioId) ? 'selected' : ''}>${esc(p.name)}</option>`
+              ).join('') || `<option value="">${esc(curPrioName)}</option>`;
+            }).catch(e => {
+              sel.innerHTML = `<option value="">${esc(curPrioName)} (falha ao listar)</option>`;
+              console.warn('[IS Toolkit][prioridade] falha ao listar prioridades:', e);
+            });
+            saveBtn.addEventListener('click', async () => {
+              const newId = sel.value;
+              if(!newId){ statusEl.textContent = 'Escolha uma prioridade.'; return; }
+              saveBtn.disabled = true;
+              statusEl.textContent = 'Salvando...';
+              try{
+                await setIssuePriority(cardKey, newId);
+                const newName = sel.options[sel.selectedIndex]?.text || '';
+                card.setAttribute('data-priority-id', newId);
+                card.setAttribute('data-priority-name', newName);
+                const badge = card.querySelector('.prioBadge');
+                if(badge) badge.textContent = newName;
+                statusEl.textContent = 'Prioridade atualizada!';
+                setTimeout(() => { statusEl.textContent = ''; }, 2000);
+              }catch(e){
+                statusEl.textContent = 'Falha: ' + (e.message || e);
+              }finally{
+                saveBtn.disabled = false;
+              }
+            });
             return;
           }
 
@@ -10422,6 +10637,90 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           } finally {
             linkBtn.disabled = false;
           }
+        });
+
+        linkCloseBtn.addEventListener('click', async () => {
+          if(selected.size === 0) return;
+          const selectedKeys = [...selected];
+          const transitionName = SETTINGS.DUPLICATE_CLOSE_TRANSITION || DEFAULTS.DUPLICATE_CLOSE_TRANSITION;
+          const ok = confirm(
+            `Vincular ${selectedKeys.length} ticket(s) como duplicado do ticket atual (${issueKey}) E aplicar a transicao "${transitionName}" em cada um?\n\n` +
+            `Isso abre um formulario por ticket pra preencher os campos que a transicao exigir (ex: Resolucao).`
+          );
+          if(!ok) return;
+
+          linkCloseBtn.disabled = true;
+          const oldText = linkCloseBtn.textContent;
+
+          const commentTmpl = String(SETTINGS.DUPLICATE_CLOSE_COMMENT || DEFAULTS.DUPLICATE_CLOSE_COMMENT || '');
+          const internal = SETTINGS.DUPLICATE_CLOSE_INTERNAL === true;
+          let okCount = 0, failCount = 0;
+
+          for(const k of selectedKeys){
+            linkCloseBtn.textContent = `Processando ${k}...`;
+            try{
+              await linkDuplicate(issueKey, k);
+              const comment = commentTmpl.replace(/\{vinculado\}/gi, issueKey);
+              await runStatusAction(k, {
+                label: 'Vincular + Fechar',
+                transition: transitionName,
+                comment,
+                internal,
+                assignToMe: false
+              });
+              okCount++;
+            }catch(e){
+              failCount++;
+              console.warn(`[IS Toolkit][Vincular+Fechar] falha em ${k}:`, e);
+              if(String(e?.message||'') !== 'cancelado'){
+                alert(`Falha em ${k}: ${e.message || e}`);
+              }
+            }
+          }
+
+          linkCloseBtn.textContent = `OK: ${okCount}${failCount ? ` · Falhou: ${failCount}` : ''}`;
+          setTimeout(() => { linkCloseBtn.textContent = oldText; }, 1600);
+          linkCloseBtn.disabled = false;
+        });
+
+        prioBtn.addEventListener('click', async () => {
+          if(selected.size === 0) return;
+          const selectedKeys = [...selected];
+          let priorities = [];
+          try{ priorities = await getAllPriorities(); }catch(e){
+            alert('Falha ao listar prioridades: ' + (e.message || e));
+            return;
+          }
+          if(!priorities.length){ alert('Nenhuma prioridade encontrada.'); return; }
+
+          const choice = await pickPriorityInteractive(priorities, { count: selectedKeys.length });
+          if(!choice) return;
+
+          prioBtn.disabled = true;
+          const oldText = prioBtn.textContent;
+          let okCount = 0, failCount = 0;
+
+          for(const k of selectedKeys){
+            prioBtn.textContent = `Aplicando ${k}...`;
+            try{
+              await setIssuePriority(k, choice.id);
+              const card = list.querySelector(`.card[data-key="${CSS.escape(k)}"]`);
+              if(card){
+                card.setAttribute('data-priority-id', choice.id);
+                card.setAttribute('data-priority-name', choice.name);
+                const badge = card.querySelector('.prioBadge');
+                if(badge) badge.textContent = choice.name;
+              }
+              okCount++;
+            }catch(e){
+              failCount++;
+              console.warn(`[IS Toolkit][Prioridade] falha em ${k}:`, e);
+            }
+          }
+
+          prioBtn.textContent = `OK: ${okCount}${failCount ? ` · Falhou: ${failCount}` : ''}`;
+          setTimeout(() => { prioBtn.textContent = oldText; }, 1600);
+          prioBtn.disabled = false;
         });
 
         batchBtn.addEventListener('click', () => {
@@ -10613,7 +10912,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           const objKey = assetArr.map(a => a?.objectKey || a?.label || a?.name).filter(Boolean)[0];
           if(objKey) locationKey = String(objKey);
         }
-      }catch(_){}
+      }catch(e){
+        // Antes isso era engolido em silencio — se os campos (reporter/summary/description)
+        // vierem vazios na mensagem do WhatsApp, o erro real aparece aqui no console (F12).
+        console.warn('[IS Toolkit][WhatsApp] falha ao buscar campos do ticket, mensagem vai sair com campos em branco:', e);
+      }
       if(!phone) phone = _waPhoneFromDom();
       if(!phone){ showToast('Telefone de contato não encontrado neste ticket.', 'warn', 4000); return; }
 
@@ -10675,7 +10978,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const btn = document.createElement('button');
       btn.id = WA_BTN_ID;
       btn.title = 'Acionar via WhatsApp (Contact phone)';
-      btn.textContent = '💬';
+      // Glifo oficial do WhatsApp (silhueta do "fone + balão"), em vez do emoji genérico de balão de mensagem.
+      btn.innerHTML = '<svg viewBox="0 0 448 512" width="20" height="20" fill="#fff" style="pointer-events:none;"><path d="M380.9 97.1C339 55.1 283.2 32 223.9 32c-122.4 0-222 99.6-222 222 0 39.1 10.2 77.3 29.6 111L0 480l117.7-30.9c32.4 17.7 68.9 27 106.1 27h.1c122.3 0 224.1-99.6 224.1-222 0-59.3-25.2-115-67.1-157zm-157 341.6c-33.2 0-65.7-8.9-94-25.7l-6.7-4-69.8 18.3L72 359.2l-4.4-7c-18.5-29.4-28.2-63.3-28.2-98.2 0-101.7 82.8-184.5 184.6-184.5 49.3 0 95.6 19.2 130.4 54.1 34.8 34.9 56.2 81.2 56.1 130.5 0 101.8-84.9 184.6-186.6 184.6zm101.2-138.2c-5.5-2.8-32.8-16.2-37.9-18-5.1-1.9-8.8-2.8-12.5 2.8-3.7 5.6-14.3 18-17.6 21.8-3.2 3.7-6.5 4.2-12 1.4-32.6-16.3-54-29.1-75.5-66-5.7-9.8 5.7-9.1 16.3-30.3 1.8-3.7.9-6.9-.5-9.7-1.4-2.8-12.5-30.1-17.1-41.2-4.5-10.8-9.1-9.3-12.5-9.5-3.2-.2-6.9-.2-10.6-.2-3.7 0-9.7 1.4-14.8 6.9-5.1 5.6-19.4 19-19.4 46.3 0 27.3 19.9 53.7 22.6 57.4 2.8 3.7 39.1 59.7 94.8 83.8 35.2 15.2 49 16.5 66.6 13.9 10.7-1.6 32.8-13.4 37.4-26.4 4.6-13 4.6-24.1 3.2-26.4-1.3-2.5-5-3.9-10.5-6.6z"/></svg>';
       btn.style.cssText = [
         'position:fixed;right:20px;bottom:200px;z-index:9999996;',
         'width:42px;height:42px;border-radius:50%;border:none;',
@@ -11082,11 +11386,23 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       document.body.appendChild(b);
     }
 
+    // Enquanto o Gerenciador de fila estiver aberto, bloqueia qualquer reload/fechamento
+    // da aba (F5, fechar aba, navegação, e também um reload forçado por ferramenta externa
+    // que atue via location/navegação) — evita perder o trabalho em andamento no meio do lote.
+    // Guardamos a referência pra poder remover ao fechar ou reabrir o modal.
+    let _batchUnloadHandler = null;
+    function _batchBlockReload(e){
+      e.preventDefault();
+      e.returnValue = 'Você tem o Gerenciador de fila aberto no IS Toolkit. Sair da página agora pode perder o progresso.';
+      return e.returnValue;
+    }
+
     // ============= MODAL DE LOTE =============
     // opts.initialKeys: lista pre-populada (ex: vinda do Duplicados). Quando passada,
     //                   nao tentamos detectar do DOM (a lista ja vem pronta).
     function openBatchModal(opts){
       opts = opts || {};
+      if(_batchUnloadHandler){ window.removeEventListener('beforeunload', _batchUnloadHandler); _batchUnloadHandler = null; }
       document.getElementById('ml_batch_modal')?.remove();
       document.getElementById('ml_batch_overlay')?.remove();
 
@@ -11119,7 +11435,6 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             <summary style="cursor:pointer;font-weight:700;color:var(--ml-text-mut);outline:none;">Como funciona</summary>
             <ol style="margin:8px 0 0;">
               <li>${esc(sourceLabel)}: <b>${detected.length}</b> chamado(s) (todos <b>desmarcados</b> por seguranca).</li>
-              <li>Voce pode <b>colar mais keys</b> (uma por linha ou separadas por virgula/espaco) e clicar "Adicionar".</li>
               <li>Use o filtro pra achar e <b>marque</b> os chamados que quer processar (ou "Marcar todos").</li>
               <li>Escolha a acao (Derivar para time X / com ISS) e clique "Executar".</li>
               <li>Ou clique "Auditar selecionados" pra rodar a auditoria por IA nos marcados sem derivar nada (precisa do Webhook de auditoria configurado).</li>
@@ -11127,8 +11442,6 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           </details>
 
           <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center;">
-            <input type="text" id="ml_batch_paste" placeholder="Cole aqui mais keys: IS-123, IS-456..." style="flex:1;min-width:220px;padding:8px 12px;background:var(--ml-bg-0);color:var(--ml-text);border:1px solid var(--ml-border-2);border-radius:var(--ml-radius-sm);font-size:12.5px;outline:none;" />
-            <button id="ml_batch_add" class="btnSecondary">+ Adicionar</button>
             <button id="ml_batch_redetect" class="btnSecondary" title="Re-detectar da página" style="padding:8px 11px;">&#8635;</button>
             <button id="ml_batch_clear" class="btnSecondary" title="Limpar lista" style="padding:8px 11px;">&#128465;</button>
           </div>
@@ -11207,11 +11520,18 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       let ticketFieldTechs = {}; // key → array de field techs do catálogo
       let perTicketTeam = {};    // key → {id, value} — override de time por ticket
 
-      const close = () => { modal.remove(); overlay.remove(); };
+      const close = () => {
+        if(_batchUnloadHandler){ window.removeEventListener('beforeunload', _batchUnloadHandler); _batchUnloadHandler = null; }
+        modal.remove(); overlay.remove();
+      };
       overlay.addEventListener('click', close);
       modal.querySelector('#ml_batch_close').onclick = close;
       modal.querySelector('#ml_batch_cancel').onclick = close;
       modal.querySelector('#ml_batch_settings').onclick = () => openSettingsModal();
+
+      // Ativa o bloqueio de reload/fechamento enquanto esta tela estiver aberta.
+      _batchUnloadHandler = _batchBlockReload;
+      window.addEventListener('beforeunload', _batchUnloadHandler);
 
       function updateSelCount(){
         const el = modal.querySelector('#ml_batch_sel_count');
@@ -11453,22 +11773,6 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         renderList();
       });
 
-      modal.querySelector('#ml_batch_add').onclick = () => {
-        const txt = modal.querySelector('#ml_batch_paste').value || '';
-        const newKeys = extractKeysFromText(txt);
-        const addedKeys = [];
-        for(const k of newKeys){
-          if(!keys.includes(k)){ keys.push(k); addedKeys.push(k); }
-        }
-        modal.querySelector('#ml_batch_paste').value = '';
-        keys.sort();
-        renderList();
-        if(addedKeys.length){
-          progressLog(`+ ${addedKeys.length} chamado(s) adicionado(s).`);
-          loadDetails(addedKeys);
-          if(!teams.length) loadTeams(); // tenta recarregar se ainda nao tinha
-        }
-      };
       modal.querySelector('#ml_batch_redetect').onclick = () => {
         const fresh = getQueueKeysFromDom();
         const addedKeys = [];
