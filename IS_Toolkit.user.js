@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.75.0
+// @version      1.76.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -561,6 +561,29 @@
       // Quantas horas ou menos de tempo restante contam como "em risco" de estourar o SLA.
       SLA_RISK_HOURS: 4,
 
+      // ---- Tickets antigos (Painel do analista) ----
+      // Conta (e destaca o mais antigo) os tickets abertos comigo ha muito tempo, por data
+      // de CRIACAO (nao atualizacao — isso e "parado", metrica diferente). Escopado aos
+      // PROJECTS configurados (ja inclui ISS por padrao). 0 = desliga o card.
+      OLD_TICKET_DAYS: 14,
+
+      // ---- Metrificacao por categoria (Painel do analista) ----
+      // Usa o campo REAL de Categoria (CF_CATEGORY, mesmo da auditoria) em modo SOMENTE
+      // LEITURA — nunca escreve nada nele, so conta resolvidos da semana por valor.
+      // false esconde o card (ex: se CF_CATEGORY nao fizer sentido pra essa metrica).
+      CATEGORY_BREAKDOWN_ENABLED: true,
+
+      // ---- Ranking do time (Painel do analista) ----
+      // Desligado por padrao — feature sensivel (compara voce com outros analistas), cada
+      // pedaco pode ser desligado independente. Precisa de um grupo do Jira configurado
+      // (RANKING_TEAM_GROUP) pra funcionar. Sempre escopado a IS+ISS (fixo, nao usa PROJECTS
+      // geral). Metrica: so "resolvidos no periodo" (nao usa toolkit).
+      RANKING_ENABLED: false,
+      RANKING_TEAM_GROUP: '',           // nome exato do grupo no Jira (ex: "is-ship-nats-n1")
+      RANKING_DISPLAY_MODE: 'anonimo',  // 'anonimo' | 'posicao' | 'leaderboard'
+      RANKING_SHOW_DAILY: true,
+      RANKING_SHOW_MONTHLY: true,
+
       // ---- Campos customizados de auditoria (IDs por instancia Jira) ----
       // Preenchidos via "Descobrir campos" em Configuracoes → Integrações.
       // 0 = nao configurado (campo ignorado na auditoria).
@@ -624,6 +647,13 @@
     const AUDIT_PENDING_JQL = SETTINGS.AUDIT_PENDING_JQL || DEFAULTS.AUDIT_PENDING_JQL;
     const SLA_FIELD_ID = Number(SETTINGS.SLA_FIELD_ID ?? DEFAULTS.SLA_FIELD_ID) || 0;
     const SLA_RISK_HOURS = Number(SETTINGS.SLA_RISK_HOURS ?? DEFAULTS.SLA_RISK_HOURS) || 4;
+    const OLD_TICKET_DAYS = Number(SETTINGS.OLD_TICKET_DAYS ?? DEFAULTS.OLD_TICKET_DAYS) || 0;
+    const CATEGORY_BREAKDOWN_ENABLED = SETTINGS.CATEGORY_BREAKDOWN_ENABLED ?? DEFAULTS.CATEGORY_BREAKDOWN_ENABLED;
+    const RANKING_ENABLED = !!(SETTINGS.RANKING_ENABLED ?? DEFAULTS.RANKING_ENABLED);
+    const RANKING_TEAM_GROUP = String(SETTINGS.RANKING_TEAM_GROUP ?? DEFAULTS.RANKING_TEAM_GROUP ?? '').trim();
+    const RANKING_DISPLAY_MODE = String(SETTINGS.RANKING_DISPLAY_MODE ?? DEFAULTS.RANKING_DISPLAY_MODE ?? 'anonimo');
+    const RANKING_SHOW_DAILY = !!(SETTINGS.RANKING_SHOW_DAILY ?? DEFAULTS.RANKING_SHOW_DAILY);
+    const RANKING_SHOW_MONTHLY = !!(SETTINGS.RANKING_SHOW_MONTHLY ?? DEFAULTS.RANKING_SHOW_MONTHLY);
 
     const DESC_PREVIEW_LEN = SETTINGS.DESC_PREVIEW_LEN;
     const DUP_LABEL_MAX_TOKENS = SETTINGS.DUP_LABEL_MAX_TOKENS;
@@ -1824,6 +1854,137 @@
       if(!SLA_FIELD_ID) return null;
       const jql = `${_slaScope()}assignee = currentUser() AND cf[${SLA_FIELD_ID}] > remaining("${SLA_RISK_HOURS}h")`;
       return await countByJql(jql);
+    }
+
+    // ---- Tickets antigos (Painel do analista) ----
+    // Por data de CRIACAO (nao atualizacao) — "parado" seria outra metrica (ultima
+    // interacao), essa aqui e sobre quanto tempo o chamado ja existe.
+    function _projScope(){
+      return PROJECTS.length ? `project in (${PROJECTS.map(p=>`"${p}"`).join(',')}) AND ` : '';
+    }
+
+    async function getOldTicketsInfo(){
+      if(!OLD_TICKET_DAYS) return null;
+      const baseJql = `${_projScope()}assignee = currentUser() AND statusCategory != Done AND created <= startOfDay("-${OLD_TICKET_DAYS}d")`;
+      const count = await countByJql(baseJql);
+      let oldest = null;
+      if(count > 0){
+        try{
+          const r = await fetch(`${location.origin}/rest/api/3/search/jql`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jql: `${baseJql} ORDER BY created ASC`,
+              maxResults: 1,
+              fields: ['summary', 'created']
+            })
+          });
+          if(r.ok){
+            const d = await r.json();
+            const it = (d.issues || [])[0];
+            if(it){
+              const createdMs = new Date(it.fields.created).getTime();
+              const ageDays = Math.floor((Date.now() - createdMs) / 86400000);
+              oldest = { key: it.key, summary: it.fields.summary || '', ageDays };
+            }
+          }
+        }catch(e){ console.warn('[IS Toolkit][old-tickets] falha ao buscar o mais antigo:', e); }
+      }
+      return { count, oldest };
+    }
+
+    // ---- Metrificacao por categoria (Painel do analista) ----
+    // SOMENTE LEITURA do campo real de Categoria (CF_CATEGORY, mesmo da auditoria) — busca os
+    // resolvidos da semana numa unica chamada e agrupa por valor no cliente (sem precisar
+    // listar os valores possiveis do campo antes).
+    async function getCategoryBreakdownThisWeek(){
+      const cfCategoryId = Number(SETTINGS.CF_CATEGORY || DEFAULTS.CF_CATEGORY || 0);
+      if(!CATEGORY_BREAKDOWN_ENABLED || !cfCategoryId) return null;
+      const fieldKey = `customfield_${cfCategoryId}`;
+      const jql = `${_projScope()}assignee = currentUser() AND resolutiondate >= startOfWeek()`;
+      const r = await fetch(`${location.origin}/rest/api/3/search/jql`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jql, maxResults: 100, fields: [fieldKey] })
+      });
+      if(!r.ok) throw new Error(`HTTP ${r.status} ao buscar categorias`);
+      const d = await r.json();
+      const issues = d.issues || [];
+      const counts = {};
+      for(const it of issues){
+        const v = it.fields?.[fieldKey];
+        const label = (v && typeof v === 'object') ? (v.value ?? v.name ?? '') : (v ?? '');
+        const key = String(label || '(sem categoria)').trim() || '(sem categoria)';
+        counts[key] = (counts[key] || 0) + 1;
+      }
+      const breakdown = Object.entries(counts).map(([label, count]) => ({ label, count })).sort((a,b) => b.count - a.count);
+      return { total: issues.length, truncated: (d.total ?? issues.length) > issues.length, breakdown };
+    }
+
+    // ---- Ranking do time (Painel do analista) ----
+    // Grupo do Jira (RANKING_TEAM_GROUP) define quem entra na comparacao. Metrica fixa:
+    // resolvidos no periodo, sempre escopado a IS+ISS (independente do PROJECTS geral).
+    const _RANKING_SCOPE_PROJECTS = ['IS', 'ISS'];
+    function _rankingProjScope(){
+      return `project in (${_RANKING_SCOPE_PROJECTS.map(p=>`"${p}"`).join(',')}) AND `;
+    }
+
+    async function getGroupMembers(groupName){
+      const members = [];
+      let startAt = 0;
+      for(let i = 0; i < 20; i++){ // safety cap: ate 1000 membros (50 por pagina)
+        const url = `${location.origin}/rest/api/3/group/member?groupname=${encodeURIComponent(groupName)}&startAt=${startAt}&maxResults=50`;
+        const r = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+        if(!r.ok) throw new Error(`HTTP ${r.status} ao ler grupo "${groupName}"`);
+        const d = await r.json();
+        (d.values || []).forEach(m => members.push({ accountId: m.accountId, displayName: m.displayName || m.name || m.accountId }));
+        if(d.isLast !== false && (d.values || []).length < 50) break;
+        startAt += 50;
+      }
+      return members;
+    }
+
+    // period: 'day' | 'month' (mes corrente, dia 1 ao ultimo dia — nao janela rolante).
+    async function getTeamRanking(period){
+      if(!RANKING_ENABLED || !RANKING_TEAM_GROUP) return null;
+      const members = await getGroupMembers(RANKING_TEAM_GROUP);
+      if(!members.length) return { members: [], myCount: 0, teamAverage: 0, period };
+
+      const startFn = period === 'month' ? 'startOfMonth()' : 'startOfDay()';
+      const jql = `${_rankingProjScope()}assignee in membersOf("${RANKING_TEAM_GROUP}") AND resolutiondate >= ${startFn}`;
+      const r = await fetch(`${location.origin}/rest/api/3/search/jql`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jql, maxResults: 100, fields: ['assignee'] })
+      });
+      if(!r.ok) throw new Error(`HTTP ${r.status} no ranking (${period})`);
+      const d = await r.json();
+      const issues = d.issues || [];
+
+      const countByAccount = {};
+      for(const it of issues){
+        const acc = it.fields?.assignee?.accountId;
+        if(!acc) continue;
+        countByAccount[acc] = (countByAccount[acc] || 0) + 1;
+      }
+
+      const rows = members.map(m => ({ ...m, count: countByAccount[m.accountId] || 0 }))
+        .sort((a, b) => b.count - a.count);
+
+      const totalTeam = rows.reduce((s, m) => s + m.count, 0);
+      const teamAverage = rows.length ? totalTeam / rows.length : 0;
+
+      let me = null;
+      try{ me = await jiraGetMyself(); }catch(_){}
+      const myAccountId = me?.accountId;
+      const myRow = rows.find(m => m.accountId === myAccountId);
+      const myCount = myRow ? myRow.count : (countByAccount[myAccountId] || 0);
+      const myPosition = myRow ? (rows.indexOf(myRow) + 1) : null;
+
+      return {
+        period, members: rows, teamAverage, myCount, myPosition, myAccountId,
+        truncated: (d.total ?? issues.length) > issues.length
+      };
     }
 
     async function searchIssuesWithCache(objectId, jql){
@@ -9130,6 +9291,15 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <input type="number" id="ml_s_sla_risk_hours" min="1" value="${Number(cur.SLA_RISK_HOURS ?? def.SLA_RISK_HOURS) || 4}" />
                   <div class="hint">Tickets com esse tanto de horas (ou menos) restantes antes de estourar o SLA entram no card "Risco de SLA".</div>
                 </div>
+                <div>
+                  <label>Tickets antigos &mdash; dias desde a cria&ccedil;&atilde;o</label>
+                  <input type="number" id="ml_s_old_ticket_days" min="0" value="${Number(cur.OLD_TICKET_DAYS ?? def.OLD_TICKET_DAYS) || 0}" />
+                  <div class="hint">Tickets abertos comigo criados h&aacute; mais desse tanto de dias entram no card "Tickets antigos" (Painel do analista). <b>0</b> = esconde o card.</div>
+                </div>
+                <div>
+                  <label class="checkbox"><input type="checkbox" id="ml_s_category_breakdown" ${cur.CATEGORY_BREAKDOWN_ENABLED !== false ? 'checked' : ''} /> Mostrar resolvidos da semana por categoria</label>
+                  <div class="hint">Usa o campo real de Categoria (mesmo da auditoria, CF_CATEGORY) em modo somente leitura. Precisa de CF_CATEGORY configurado.</div>
+                </div>
                 <div class="full">
                   <label>Atalho &mdash; Assumir ticket + In Progress</label>
                   <input type="text" id="ml_s_assign_shortcut" value="${esc(cur.ASSIGN_SHORTCUT || def.ASSIGN_SHORTCUT || '')}" placeholder="${esc(def.ASSIGN_SHORTCUT || 'Cmd+Shift+A')}" />
@@ -9148,6 +9318,41 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                     Quebras de linha s&atilde;o preservadas. Padr&atilde;o: <code>${esc(def.ASSIGN_COMMENT || 'Iniciando atendimento.')}</code><br/>
                     Use <code>{meu_nome}</code> pra assinar automaticamente com o nome de quem est&aacute; logado no Jira &mdash; assim o mesmo texto serve pra qualquer analista, sem nome fixo.
                   </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="group full" data-tab="advanced">
+              <h4>Ranking do time (Painel do analista)</h4>
+              <div class="grid">
+                <div class="full" style="margin-bottom:4px;">
+                  <div class="hint" style="margin:0;">
+                    Compara sua produtividade com a de um grupo do Jira. <b>Desligado por padr&atilde;o</b> &mdash;
+                    cada op&ccedil;&atilde;o abaixo pode ser desligada independente. M&eacute;trica fixa: resolvidos no
+                    per&iacute;odo, sempre escopado a <code>IS</code>+<code>ISS</code> (independente dos projetos
+                    configurados acima).
+                  </div>
+                </div>
+                <div class="full">
+                  <label class="checkbox"><input type="checkbox" id="ml_s_ranking_enabled" ${cur.RANKING_ENABLED === true ? 'checked' : ''} /> Ativar ranking do time</label>
+                </div>
+                <div class="full">
+                  <label>Grupo do Jira</label>
+                  <input type="text" id="ml_s_ranking_group" value="${esc(cur.RANKING_TEAM_GROUP || def.RANKING_TEAM_GROUP || '')}" placeholder="ex: is-ship-nats-n1" style="font-family:var(--ml-mono);font-size:12px;" />
+                  <div class="hint">Nome exato do grupo no Jira. Define quem entra na compara&ccedil;&atilde;o. Vazio = ranking fica desligado mesmo com a caixa acima marcada.</div>
+                </div>
+                <div>
+                  <label>Formato de exibi&ccedil;&atilde;o</label>
+                  <select id="ml_s_ranking_mode">
+                    <option value="anonimo" ${(cur.RANKING_DISPLAY_MODE || def.RANKING_DISPLAY_MODE || 'anonimo') === 'anonimo' ? 'selected' : ''}>An&ocirc;nimo (voc&ecirc; vs m&eacute;dia do time)</option>
+                    <option value="posicao" ${cur.RANKING_DISPLAY_MODE === 'posicao' ? 'selected' : ''}>Sua posi&ccedil;&atilde;o (ex: 3&ordm; de 8), sem nomes</option>
+                    <option value="leaderboard" ${cur.RANKING_DISPLAY_MODE === 'leaderboard' ? 'selected' : ''}>Leaderboard completo (com nomes)</option>
+                  </select>
+                  <div class="hint">Padr&atilde;o: an&ocirc;nimo (menos sens&iacute;vel).</div>
+                </div>
+                <div>
+                  <label class="checkbox"><input type="checkbox" id="ml_s_ranking_daily" ${cur.RANKING_SHOW_DAILY !== false ? 'checked' : ''} /> Mostrar ranking do dia</label>
+                  <label class="checkbox" style="margin-top:8px;"><input type="checkbox" id="ml_s_ranking_monthly" ${cur.RANKING_SHOW_MONTHLY !== false ? 'checked' : ''} /> Mostrar ranking do m&ecirc;s (do dia 1 ao &uacute;ltimo dia, n&atilde;o janela rolante)</label>
                 </div>
               </div>
             </div>
@@ -9776,6 +9981,15 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             AUDIT_PENDING_JQL: String(modal.querySelector('#ml_s_audit_pending_jql')?.value || '').replace(/\r\n/g,'\n').trim(),
             SLA_FIELD_ID:      Math.max(0, Number(modal.querySelector('#ml_s_sla_field_id')?.value) || 0),
             SLA_RISK_HOURS:    Math.max(1, Number(modal.querySelector('#ml_s_sla_risk_hours')?.value) || 4),
+            OLD_TICKET_DAYS:   Math.max(0, Number(modal.querySelector('#ml_s_old_ticket_days')?.value) || 0),
+            CATEGORY_BREAKDOWN_ENABLED: !!modal.querySelector('#ml_s_category_breakdown')?.checked,
+
+            // Ranking do time
+            RANKING_ENABLED:      !!modal.querySelector('#ml_s_ranking_enabled')?.checked,
+            RANKING_TEAM_GROUP:   String(modal.querySelector('#ml_s_ranking_group')?.value || '').trim(),
+            RANKING_DISPLAY_MODE: String(modal.querySelector('#ml_s_ranking_mode')?.value || 'anonimo'),
+            RANKING_SHOW_DAILY:   !!modal.querySelector('#ml_s_ranking_daily')?.checked,
+            RANKING_SHOW_MONTHLY: !!modal.querySelector('#ml_s_ranking_monthly')?.checked,
 
             // Campos de auditoria
             CF_CATEGORY:        Math.max(0, Number(modal.querySelector('#ml_s_cf_category')?.value)  || 0),
@@ -10926,12 +11140,18 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
           <div id="ml_dash_audit" style="margin-top:14px;"></div>
 
+          <div id="ml_dash_old" style="margin-top:14px;"></div>
+
           <div style="margin-top:16px;">
             <div style="font-weight:700;margin-bottom:10px;">Minha produtividade (últimos 7 dias)</div>
             <div id="ml_dash_weekly" style="background:var(--ml-bg-2); border:1px solid var(--ml-border-2); border-radius:8px; padding:14px;">
               <div class="muted">Carregando...</div>
             </div>
           </div>
+
+          <div id="ml_dash_category" style="margin-top:16px;"></div>
+
+          <div id="ml_dash_ranking" style="margin-top:16px;"></div>
 
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin:16px 0;">
             <button id="ml_dash_batch" class="primary" style="flex:1;min-width:180px;">&#128203; Gerenciador de fila</button>
@@ -11022,6 +11242,48 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         }
       }
 
+      // Tickets antigos (por data de criacao) — so aparece se OLD_TICKET_DAYS > 0.
+      const oldEl = document.getElementById('ml_dash_old');
+      if(oldEl){
+        if(!OLD_TICKET_DAYS){
+          oldEl.innerHTML = '';
+        } else {
+          oldEl.innerHTML = `<div class="homeCard"><div class="muted">Verificando tickets antigos...</div></div>`;
+          getOldTicketsInfo().then(info => {
+            if(!document.getElementById('ml_dash_old')) return;
+            if(!info || info.count === 0){
+              oldEl.innerHTML = `
+                <div class="homeCard" style="text-align:left;">
+                  <div style="font-weight:700;">&#9989; Nenhum ticket antigo</div>
+                  <div class="muted" style="margin-top:2px;">Nenhum aberto comigo criado há mais de ${OLD_TICKET_DAYS} dias.</div>
+                </div>
+              `;
+              return;
+            }
+            const oldJql = `${_projScope()}assignee = currentUser() AND statusCategory != Done AND created <= startOfDay("-${OLD_TICKET_DAYS}d")`;
+            const oldUrl = `${location.origin}/issues/?jql=${encodeURIComponent(oldJql)}`;
+            const oldest = info.oldest;
+            oldEl.innerHTML = `
+              <div class="homeCard" style="text-align:left; border-color:var(--ml-warn, #d97706);">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+                  <div>
+                    <div style="font-weight:700;">&#8987; Tickets antigos (&gt;${OLD_TICKET_DAYS} dias)</div>
+                    <div class="muted" style="margin-top:2px;">
+                      ${info.count} ticket${info.count === 1 ? '' : 's'} aberto${info.count === 1 ? '' : 's'} comigo criado${info.count === 1 ? '' : 's'} há mais de ${OLD_TICKET_DAYS} dias.
+                      ${oldest ? `Mais antigo: <a href="${location.origin}/browse/${esc(oldest.key)}" target="_blank" rel="noopener">${esc(oldest.key)}</a> (${oldest.ageDays} dias).` : ''}
+                    </div>
+                  </div>
+                  <a href="${esc(oldUrl)}" target="_blank" rel="noopener" class="btnSecondary" style="text-decoration:none;white-space:nowrap;">Ver lista</a>
+                </div>
+              </div>
+            `;
+          }).catch(e => {
+            if(!document.getElementById('ml_dash_old')) return;
+            oldEl.innerHTML = `<div class="homeCard"><div class="err">Falha ao verificar tickets antigos: ${esc(e.message || String(e))}</div></div>`;
+          });
+        }
+      }
+
       // Produtividade semanal (ultimos 7 dias corridos) — grafico de barras simples em SVG.
       getWeeklyProductivityCounts().then(days => {
         const el = document.getElementById('ml_dash_weekly');
@@ -11053,6 +11315,108 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         const el = document.getElementById('ml_dash_weekly');
         if(el) el.innerHTML = `<div class="err">Falha ao carregar produtividade semanal: ${esc(e.message || String(e))}</div>`;
       });
+
+      // Metrificacao por categoria (resolvidos essa semana) — leitura do campo real de
+      // Categoria, so aparece se CATEGORY_BREAKDOWN_ENABLED e CF_CATEGORY configurados.
+      const catEl = document.getElementById('ml_dash_category');
+      if(catEl){
+        catEl.innerHTML = `<div class="homeCard"><div class="muted">Carregando categorias...</div></div>`;
+        getCategoryBreakdownThisWeek().then(data => {
+          if(!document.getElementById('ml_dash_category')) return;
+          if(!data){ catEl.innerHTML = ''; return; }
+          if(!data.breakdown.length){
+            catEl.innerHTML = `
+              <div style="font-weight:700;margin-bottom:10px;">Resolvidos essa semana, por categoria</div>
+              <div class="homeCard"><div class="muted">Nenhum resolvido essa semana ainda.</div></div>
+            `;
+            return;
+          }
+          const max = Math.max(...data.breakdown.map(b => b.count));
+          const rows = data.breakdown.map(b => `
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+              <div style="flex:0 0 140px; font-size:12px; color:var(--ml-text-mut); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(b.label)}">${esc(b.label)}</div>
+              <div style="flex:1; background:var(--ml-bg-3); border-radius:4px; overflow:hidden; height:16px;">
+                <div style="width:${Math.max(4, Math.round((b.count/max)*100))}%; height:100%; background:var(--ml-purple, #a78bfa);"></div>
+              </div>
+              <div style="flex:0 0 28px; text-align:right; font-weight:700; font-size:12px;">${b.count}</div>
+            </div>
+          `).join('');
+          catEl.innerHTML = `
+            <div style="font-weight:700;margin-bottom:10px;">Resolvidos essa semana, por categoria</div>
+            <div style="background:var(--ml-bg-2); border:1px solid var(--ml-border-2); border-radius:8px; padding:14px;">
+              ${rows}
+              ${data.truncated ? '<div class="meta" style="margin-top:4px;">Mostrando os primeiros 100 resolvidos da semana.</div>' : ''}
+            </div>
+          `;
+        }).catch(e => {
+          if(!document.getElementById('ml_dash_category')) return;
+          catEl.innerHTML = `<div class="err">Falha ao carregar categorias: ${esc(e.message || String(e))}</div>`;
+        });
+      }
+
+      // Ranking do time (opcional, desligado por padrao) — grupo do Jira configurado em
+      // RANKING_TEAM_GROUP. Cada view (dia/mes) e independente e so aparece se habilitada.
+      const rankEl = document.getElementById('ml_dash_ranking');
+      if(rankEl){
+        if(!RANKING_ENABLED || !RANKING_TEAM_GROUP || (!RANKING_SHOW_DAILY && !RANKING_SHOW_MONTHLY)){
+          rankEl.innerHTML = '';
+        } else {
+          const periods = [];
+          if(RANKING_SHOW_DAILY) periods.push({ key: 'day', label: 'hoje' });
+          if(RANKING_SHOW_MONTHLY) periods.push({ key: 'month', label: 'este mês' });
+
+          const renderRankingBlock = (period, label, data) => {
+            if(!data) return `<div class="homeCard"><div class="err">Falha ao carregar ranking (${esc(label)}).</div></div>`;
+            const mode = RANKING_DISPLAY_MODE;
+            const avgFmt = Number.isFinite(data.teamAverage) ? data.teamAverage.toFixed(1) : '—';
+            if(mode === 'leaderboard'){
+              const rows = data.members.map((m, i) => `
+                <div style="display:flex; justify-content:space-between; padding:4px 0; ${m.accountId === (data.myAccountId||'') ? 'font-weight:700;' : ''}">
+                  <span>${i+1}. ${esc(m.displayName)}</span>
+                  <span>${m.count}</span>
+                </div>
+              `).join('');
+              return `
+                <div style="background:var(--ml-bg-2); border:1px solid var(--ml-border-2); border-radius:8px; padding:14px;">
+                  <div style="font-weight:700; margin-bottom:6px;">Ranking — ${esc(label)}</div>
+                  ${rows || '<div class="muted">Sem dados ainda.</div>'}
+                  <div class="meta" style="margin-top:6px;">Média do time: ${avgFmt}</div>
+                </div>
+              `;
+            }
+            if(mode === 'posicao'){
+              const posText = data.myPosition ? `Você está em ${data.myPosition}º de ${data.members.length} analistas` : 'Sem posição calculada';
+              return `
+                <div class="homeCard" style="text-align:left;">
+                  <div style="font-weight:700;">Ranking — ${esc(label)}</div>
+                  <div class="muted" style="margin-top:2px;">${esc(posText)} &middot; ${data.myCount} resolvido${data.myCount === 1 ? '' : 's'}.</div>
+                </div>
+              `;
+            }
+            // anonimo (padrao)
+            return `
+              <div class="homeCard" style="text-align:left;">
+                <div style="font-weight:700;">Ranking — ${esc(label)}</div>
+                <div class="muted" style="margin-top:2px;">Você: ${data.myCount} &middot; Média do time: ${avgFmt}</div>
+              </div>
+            `;
+          };
+
+          rankEl.innerHTML = `
+            <div style="font-weight:700;margin-bottom:10px;">Ranking do time (${esc(_RANKING_SCOPE_PROJECTS.join('+'))})</div>
+            <div id="ml_dash_ranking_body" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px;">
+              ${periods.map(p => `<div class="muted">Carregando ranking (${esc(p.label)})...</div>`).join('')}
+            </div>
+          `;
+
+          Promise.all(periods.map(p => getTeamRanking(p.key).catch(e => { console.warn(`[IS Toolkit][ranking] falha (${p.key}):`, e); return null; })))
+            .then(results => {
+              const body = document.getElementById('ml_dash_ranking_body');
+              if(!body) return;
+              body.innerHTML = periods.map((p, i) => renderRankingBlock(p.key, p.label, results[i])).join('');
+            });
+        }
+      }
     }
 
     // =========================
