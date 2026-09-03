@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.66.0
+// @version      1.67.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -7291,17 +7291,20 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           <div id="ml_home_health"></div>
 
           <div>
-            <div class="searchBox">
-              <input type="text" id="ml_home_search_input" placeholder="Cole uma chave de ticket (ex: IS-1028327) e Enter para inspecionar..." spellcheck="false" />
-              <button id="ml_home_search_btn" class="primary">Buscar</button>
-              <button id="ml_home_search_clear" class="ghost" title="Limpar">Limpar</button>
+            <div id="ml_home_clipboard"></div>
+            <button id="ml_home_search_toggle" class="ghost" style="font-size:12px;padding:5px 10px;">+ Buscar outro ticket</button>
+            <div id="ml_home_search_collapsible" style="display:none;margin-top:10px;">
+              <div class="searchBox">
+                <input type="text" id="ml_home_search_input" placeholder="Cole uma chave de ticket (ex: IS-1028327) e Enter para inspecionar..." spellcheck="false" />
+                <button id="ml_home_search_btn" class="primary">Buscar</button>
+                <button id="ml_home_search_clear" class="ghost" title="Limpar">Limpar</button>
+              </div>
+              <div class="hint" style="color: var(--ml-text-dim); font-size: 11px; margin-top: 6px;">
+                Acesso rapido a qualquer ticket sem trocar de aba. Voce ve resumo, status, localidade e pode marcar como duplicado do ticket atual em 1 clique.
+              </div>
+              <div id="ml_home_search_hist" style="margin-top: 10px;"></div>
+              <div id="ml_home_search_result" style="margin-top: 12px;"></div>
             </div>
-            <div class="hint" style="color: var(--ml-text-dim); font-size: 11px; margin-top: 6px;">
-              Acesso rapido a qualquer ticket sem trocar de aba. Voce ve resumo, status, localidade e pode marcar como duplicado do ticket atual em 1 clique.
-            </div>
-            <div id="ml_home_clipboard" style="margin-top: 10px;"></div>
-            <div id="ml_home_search_hist" style="margin-top: 10px;"></div>
-            <div id="ml_home_search_result" style="margin-top: 12px;"></div>
           </div>
 
           <!-- min-height reserva o espaço do card de localidade pra ele não empurrar os botões ao carregar (evita layout shift) -->
@@ -7635,7 +7638,30 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const result  = document.getElementById('ml_home_search_result');
       const histBox = document.getElementById('ml_home_search_hist');
       const clipBar = document.getElementById('ml_home_clipboard');
+      const toggleBtn = document.getElementById('ml_home_search_toggle');
+      const collapsible = document.getElementById('ml_home_search_collapsible');
       if(!input || !btn || !result) return;
+
+      // Busca colapsada por padrao (fica escondida atras de "+ Buscar outro ticket") pra nao
+      // ocupar o topo da Home pra quem nao usa toda hora. Expande sozinha quando precisa
+      // (clipboard detectado, clique num item do historico).
+      const expandSearch = () => {
+        if(!collapsible) return;
+        collapsible.style.display = '';
+        if(toggleBtn) toggleBtn.textContent = '− Buscar outro ticket';
+      };
+      if(toggleBtn && collapsible){
+        toggleBtn.onclick = () => {
+          const isOpen = collapsible.style.display !== 'none';
+          if(isOpen){
+            collapsible.style.display = 'none';
+            toggleBtn.textContent = '+ Buscar outro ticket';
+          } else {
+            expandSearch();
+            input.focus();
+          }
+        };
+      }
 
       const renderHistory = () => {
         if(!histBox) return;
@@ -7647,6 +7673,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           </div>`;
         histBox.querySelectorAll('[data-hist-key]').forEach(b => {
           b.onclick = () => {
+            expandSearch();
             input.value = b.getAttribute('data-hist-key');
             doSearch();
           };
@@ -7674,7 +7701,6 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       btn.onclick = doSearch;
       clrBtn.onclick = () => { input.value = ''; result.innerHTML = ''; input.focus(); };
       input.onkeydown = (ev) => { if(ev.key === 'Enter'){ ev.preventDefault(); doSearch(); }};
-      setTimeout(() => input.focus(), 50);
 
       renderHistory();
 
@@ -7697,7 +7723,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               <button id="ml_clip_use" class="primary" style="font-size:12px;padding:4px 12px;margin-left:auto;">Buscar</button>
               <button id="ml_clip_dismiss" class="ghost" style="font-size:12px;padding:4px 10px;">Ignorar</button>
             </div>`;
-          clipBar.querySelector('#ml_clip_use').onclick = () => { input.value = k; doSearch(); clipBar.innerHTML = ''; };
+          clipBar.querySelector('#ml_clip_use').onclick = () => { expandSearch(); input.value = k; doSearch(); clipBar.innerHTML = ''; };
           clipBar.querySelector('#ml_clip_dismiss').onclick = () => { clipBar.innerHTML = ''; };
         }).catch(() => { /* silently ignore - usuario pode nao ter dado permissao */ });
       }
