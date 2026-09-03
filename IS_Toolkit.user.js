@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.80.0
+// @version      1.81.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -8842,8 +8842,6 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       opts = opts || {};
       document.getElementById('ml_setup_wizard_overlay')?.remove();
 
-      const cur = SETTINGS;
-
       const overlay = document.createElement('div');
       overlay.id = 'ml_setup_wizard_overlay';
       overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100020;display:flex;align-items:center;justify-content:center;';
@@ -8851,95 +8849,66 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const box = document.createElement('div');
       box.style.cssText = 'background:#1e1e2e;color:#e0e0e0;border-radius:12px;padding:24px;max-width:640px;width:96%;max-height:88vh;overflow-y:auto;font-family:var(--ml-font,sans-serif);font-size:13px;';
 
+      // Tour de boas-vindas — so ensina a usar (nao pede pra configurar nada). Webhook de auditoria,
+      // campos do Jira e telefone de contato ja vem prontos por padrao (configurados centralmente);
+      // quem realmente precisar mexer neles acha tudo em Configuracoes → Avancado.
       box.innerHTML = `
         <h3 style="margin:0 0 4px;font-size:18px;color:#fff;">&#128075; Bem-vindo ao IS Toolkit</h3>
         <p style="margin:0 0 16px;color:#aaa;line-height:1.5;">
-          Assistente rápido de configuração inicial — leva menos de 1 minuto. Nada aqui é obrigatório:
-          pule o que não souber agora, você pode reabrir este assistente e configurar depois em
-          Configurações → Avançado → "Assistente de setup inicial".
+          Um tour rápido de menos de 1 minuto pra você achar as coisas. Nada aqui precisa ser
+          configurado — o essencial já vem pronto. Pode fechar quando quiser e reabrir depois em
+          Configurações → Avançado → "Tour de boas-vindas".
         </p>
 
         <div style="border-top:1px solid #3a3a4e;padding-top:14px;margin-top:6px;">
-          <label style="font-weight:600;display:block;margin-bottom:4px;color:#ccc;">1. Webhook de auditoria por IA <span style="color:#888;font-weight:400;">(já vem preenchido — só troque se souber que mudou)</span></label>
-          <input type="text" id="ml_wiz_webhook" placeholder="https://...n8n.../webhook/..." value="${esc(cur.AUDIT_WEBHOOK_URL || '')}"
-            style="width:100%;padding:7px 9px;border:1px solid #555;border-radius:6px;background:#2a2a3e;color:#e0e0e0;font-size:12px;box-sizing:border-box;" />
-          <div style="font-size:11px;color:#888;margin-top:4px;">É o endpoint central do time — a maioria não precisa tocar aqui. Deixe vazio pra desabilitar o card "Auditar Ticket".</div>
+          <label style="font-weight:600;display:block;margin-bottom:4px;color:#ccc;">&#128309; Os 3 botões flutuantes</label>
+          <div style="font-size:12px;color:#bbb;line-height:1.6;">
+            Só um aparece por vez, dependendo da página:<br/>
+            <b>IS Toolkit</b> (azul) — dentro de um ticket (<code>/browse/...</code>): duplicados, derivação, ISS, status, snippets.<br/>
+            <b>Gerenciador</b> (verde) — na fila (<code>/issues</code> ou <code>/queues</code>): ações em lote nos tickets da fila.<br/>
+            <b>Meu Perfil</b> (roxo) — em Dashboards: seus cards de produtividade, SLA, auditoria pendente e afins.
+          </div>
         </div>
 
         <div style="border-top:1px solid #3a3a4e;padding-top:14px;margin-top:14px;">
-          <label style="font-weight:600;display:block;margin-bottom:6px;color:#ccc;">2. Campos do ticket usados na auditoria <span style="color:#888;font-weight:400;">(opcional)</span></label>
-          <div style="font-size:11px;color:#888;margin-bottom:8px;">Abra um ticket Jira numa aba antes de clicar aqui — o assistente lê os customfields desse ticket pra você escolher qual é qual.</div>
-          <button type="button" id="ml_wiz_discover" style="padding:7px 14px;border:1px solid #555;border-radius:6px;background:#2a2a3e;color:#e0e0e0;cursor:pointer;font-size:12px;">&#128269; Descobrir automaticamente</button>
-          <div id="ml_wiz_discover_status" style="font-size:11px;color:#888;margin-top:6px;"></div>
-          <!-- Inputs ocultos: mesmos ids que openDiscoverModal ja sabe preencher (reaproveita a logica de Configuracoes) -->
-          <input type="hidden" id="ml_s_cf_category" value="${Number(cur.CF_CATEGORY)||0}" />
-          <input type="hidden" id="ml_s_cf_subcategory" value="${Number(cur.CF_SUBCATEGORY)||0}" />
-          <input type="hidden" id="ml_s_cf_request_type" value="${Number(cur.CF_REQUEST_TYPE)||0}" />
-          <input type="hidden" id="ml_s_cf_user_validation" value="${Number(cur.CF_USER_VALIDATION)||0}" />
-          <input type="hidden" id="ml_s_cf_solution_type" value="${Number(cur.CF_SOLUTION_TYPE)||0}" />
-          <input type="hidden" id="ml_s_cf_usage_mark" value="${Number(cur.CF_USAGE_MARK)||0}" />
+          <label style="font-weight:600;display:block;margin-bottom:4px;color:#ccc;">&#9889; Snippets &amp; atalhos</label>
+          <div style="font-size:12px;color:#bbb;line-height:1.6;">
+            Digite <code>/</code> seguido do nome do snippet em qualquer caixa de comentário pra inserir
+            mensagens prontas. Também dá pra assumir o ticket e mudar pra "In Progress" com um atalho de
+            teclado (padrão <code>Cmd+Shift+A</code>). Tudo configurável em
+            Configurações → Snippets &amp; Atalhos.
+          </div>
         </div>
 
         <div style="border-top:1px solid #3a3a4e;padding-top:14px;margin-top:14px;">
-          <label style="font-weight:600;display:block;margin-bottom:4px;color:#ccc;">3. Telefone de contato (WhatsApp) <span style="color:#888;font-weight:400;">(opcional)</span></label>
-          <input type="number" id="ml_wiz_cf_phone" min="0" value="${Number(cur.CF_CONTACT_PHONE)||0}"
-            style="width:100%;padding:7px 9px;border:1px solid #555;border-radius:6px;background:#2a2a3e;color:#e0e0e0;font-size:12px;box-sizing:border-box;" />
-          <div style="font-size:11px;color:#888;margin-top:4px;">ID do customfield "Contact phone". <b>0</b> = ler direto da tela do ticket (funciona na maioria dos casos — deixe 0 se não souber).</div>
+          <label style="font-weight:600;display:block;margin-bottom:4px;color:#ccc;">&#128202; Painel do analista (Meu Perfil)</label>
+          <div style="font-size:12px;color:#bbb;line-height:1.6;">
+            Em Dashboards, o botão "Meu Perfil" mostra cards com sua produtividade, tickets antigos,
+            risco de SLA e auditorias pendentes — tudo puxado automaticamente. Não precisa de nenhum
+            desses? Dá pra desligar card por card em Configurações → Avançado.
+          </div>
+        </div>
+
+        <div style="border-top:1px solid #3a3a4e;padding-top:14px;margin-top:14px;">
+          <div style="font-size:11px;color:#888;">
+            Webhook de auditoria por IA e campos do Jira usados nela já vêm configurados centralmente
+            pro time — só mexa nisso em Configurações → Avançado se souber que algo mudou.
+          </div>
         </div>
 
         <div style="display:flex;gap:10px;margin-top:20px;justify-content:flex-end;flex-wrap:wrap;">
-          <button id="ml_wiz_skip" style="padding:7px 16px;border:1px solid #555;border-radius:6px;background:transparent;color:#e0e0e0;cursor:pointer;">Pular por agora</button>
-          <button id="ml_wiz_save" style="padding:7px 16px;border:none;border-radius:6px;background:#0052cc;color:#fff;cursor:pointer;font-weight:600;">Salvar e recarregar</button>
+          <button id="ml_wiz_close" style="padding:7px 16px;border:none;border-radius:6px;background:#0052cc;color:#fff;cursor:pointer;font-weight:600;">Entendi</button>
         </div>
       `;
 
       overlay.appendChild(box);
       document.body.appendChild(overlay);
 
-      box.querySelector('#ml_wiz_discover').addEventListener('click', async () => {
-        const btn = box.querySelector('#ml_wiz_discover');
-        const statusEl = box.querySelector('#ml_wiz_discover_status');
-        const orig = btn.textContent;
-        btn.disabled = true;
-        btn.textContent = '⏳ Buscando...';
-        const result = await discoverJiraFields();
-        btn.disabled = false;
-        btn.textContent = orig;
-        if(result){
-          openDiscoverModal(result.issueKey, result.customs, box);
-          statusEl.textContent = `Campos de ${result.issueKey} carregados acima — selecione e clique em "Aplicar".`;
-        }
-      });
-
-      // "Pular" so marca o wizard como visto (nao muda nenhum valor) — nao interrompe de novo
-      // automaticamente, mas continua acessivel em Configuracoes → Avancado quando quiser voltar.
-      box.querySelector('#ml_wiz_skip').addEventListener('click', () => {
+      // Fecha o tour e marca como visto — nao interrompe mais automaticamente, mas continua
+      // acessivel em Configuracoes → Avancado quando quiser rever.
+      box.querySelector('#ml_wiz_close').addEventListener('click', () => {
         try{ saveSettings({ ...SETTINGS, SETUP_WIZARD_DONE: true }); }catch(e){}
         overlay.remove();
-      });
-
-      box.querySelector('#ml_wiz_save').addEventListener('click', () => {
-        const values = {
-          ...SETTINGS,
-          AUDIT_WEBHOOK_URL:  String(box.querySelector('#ml_wiz_webhook').value || '').trim(),
-          CF_CATEGORY:        Math.max(0, Number(box.querySelector('#ml_s_cf_category').value)        || 0),
-          CF_SUBCATEGORY:     Math.max(0, Number(box.querySelector('#ml_s_cf_subcategory').value)     || 0),
-          CF_REQUEST_TYPE:    Math.max(0, Number(box.querySelector('#ml_s_cf_request_type').value)    || 0),
-          CF_USER_VALIDATION: Math.max(0, Number(box.querySelector('#ml_s_cf_user_validation').value)  || 0),
-          CF_SOLUTION_TYPE:   Math.max(0, Number(box.querySelector('#ml_s_cf_solution_type').value)    || 0),
-          CF_USAGE_MARK:      Math.max(0, Number(box.querySelector('#ml_s_cf_usage_mark').value)       || 0),
-          CF_CONTACT_PHONE:   Math.max(0, Number(box.querySelector('#ml_wiz_cf_phone').value)          || 0),
-          SETUP_WIZARD_DONE: true
-        };
-        const ok = saveSettings(values);
-        if(ok){
-          const saveBtn = box.querySelector('#ml_wiz_save');
-          saveBtn.disabled = true;
-          saveBtn.textContent = '✓ Salvo — recarregando...';
-          setTimeout(() => { try{ location.reload(); }catch(_){ overlay.remove(); } }, 900);
-        } else {
-          alert('Não foi possível salvar (GM storage indisponível).');
-        }
       });
     }
 
@@ -9324,15 +9293,16 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             </div>
 
             <div class="group full" data-tab="advanced">
-              <h4>Assistente de setup inicial</h4>
+              <h4>Tour de boas-vindas</h4>
               <div class="grid">
                 <div class="full">
                   <div class="hint" style="margin:0 0 8px;">
-                    Reabre o assistente guiado (webhook de auditoria, campos do ticket e telefone de contato) —
-                    o mesmo que aparece automaticamente numa instala&ccedil;&atilde;o nova.
+                    Reabre o tour rápido (botões flutuantes, snippets/atalhos, painel do analista) —
+                    o mesmo que aparece automaticamente numa instala&ccedil;&atilde;o nova. Não configura nada,
+                    só explica onde achar as coisas.
                   </div>
                   <button type="button" id="ml_s_reopen_wizard" class="ghost" style="padding:6px 14px;font-size:13px;">
-                    &#128075; Abrir assistente de setup
+                    &#128075; Reabrir tour de boas-vindas
                   </button>
                 </div>
               </div>
