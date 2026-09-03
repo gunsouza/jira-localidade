@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.72.0
+// @version      1.73.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -6642,14 +6642,17 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         }catch(e){}
       }
 
-      // Envia para o webhook n8n via GM_xmlhttpRequest (bypassa CORS) com retry em 503
+      // Envia para o webhook n8n via GM_xmlhttpRequest (bypassa CORS) com retry em 503/502/504
+      // e tambem em timeout puro (cold start do n8n, rede lenta etc. — antes so tentava de novo
+      // em erro de gateway, um timeout isolado derrubava a auditoria na hora sem segunda chance).
+      const AUDIT_WEBHOOK_TIMEOUT_MS = 120000; // 120s por tentativa (antes 60s)
       const _callWebhook = () => new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
           method: 'POST',
           url: webhookUrl,
           headers: { 'Content-Type': 'application/json' },
           data: JSON.stringify({ prompt, issueKey, images }),
-          timeout: 60000,
+          timeout: AUDIT_WEBHOOK_TIMEOUT_MS,
           onload(r){
             if(r.status < 200 || r.status >= 300){
               return reject(Object.assign(new Error(`Webhook HTTP ${r.status}: ${r.responseText?.slice(0,200)}`), { status: r.status }));
@@ -6658,7 +6661,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             catch{ resolve({ result: r.responseText }); }
           },
           onerror(){ reject(new Error('Erro de rede ao chamar o webhook')); },
-          ontimeout(){ reject(new Error('Timeout — webhook demorou mais de 60s')); }
+          ontimeout(){ reject(Object.assign(new Error(`Timeout — webhook demorou mais de ${AUDIT_WEBHOOK_TIMEOUT_MS/1000}s`), { isTimeout: true })); }
         });
       });
 
@@ -6674,7 +6677,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           break;
         }catch(e){
           lastErr = e;
-          if(e.status !== 503 && e.status !== 502 && e.status !== 504) throw e; // só retry em erros de gateway
+          // Retry em erro de gateway (502/503/504) OU timeout puro; qualquer outro erro (rede, 4xx) falha na hora.
+          const retryable = e.status === 503 || e.status === 502 || e.status === 504 || e.isTimeout;
+          if(!retryable) throw e;
         }
       }
       if(!wData) throw lastErr;
