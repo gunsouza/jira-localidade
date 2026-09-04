@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.92.0
+// @version      1.93.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -10660,7 +10660,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
     // =========================
     // DUPLICATES — render principal + intera\u00e7\u00f5es
     // =========================
-    async function renderDuplicates(modal, issueKey) {
+    async function renderDuplicates(modal, issueKey, opts) {
+      opts = opts || {};
+      const manualIdsRaw = Array.isArray(opts.manualIds) ? opts.manualIds : [];
       modal.setBody(`<div class="meta">Carregando duplicados…</div>`);
 
       const [issueCurrent, asset] = await Promise.all([
@@ -10676,7 +10678,21 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         .join(' ');
       const currentText = `${summaryCurrent}\n${descCurrent}\n${extraFieldsText}`.trim();
 
-      const currentIds = extractIdentifiersFromText(currentText);
+      const autoIds = extractIdentifiersFromText(currentText);
+      // IDs digitados manualmente (quando o auto-detect nao pega, ex: formato fora do padrao).
+      // Tenta reconhecer o TIPO certo (ip/mac/serial/etc, mesmo peso do auto-detect); se nao
+      // bater em nenhum padrao conhecido, entra como token generico "manual" com peso alto —
+      // foi confirmado por uma pessoa, entao conta como sinal forte de match.
+      const manualIdsParsed = manualIdsRaw.flatMap(raw => {
+        const s = String(raw || '').trim();
+        if(!s) return [];
+        const parsed = extractIdentifiersFromText(s);
+        return (parsed.length ? parsed : [{ type: 'manual', value: s.toUpperCase(), weight: 6 }])
+          .map(x => ({ ...x, manual: true }));
+      });
+      // Mescla e remove duplicata por valor (auto-detect tem prioridade se o mesmo valor jah veio de la)
+      const seenVals = new Set(autoIds.map(x => x.value));
+      const currentIds = [...autoIds, ...manualIdsParsed.filter(x => !seenVals.has(x.value) && seenVals.add(x.value))];
       const idsLabel = currentIds.length ? currentIds.slice(0, 12).map(x => x.value).join(', ') : '—';
 
       const { objectId, workspaceId } = asset;
@@ -10712,8 +10728,31 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const counts = computeCounts(items);
 
       const chipsHtml = currentIds.length
-        ? currentIds.slice(0, 12).map(it => `<span class="chip" data-chip="${esc(it.value)}">${esc(it.value)}</span>`).join('')
+        ? currentIds.slice(0, 12).map(it => `<span class="chip${it.manual ? ' manual' : ''}" data-chip="${esc(it.value)}" title="${it.manual ? 'Digitado manualmente' : 'Detectado automaticamente'}">${esc(it.value)}${it.manual ? ' ✎' : ''}</span>`).join('')
         : `<span class="muted">Nenhum ID detectado no ticket atual.</span>`;
+
+      // Descricao do ticket atual (contexto pra quem esta revisando os candidatos a duplicado
+      // sem precisar alternar de aba) + campo pra digitar manualmente um identificador que o
+      // auto-detect nao pegou (serial/MAC/IP fora dos padroes reconhecidos, ou em um campo que
+      // a extracao nao cobre). Ao adicionar, refaz a tela inteira com esse ID mesclado nos
+      // detectados automaticamente, recalculando o match contra todos os candidatos.
+      const manualChipsHtml = manualIdsRaw.length
+        ? manualIdsRaw.map((raw, i) => `<span class="chip manual" data-manual-remove="${i}" title="Remover">${esc(raw)} ✕</span>`).join('')
+        : '';
+      const currentBox = `
+        <div class="topbar" style="margin-bottom:10px;">
+          <details open>
+            <summary style="cursor:pointer;font-weight:700;">Descrição do ticket atual (${esc(issueKey)})</summary>
+            <div class="meta" style="white-space:pre-wrap;margin-top:6px;">${esc(descCurrent) || '<span class="muted">(sem descrição)</span>'}</div>
+          </details>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">
+            <input type="text" id="ml_dup_manual_id" placeholder="ID nao detectado? Digite serial/MAC/IP aqui" style="flex:1;min-width:220px;background:var(--ml-bg-0);color:var(--ml-text);border:1px solid var(--ml-border-2);border-radius:var(--ml-radius-sm);padding:6px 10px;font-size:12.5px;" />
+            <button id="ml_dup_manual_add" class="btnSecondary">+ Adicionar ID</button>
+            ${manualIdsRaw.length ? `<button id="ml_dup_manual_clear" class="ghost">Limpar manuais</button>` : ''}
+          </div>
+          ${manualChipsHtml ? `<div class="chips" style="margin-top:8px;">${manualChipsHtml}</div>` : ''}
+        </div>
+      `;
 
       const topbar = `
         <div class="topbar">
@@ -10735,7 +10774,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               <button id="ml_loc_batch" class="disabled">Derivar selecionados (0)</button>
             </div>
           </div>
-          <div class="meta">Clique em um ID para filtrar. Clique no card para selecionar. Use “Detalhes” para ver a descrição completa, a localidade e mudar a prioridade (individual ou em “Prioridade selecionados”).</div>
+          <div class="meta">Clique em um ID para filtrar. Clique no card para selecionar. Use “Detalhes” para ver a descrição completa, a localidade e mudar a prioridade (individual ou em “Prioridade selecionados”). IDs marcados com ✎ foram digitados manualmente.</div>
           <div class="chips" id="ml_loc_chips">${chipsHtml}</div>
         </div>
       `;
@@ -10743,6 +10782,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const listHtml = items.map(it => renderIssueCard(it)).join('');
 
       modal.setBody(`
+        ${currentBox}
         ${topbar}
         <div class="list" id="ml_loc_list">
           ${listHtml}
@@ -10751,6 +10791,28 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       `);
 
       document.getElementById('ml_dup_back').onclick = () => renderHome(modal, issueKey);
+
+      // Campo de ID manual: reabre a tela inteira com o valor mesclado nos IDs auto-detectados.
+      (() => {
+        const input = document.getElementById('ml_dup_manual_id');
+        const addBtn = document.getElementById('ml_dup_manual_add');
+        const clearBtn = document.getElementById('ml_dup_manual_clear');
+        if(!input || !addBtn) return;
+        const doAdd = () => {
+          const v = input.value.trim();
+          if(!v) return;
+          renderDuplicates(modal, issueKey, { manualIds: [...manualIdsRaw, v] });
+        };
+        addBtn.onclick = doAdd;
+        input.addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); doAdd(); } });
+        if(clearBtn) clearBtn.onclick = () => renderDuplicates(modal, issueKey, { manualIds: [] });
+        document.querySelectorAll('[data-manual-remove]').forEach(chip => {
+          chip.addEventListener('click', () => {
+            const idx = Number(chip.getAttribute('data-manual-remove'));
+            renderDuplicates(modal, issueKey, { manualIds: manualIdsRaw.filter((_, i) => i !== idx) });
+          });
+        });
+      })();
 
       setTimeout(() => {
         const chipWrap = document.getElementById('ml_loc_chips');
