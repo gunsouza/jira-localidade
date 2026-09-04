@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.1.1
+// @version      2.2.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -606,6 +606,18 @@
       RANKING_SHOW_DAILY: true,
       RANKING_SHOW_MONTHLY: true,
 
+      // ---- Painel administrativo (Admin Mode, v2.2.0) ----
+      // Secao extra no Painel do analista com visao de FILA/TIME (nao so "eu"): volume de
+      // criados/resolvidos/backlog liquido, criados x resolvidos por pessoa (usa o mesmo
+      // grupo do Ranking, RANKING_TEAM_GROUP) e categoria do time todo na semana. Escopado
+      // a IS+ISS, igual o Ranking. So aparece pra quem digitar o codigo certo em
+      // Configuracoes -> Painel do analista e recarregar a pagina (F5) depois de salvar.
+      // ATENCAO: isso NAO e seguranca de verdade — o codigo fica no proprio script (que
+      // qualquer um pode ler/inspecionar), e so uma trava simples pra o card nao aparecer
+      // sem querer pra quem nao deveria ver dado agregado do time. Troque livremente.
+      ADMIN_MODE_SECRET: 'natis-n1-admin',
+      ADMIN_CODE: '', // o que a pessoa digitou em Configuracoes (comparado contra o de cima)
+
       // ---- Campos customizados de auditoria (IDs por instancia Jira) ----
       // Preenchidos via "Descobrir campos" em Configuracoes → Integrações.
       // 0 = nao configurado (campo ignorado na auditoria).
@@ -735,6 +747,11 @@
     const RANKING_DISPLAY_MODE = String(SETTINGS.RANKING_DISPLAY_MODE ?? DEFAULTS.RANKING_DISPLAY_MODE ?? 'anonimo');
     const RANKING_SHOW_DAILY = !!(SETTINGS.RANKING_SHOW_DAILY ?? DEFAULTS.RANKING_SHOW_DAILY);
     const RANKING_SHOW_MONTHLY = !!(SETTINGS.RANKING_SHOW_MONTHLY ?? DEFAULTS.RANKING_SHOW_MONTHLY);
+    // Admin Mode: desbloqueado comparando o codigo digitado (SETTINGS.ADMIN_CODE) contra o
+    // codigo fixo do script (DEFAULTS.ADMIN_MODE_SECRET). So um gate de UI, nao seguranca real.
+    const ADMIN_MODE_SECRET = String(DEFAULTS.ADMIN_MODE_SECRET || '').trim();
+    const ADMIN_CODE = String(SETTINGS.ADMIN_CODE ?? DEFAULTS.ADMIN_CODE ?? '').trim();
+    const ADMIN_MODE_UNLOCKED = !!(ADMIN_MODE_SECRET && ADMIN_CODE && ADMIN_CODE === ADMIN_MODE_SECRET);
 
     const DESC_PREVIEW_LEN = SETTINGS.DESC_PREVIEW_LEN;
     const DUP_LABEL_MAX_TOKENS = SETTINGS.DUP_LABEL_MAX_TOKENS;
@@ -2063,31 +2080,50 @@
     }
 
     // ---- Metrificacao por categoria (Painel do analista) ----
-    // SOMENTE LEITURA do campo real de Categoria (CF_CATEGORY, mesmo da auditoria) — busca os
-    // resolvidos da semana numa unica chamada e agrupa por valor no cliente (sem precisar
-    // listar os valores possiveis do campo antes).
-    async function getCategoryBreakdownThisWeek(){
-      const cfCategoryId = Number(SETTINGS.CF_CATEGORY || DEFAULTS.CF_CATEGORY || 0);
-      if(!CATEGORY_BREAKDOWN_ENABLED || !cfCategoryId) return null;
-      const fieldKey = `customfield_${cfCategoryId}`;
-      const jql = `${_projScope()}assignee = currentUser() AND resolutiondate >= startOfWeek()`;
+    // SOMENTE LEITURA do(s) campo(s) real(is) de Categoria — busca os resolvidos da semana
+    // numa unica chamada e agrupa por valor no cliente (sem precisar listar os valores
+    // possiveis do campo antes). scope: 'me' (so os meus, padrao) ou 'team' (time todo,
+    // usado no Painel administrativo — v2.2.0).
+    //
+    // Desde a v2.0.0 o projeto IS usa DOIS campos de categoria (Problem Hardware pra
+    // incidente, Service Hardware pra solicitacao), nao um so — entao aqui, por ticket, le
+    // o campo certo conforme o issuetype (mesma logica da auditoria). CF_CATEGORY (legado)
+    // continua servindo de fallback caso o projeto use so um campo unico.
+    async function getCategoryBreakdownThisWeek(scope){
+      scope = scope === 'team' ? 'team' : 'me';
+      const cfIncident = Number(SETTINGS.CF_CATEGORY_INCIDENT || DEFAULTS.CF_CATEGORY_INCIDENT || 0);
+      const cfService  = Number(SETTINGS.CF_CATEGORY_SERVICE  || DEFAULTS.CF_CATEGORY_SERVICE  || 0);
+      const cfLegacy   = Number(SETTINGS.CF_CATEGORY || DEFAULTS.CF_CATEGORY || 0);
+      if(!CATEGORY_BREAKDOWN_ENABLED || (!cfIncident && !cfService && !cfLegacy)) return null;
+
+      const fieldKeys = [...new Set([cfIncident, cfService, cfLegacy].filter(Boolean).map(id => `customfield_${id}`))];
+      const who = scope === 'team' ? '' : 'assignee = currentUser() AND ';
+      // 'team' usa o mesmo escopo fixo IS+ISS do resto do Painel administrativo/Ranking
+      // (_rankingProjScope), nao os PROJECTS configuraveis (esses so valem pro card pessoal).
+      const projScope = scope === 'team' ? _rankingProjScope() : _projScope();
+      const jql = `${projScope}${who}resolutiondate >= startOfWeek()`;
+      const maxResults = scope === 'team' ? 250 : 100;
       const r = await fetch(`${location.origin}/rest/api/3/search/jql`, {
         method: 'POST', credentials: 'same-origin',
         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jql, maxResults: 100, fields: [fieldKey] })
+        body: JSON.stringify({ jql, maxResults, fields: ['issuetype', ...fieldKeys] })
       });
       if(!r.ok) throw new Error(`HTTP ${r.status} ao buscar categorias`);
       const d = await r.json();
       const issues = d.issues || [];
       const counts = {};
       for(const it of issues){
-        const v = it.fields?.[fieldKey];
+        const isIncident = /incident|incidente/i.test(it.fields?.issuetype?.name || '');
+        const fieldKey = isIncident
+          ? (cfIncident ? `customfield_${cfIncident}` : (cfLegacy ? `customfield_${cfLegacy}` : null))
+          : (cfService  ? `customfield_${cfService}`  : (cfLegacy ? `customfield_${cfLegacy}` : null));
+        const v = fieldKey ? it.fields?.[fieldKey] : null;
         const label = (v && typeof v === 'object') ? (v.value ?? v.name ?? '') : (v ?? '');
         const key = String(label || '(sem categoria)').trim() || '(sem categoria)';
         counts[key] = (counts[key] || 0) + 1;
       }
       const breakdown = Object.entries(counts).map(([label, count]) => ({ label, count })).sort((a,b) => b.count - a.count);
-      return { total: issues.length, truncated: (d.total ?? issues.length) > issues.length, breakdown };
+      return { total: issues.length, truncated: (d.total ?? issues.length) > issues.length, breakdown, maxResults };
     }
 
     // ---- Ranking do time (Painel do analista) ----
@@ -2162,6 +2198,63 @@
       const myPosition = myRow ? (rows.indexOf(myRow) + 1) : null;
 
       return { period, members: rows, teamAverage, myCount, myPosition, myAccountId };
+    }
+
+    // ---- Painel administrativo (Admin Mode, v2.2.0) ----
+    // Visao de FILA/TIME (nao "eu"): volume de criados/resolvidos/backlog liquido, e
+    // criados x resolvidos x auto-fechados por pessoa. Sempre escopado a IS+ISS
+    // (_rankingProjScope, igual o Ranking) e reusa o mesmo grupo do Jira configurado em
+    // RANKING_TEAM_GROUP pra saber quem entra na visao por pessoa. So chamado quando
+    // ADMIN_MODE_UNLOCKED e true (ver renderDashboardsHome).
+    function _adminStartFn(period){
+      return period === 'month' ? 'startOfMonth()' : period === 'week' ? 'startOfWeek()' : 'startOfDay()';
+    }
+
+    // Volume da fila (time todo, sem quebrar por pessoa): quantos entraram, quantos saíram
+    // e o saldo (backlogDelta > 0 = fila crescendo; < 0 = encolhendo) no período.
+    async function getAdminQueueVolume(period){
+      const scope = _rankingProjScope();
+      const startFn = _adminStartFn(period);
+      const [created, resolved] = await Promise.all([
+        countByJql(`${scope}created >= ${startFn}`),
+        countByJql(`${scope}resolutiondate >= ${startFn}`)
+      ]);
+      return { period, created, resolved, backlogDelta: created - resolved };
+    }
+
+    // Criados x Resolvidos x Auto-fechados (reporter = assignee = a mesma pessoa, ex: quem
+    // abre uma ISS pra si mesmo e tambem resolve), por pessoa do grupo RANKING_TEAM_GROUP.
+    // 3 contagens por pessoa (em vez de 1, como o Ranking) — concorrencia um pouco menor
+    // pra nao estourar rate limit em grupos grandes.
+    async function getAdminTeamOverview(period){
+      if(!RANKING_TEAM_GROUP) return null;
+      const members = await getGroupMembers(RANKING_TEAM_GROUP);
+      if(!members.length) return { period, members: [] };
+      const scope = _rankingProjScope();
+      const startFn = _adminStartFn(period);
+
+      const rows = [];
+      const CONCURRENCY = 4;
+      let idx = 0;
+      async function worker(){
+        while(idx < members.length){
+          const m = members[idx++];
+          try{
+            const [created, resolved, selfClosed] = await Promise.all([
+              countByJql(`${scope}reporter = "${m.accountId}" AND created >= ${startFn}`),
+              countByJql(`${scope}assignee = "${m.accountId}" AND resolutiondate >= ${startFn}`),
+              countByJql(`${scope}reporter = "${m.accountId}" AND assignee = "${m.accountId}" AND resolutiondate >= ${startFn}`)
+            ]);
+            rows.push({ ...m, created, resolved, selfClosed });
+          }catch(e){
+            console.warn(`[IS Toolkit][admin] falha contando ${m.displayName} (${period}):`, e);
+            rows.push({ ...m, created: 0, resolved: 0, selfClosed: 0, error: true });
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, members.length) }, worker));
+      rows.sort((a, b) => b.resolved - a.resolved);
+      return { period, members: rows };
     }
 
     async function searchIssuesWithCache(objectId, jql){
@@ -10059,6 +10152,27 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               </div>
             </div>
 
+            <div class="group full" data-tab="painel">
+              <h4>&#128274; Painel administrativo (v2.2.0)</h4>
+              <div class="grid">
+                <div class="full" style="margin-bottom:4px;">
+                  <div class="hint" style="margin:0;">
+                    Vis&atilde;o de <b>fila/time</b> (n&atilde;o s&oacute; voc&ecirc;): volume de criados/resolvidos/backlog
+                    l&iacute;quido (hoje/semana/m&ecirc;s), criados &times; resolvidos &times; auto-fechados por pessoa
+                    (usa o mesmo grupo do Ranking do time, acima) e categoria do time todo na semana. Sempre
+                    escopado a <code>IS</code>+<code>ISS</code>. <b>N&atilde;o &eacute; seguran&ccedil;a de verdade</b>
+                    &mdash; o c&oacute;digo fica no pr&oacute;prio script (qualquer um com acesso ao c&oacute;digo-fonte
+                    consegue ler), &eacute; s&oacute; uma trava simples pra o card n&atilde;o aparecer sem querer.
+                  </div>
+                </div>
+                <div class="full">
+                  <label>C&oacute;digo de admin</label>
+                  <input type="text" id="ml_s_admin_code" value="${esc(cur.ADMIN_CODE || '')}" placeholder="Cole o c&oacute;digo aqui" style="font-family:var(--ml-mono);font-size:12px;" />
+                  <div class="hint">Digite o c&oacute;digo certo, clique em <b>Salvar</b> e recarregue a p&aacute;gina (F5) &mdash; o card aparece na tela de Dashboards (Painel do analista) depois do reload. Vazio ou errado = card continua escondido.</div>
+                </div>
+              </div>
+            </div>
+
             <div class="group full" data-tab="auditoria">
               <h4>Campos de Auditoria (Jira Custom Fields)</h4>
               <div class="grid">
@@ -10309,7 +10423,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         snippets:   '<b>Snippets</b> &mdash; Mensagens pr&eacute;-cadastradas com <code>/comandos</code> pra digitar r&aacute;pido em qualquer textarea do toolkit.',
         atalhos:    '<b>Atalhos</b> &mdash; Todos os atalhos de teclado do toolkit num s&oacute; lugar: abrir/fechar o modal, menu de Status, coment&aacute;rio r&aacute;pido, assumir ticket, e outras a&ccedil;&otilde;es opcionais.',
         auditoria:  '<b>Auditoria</b> &mdash; Webhook da an&aacute;lise por IA e os customfields usados nela (categoria, subcategoria, etc.). J&aacute; vem tudo preenchido pro time; s&oacute; mexa se souber que mudou.',
-        painel:     '<b>Painel do analista</b> &mdash; Cards que aparecem no bot&atilde;o "Meu Perfil" (Dashboards): pend&ecirc;ncias de auditoria, risco de SLA, tickets antigos, categoria da semana e ranking do time.',
+        painel:     '<b>Painel do analista</b> &mdash; Cards que aparecem no bot&atilde;o "Meu Perfil" (Dashboards): pend&ecirc;ncias de auditoria, risco de SLA, tickets antigos, categoria da semana, ranking do time e o Painel administrativo (vis&atilde;o de fila/time, atr&aacute;s de c&oacute;digo).',
         whatsapp:   '<b>WhatsApp</b> &mdash; Mensagem padr&atilde;o, c&oacute;digo do pa&iacute;s e campo de telefone usados pelo bot&atilde;o de acionamento via WhatsApp.',
         autoreload: '<b>Auto-reload</b> &mdash; Recarrega a p&aacute;gina automaticamente (o Jira daqui n&atilde;o atualiza em tempo real). Liga/desliga no bot&atilde;o flutuante, <b>por aba</b>. Aqui ficam o intervalo padr&atilde;o e as pausas de seguran&ccedil;a.',
         confluence: '<b>Confluence</b> &mdash; Regras que ligam tipo do ticket a um link de troubleshooting no Confluence (chip lateral &#x1F4D6;). Regras s&atilde;o mantidas pelo admin; voc&ecirc; pode ajustar URL se o link mudar.',
@@ -10836,6 +10950,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             RANKING_DISPLAY_MODE: String(modal.querySelector('#ml_s_ranking_mode')?.value || 'anonimo'),
             RANKING_SHOW_DAILY:   !!modal.querySelector('#ml_s_ranking_daily')?.checked,
             RANKING_SHOW_MONTHLY: !!modal.querySelector('#ml_s_ranking_monthly')?.checked,
+
+            // Painel administrativo (Admin Mode, v2.2.0)
+            ADMIN_CODE: String(modal.querySelector('#ml_s_admin_code')?.value || '').trim(),
 
             // Campos de auditoria
             CF_CATEGORY:        Math.max(0, Number(modal.querySelector('#ml_s_cf_category')?.value)  || 0),
@@ -11752,6 +11869,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
           <div id="ml_dash_ranking" style="margin-top:16px;"></div>
 
+          <div id="ml_dash_admin" style="margin-top:16px;"></div>
+
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin:16px 0;">
             <button id="ml_dash_batch" class="primary" style="flex:1;min-width:180px;">&#128203; Gerenciador de fila</button>
             ${GRID_CENTRAL_URL ? `<a href="${esc(GRID_CENTRAL_URL)}" target="_blank" rel="noopener" class="btnSecondary" style="flex:1;min-width:180px;text-decoration:none;display:flex;align-items:center;justify-content:center;">&#128194; Central Natis</a>` : ''}
@@ -11771,8 +11890,12 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         if(!SLA_FIELD_ID) hidden.push('Risco de SLA');
         if(!AUDIT_PENDING_JQL) hidden.push('Pendências de auditoria oficial');
         if(!OLD_TICKET_DAYS) hidden.push('Tickets antigos');
-        const cfCategoryId = Number(SETTINGS.CF_CATEGORY || DEFAULTS.CF_CATEGORY || 0);
-        if(!CATEGORY_BREAKDOWN_ENABLED || !cfCategoryId) hidden.push('Resolvidos por categoria');
+        const hasCategoryField = !!(
+          Number(SETTINGS.CF_CATEGORY_INCIDENT || DEFAULTS.CF_CATEGORY_INCIDENT || 0) ||
+          Number(SETTINGS.CF_CATEGORY_SERVICE  || DEFAULTS.CF_CATEGORY_SERVICE  || 0) ||
+          Number(SETTINGS.CF_CATEGORY || DEFAULTS.CF_CATEGORY || 0)
+        );
+        if(!CATEGORY_BREAKDOWN_ENABLED || !hasCategoryField) hidden.push('Resolvidos por categoria');
         if(!RANKING_ENABLED || !RANKING_TEAM_GROUP || (!RANKING_SHOW_DAILY && !RANKING_SHOW_MONTHLY)) hidden.push('Ranking do time');
         if(!hidden.length){ notice.innerHTML = ''; return; }
         notice.innerHTML = `
@@ -11943,7 +12066,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const catEl = document.getElementById('ml_dash_category');
       if(catEl){
         catEl.innerHTML = `<div class="homeCard"><div class="muted">Carregando categorias...</div></div>`;
-        getCategoryBreakdownThisWeek().then(data => {
+        getCategoryBreakdownThisWeek('me').then(data => {
           if(!document.getElementById('ml_dash_category')) return;
           if(!data){ catEl.innerHTML = ''; return; }
           if(!data.breakdown.length){
@@ -11967,7 +12090,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             <div style="font-weight:700;margin-bottom:10px;">Resolvidos essa semana, por categoria</div>
             <div style="background:var(--ml-bg-2); border:1px solid var(--ml-border-2); border-radius:8px; padding:14px;">
               ${rows}
-              ${data.truncated ? '<div class="meta" style="margin-top:4px;">Mostrando os primeiros 100 resolvidos da semana.</div>' : ''}
+              ${data.truncated ? `<div class="meta" style="margin-top:4px;">Mostrando os primeiros ${data.maxResults} resolvidos da semana.</div>` : ''}
             </div>
           `;
         }).catch(e => {
@@ -12040,6 +12163,122 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               if(!body) return;
               body.innerHTML = periods.map((p, i) => renderRankingBlock(p.key, p.label, results[i])).join('');
             });
+        }
+      }
+
+      // Painel administrativo (Admin Mode, v2.2.0) — visao de FILA/TIME, so aparece pra quem
+      // desbloqueou digitando o codigo certo em Configuracoes -> Painel do analista (e
+      // recarregou a pagina depois de salvar). Independente do RANKING_ENABLED (secao a parte).
+      const adminEl = document.getElementById('ml_dash_admin');
+      if(adminEl){
+        if(!ADMIN_MODE_UNLOCKED){
+          adminEl.innerHTML = '';
+        } else {
+          adminEl.innerHTML = `
+            <div style="font-weight:700;margin-bottom:10px;">&#128274; Painel administrativo (${esc(_RANKING_SCOPE_PROJECTS.join('+'))})</div>
+            <div id="ml_dash_admin_volume" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; margin-bottom:14px;">
+              <div class="muted">Carregando volume da fila...</div>
+            </div>
+            <div id="ml_dash_admin_people" style="margin-bottom:14px;"></div>
+            <div id="ml_dash_admin_category"></div>
+          `;
+
+          // Volume da fila: criados / resolvidos / backlog liquido, hoje / semana / mes.
+          const volPeriods = [{ key: 'day', label: 'hoje' }, { key: 'week', label: 'semana' }, { key: 'month', label: 'mês' }];
+          Promise.all(volPeriods.map(p => getAdminQueueVolume(p.key).catch(e => { console.warn(`[IS Toolkit][admin] falha no volume (${p.key}):`, e); return null; })))
+            .then(results => {
+              const el = document.getElementById('ml_dash_admin_volume');
+              if(!el) return;
+              el.innerHTML = volPeriods.map((p, i) => {
+                const d = results[i];
+                if(!d) return `<div class="homeCard"><div class="err">Falha ao carregar (${esc(p.label)}).</div></div>`;
+                const deltaLabel = d.backlogDelta > 0 ? `+${d.backlogDelta} (crescendo)` : (d.backlogDelta < 0 ? `${d.backlogDelta} (encolhendo)` : '0 (estável)');
+                const deltaColor = d.backlogDelta > 0 ? 'var(--ml-warn, #d97706)' : (d.backlogDelta < 0 ? 'var(--ml-green)' : 'var(--ml-text-mut)');
+                return `
+                  <div class="homeCard" style="text-align:left;">
+                    <div style="font-weight:700;">Volume &mdash; ${esc(p.label)}</div>
+                    <div class="muted" style="margin-top:2px;">Criados: ${d.created} &middot; Resolvidos: ${d.resolved}</div>
+                    <div style="margin-top:4px;font-weight:700;color:${deltaColor};">Backlog líquido: ${esc(deltaLabel)}</div>
+                  </div>
+                `;
+              }).join('');
+            });
+
+          // Criados x Resolvidos x Auto-fechados por pessoa (mesmo grupo do Ranking do time).
+          const peopleEl = document.getElementById('ml_dash_admin_people');
+          if(peopleEl){
+            if(!RANKING_TEAM_GROUP){
+              peopleEl.innerHTML = `<div class="homeCard"><div class="muted">Configure um grupo do Jira (mesmo campo do Ranking do time, em Configurações → Painel do analista) pra ver o detalhamento por pessoa.</div></div>`;
+            } else {
+              peopleEl.innerHTML = `<div class="homeCard"><div class="muted">Carregando detalhamento por pessoa (esta semana)...</div></div>`;
+              getAdminTeamOverview('week').then(data => {
+                if(!document.getElementById('ml_dash_admin_people')) return;
+                if(!data || !data.members.length){
+                  peopleEl.innerHTML = `<div class="homeCard"><div class="muted">Nenhum membro encontrado no grupo "${esc(RANKING_TEAM_GROUP)}".</div></div>`;
+                  return;
+                }
+                const rows = data.members.map(m => `
+                  <div style="display:grid; grid-template-columns:1fr 70px 70px 90px; gap:8px; padding:5px 0; border-bottom:1px solid var(--ml-border-2); align-items:center;">
+                    <div style="font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(m.displayName)}">${esc(m.displayName)}${m.error ? ' &#9888;&#65039;' : ''}</div>
+                    <div style="text-align:right; font-size:12.5px;">${m.created}</div>
+                    <div style="text-align:right; font-size:12.5px;">${m.resolved}</div>
+                    <div style="text-align:right; font-size:12.5px;">${m.selfClosed}</div>
+                  </div>
+                `).join('');
+                peopleEl.innerHTML = `
+                  <div style="font-weight:700;margin-bottom:8px;">Criados x Resolvidos por pessoa (esta semana)</div>
+                  <div style="background:var(--ml-bg-2); border:1px solid var(--ml-border-2); border-radius:8px; padding:14px;">
+                    <div style="display:grid; grid-template-columns:1fr 70px 70px 90px; gap:8px; padding-bottom:6px; border-bottom:2px solid var(--ml-border-2); font-size:11px; font-weight:700; color:var(--ml-text-mut);">
+                      <div>Analista</div><div style="text-align:right;">Criados</div><div style="text-align:right;">Resolvidos</div><div style="text-align:right;">Auto-fechados</div>
+                    </div>
+                    ${rows}
+                    <div class="meta" style="margin-top:6px;">"Auto-fechados" = a mesma pessoa abriu e resolveu o ticket (ex: ISS criada e fechada por quem mesmo a criou).</div>
+                  </div>
+                `;
+              }).catch(e => {
+                if(!document.getElementById('ml_dash_admin_people')) return;
+                peopleEl.innerHTML = `<div class="err">Falha ao carregar detalhamento por pessoa: ${esc(e.message || String(e))}</div>`;
+              });
+            }
+          }
+
+          // Categoria do time todo (resolvidos da semana) — mesma logica do card pessoal
+          // ("Resolvidos por categoria"), so que sem filtrar por assignee.
+          const catAdminEl = document.getElementById('ml_dash_admin_category');
+          if(catAdminEl){
+            catAdminEl.innerHTML = `<div class="homeCard"><div class="muted">Carregando categorias do time...</div></div>`;
+            getCategoryBreakdownThisWeek('team').then(data => {
+              if(!document.getElementById('ml_dash_admin_category')) return;
+              if(!data){ catAdminEl.innerHTML = ''; return; }
+              if(!data.breakdown.length){
+                catAdminEl.innerHTML = `
+                  <div style="font-weight:700;margin-bottom:10px;">Categoria do time (resolvidos esta semana)</div>
+                  <div class="homeCard"><div class="muted">Nenhum resolvido essa semana ainda.</div></div>
+                `;
+                return;
+              }
+              const max = Math.max(...data.breakdown.map(b => b.count));
+              const rows = data.breakdown.map(b => `
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                  <div style="flex:0 0 140px; font-size:12px; color:var(--ml-text-mut); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(b.label)}">${esc(b.label)}</div>
+                  <div style="flex:1; background:var(--ml-bg-3); border-radius:4px; overflow:hidden; height:16px;">
+                    <div style="width:${Math.max(4, Math.round((b.count/max)*100))}%; height:100%; background:var(--ml-purple, #a78bfa);"></div>
+                  </div>
+                  <div style="flex:0 0 28px; text-align:right; font-weight:700; font-size:12px;">${b.count}</div>
+                </div>
+              `).join('');
+              catAdminEl.innerHTML = `
+                <div style="font-weight:700;margin-bottom:10px;">Categoria do time (resolvidos esta semana)</div>
+                <div style="background:var(--ml-bg-2); border:1px solid var(--ml-border-2); border-radius:8px; padding:14px;">
+                  ${rows}
+                  ${data.truncated ? `<div class="meta" style="margin-top:4px;">Mostrando os primeiros ${data.maxResults} resolvidos da semana.</div>` : ''}
+                </div>
+              `;
+            }).catch(e => {
+              if(!document.getElementById('ml_dash_admin_category')) return;
+              catAdminEl.innerHTML = `<div class="err">Falha ao carregar categorias do time: ${esc(e.message || String(e))}</div>`;
+            });
+          }
         }
       }
     }
