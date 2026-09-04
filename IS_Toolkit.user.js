@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.93.0
+// @version      1.94.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -614,7 +614,8 @@
       // Abre wa.me com o telefone do "Contact phone" e uma mensagem pre-escrita.
       // O WhatsApp nao permite enviar automaticamente por link — a mensagem fica pronta e o usuario aperta Enter.
       // CF_CONTACT_PHONE: ID do customfield "Contact phone". 0 = ler da pagina (DOM).
-      CF_CONTACT_PHONE: 0,
+      // Fixado centralmente pelo time (mesmo campo pra todo mundo, nao varia por analista).
+      CF_CONTACT_PHONE: 15614,
       // Codigo do pais: inferido pela LOCALIDADE (BR/MX/CO/CL/AR/PE). Se a pessoa colocar "+"
       // no telefone, respeita o codigo dela. Este valor eh so o FALLBACK quando nao dah pra inferir.
       WHATSAPP_COUNTRY_CODE: '55',
@@ -9424,6 +9425,20 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             </div>
 
             <div class="group full" data-tab="advanced">
+              <h4>⚠️ Zona de risco</h4>
+              <div class="grid">
+                <div class="full">
+                  <div class="hint" style="margin-bottom:8px;">
+                    Apaga TODAS as configurações salvas neste navegador e volta tudo ao padrão de fábrica
+                    (a página recarrega em seguida). Movido pra cá — antes ficava ao lado dos botões de
+                    Salvar/Cancelar no rodapé, fácil demais de clicar sem querer.
+                  </div>
+                  <button type="button" id="ml_s_reset" class="danger" title="Apagar tudo e voltar ao padrao">Resetar para padrão</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="group full" data-tab="advanced">
               <h4>Tour de boas-vindas</h4>
               <div class="grid">
                 <div class="full">
@@ -9738,7 +9753,6 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             <button id="ml_s_export" class="ghost" title="Exportar todas as configuracoes para um arquivo JSON">Exportar</button>
             <button id="ml_s_import" class="ghost" title="Importar configuracoes de um arquivo JSON exportado anteriormente">Importar</button>
             <input type="file" id="ml_s_import_file" accept="application/json,.json" style="display:none;" />
-            <button id="ml_s_reset" class="danger" title="Apagar tudo e voltar ao padrao">Resetar para padrao</button>
             <button id="ml_s_cancel">Cancelar</button>
             <button id="ml_s_save" class="primary">Salvar e recarregar pagina</button>
           </div>
@@ -9971,19 +9985,61 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       (Array.isArray(cur.DERIVE_TEAM_SUGGESTIONS) ? cur.DERIVE_TEAM_SUGGESTIONS : []).forEach(renderSuggRow);
       if(suggAdd) suggAdd.onclick = (e) => { e.preventDefault(); renderSuggRow({}); };
 
-      // ---- Outras acoes por atalho (uma linha por acao do ACTION_REGISTRY) ----
+      // ---- Outras acoes por atalho ----
+      // So mostra uma linha por acao que JA TEM atalho definido — o resto fica escondido atras
+      // de um seletor + botao "+" (antes mostrava TODAS as acoes do ACTION_REGISTRY sempre,
+      // mesmo as sem atalho configurado, poluindo a tela). O input de cada linha continua com a
+      // mesma classe/data-action-id de antes, entao a logica de salvar (mais abaixo, que varre
+      // todo ".action-shortcut" no DOM) nao precisou mudar nada.
       const actionShortcutsList = modal.querySelector('#ml_s_action_shortcuts_list');
       if(actionShortcutsList){
         const curActionShortcuts = (cur.ACTION_SHORTCUTS && typeof cur.ACTION_SHORTCUTS === 'object') ? cur.ACTION_SHORTCUTS : {};
-        ACTION_REGISTRY.forEach(action => {
+        const addedIds = new Set();
+
+        const picker = document.createElement('div');
+        picker.style.cssText = 'display:grid;grid-template-columns:1fr 200px 32px;gap:8px;margin-top:4px;align-items:center;';
+        picker.innerHTML = `
+          <select id="ml_s_action_pick" style="background:var(--ml-bg-0,#0e111c);color:var(--ml-text);border:1px solid var(--ml-border-2,#2a3550);border-radius:8px;padding:6px 8px;font-size:12.5px;"></select>
+          <input type="text" id="ml_s_action_pick_shortcut" placeholder="Ex: Cmd+Shift+D" />
+          <button type="button" id="ml_s_action_pick_add" class="btnSecondary" title="Adicionar">+</button>
+        `;
+        actionShortcutsList.appendChild(picker);
+
+        const refreshPicker = () => {
+          const sel = picker.querySelector('#ml_s_action_pick');
+          sel.innerHTML = ACTION_REGISTRY.filter(a => !addedIds.has(a.id))
+            .map(a => `<option value="${esc(a.id)}">${esc(a.label)}</option>`).join('');
+          picker.style.display = sel.options.length ? '' : 'none';
+        };
+
+        const addShortcutRow = (action, value) => {
+          addedIds.add(action.id);
           const row = document.createElement('div');
-          row.style.cssText = 'display:grid;grid-template-columns: 1fr 200px;gap:8px;margin-bottom:8px;align-items:center;';
+          row.style.cssText = 'display:grid;grid-template-columns: 1fr 200px 32px;gap:8px;margin-bottom:8px;align-items:center;';
           row.innerHTML = `
             <div style="font-size:13px;color:var(--ml-text,#ccc);">${esc(action.label)}</div>
-            <input type="text" class="action-shortcut" data-action-id="${esc(action.id)}" placeholder="Sem atalho" value="${esc(curActionShortcuts[action.id] || '')}" />
+            <input type="text" class="action-shortcut" data-action-id="${esc(action.id)}" placeholder="Sem atalho" value="${esc(value || '')}" />
+            <button type="button" class="ghost" title="Remover">✕</button>
           `;
-          actionShortcutsList.appendChild(row);
+          row.querySelector('button').onclick = () => { row.remove(); addedIds.delete(action.id); refreshPicker(); };
+          actionShortcutsList.insertBefore(row, picker);
+          refreshPicker();
+        };
+
+        ACTION_REGISTRY.forEach(action => {
+          const val = curActionShortcuts[action.id];
+          if(val) addShortcutRow(action, val);
         });
+        refreshPicker();
+
+        picker.querySelector('#ml_s_action_pick_add').onclick = () => {
+          const sel = picker.querySelector('#ml_s_action_pick');
+          const action = ACTION_REGISTRY.find(a => a.id === sel.value);
+          if(!action) return;
+          const shortcutInput = picker.querySelector('#ml_s_action_pick_shortcut');
+          addShortcutRow(action, shortcutInput.value.trim());
+          shortcutInput.value = '';
+        };
       }
 
       // Botao de descoberta de campos de auditoria
@@ -10286,7 +10342,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       });
 
       modal.querySelector('#ml_s_reset').addEventListener('click', () => {
-        if(!confirm('Apagar todas as configuracoes salvas e voltar para os padroes? A pagina sera recarregada.')) return;
+        // Confirm() nativo e facil de clicar/Enter no automatico; pede pra digitar uma palavra
+        // como segunda barreira, ja que essa acao e destrutiva e nao tem desfazer (fora reimportar
+        // um backup exportado antes).
+        const typed = prompt('Isso apaga TODAS as configuracoes salvas neste navegador e nao tem volta (a nao ser reimportando um backup). Digite RESETAR para confirmar:');
+        if(String(typed || '').trim().toUpperCase() !== 'RESETAR') return;
         resetSettings();
         cacheClear();
         location.reload();
