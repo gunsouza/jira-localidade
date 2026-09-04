@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.84.0
+// @version      1.85.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -3377,6 +3377,20 @@
 
     // Le project e descobre os IDs (project ID e o ID do issuetype pelo nome).
     // A UI do Jira sempre manda IDs no payload, e o validador "matriz" exige IDs - nao aceita keys/names.
+    // Traducoes conhecidas do issuetype padrao do Jira "Task" — o Jira Cloud traduz nomes de
+    // issuetypes DE SISTEMA conforme o idioma configurado na conta de quem esta consultando a API
+    // (confirmado: mesmo projeto ISS, mesma org — um colega via "Task" via a API enquanto outro via
+    // "Tarefa", so por causa do idioma da conta de cada um). Dar match so pelo nome exato digitado
+    // falha pra qualquer analista com o Jira em outro idioma. Comparacao entra aqui como fallback
+    // alem do match exato — se o nome configurado E o nome real forem sinonimos conhecidos, aceita.
+    const ISS_TASK_ISSUETYPE_ALIASES = ['task', 'tarefa', 'tarea'];
+    function _issuetypeNameMatches(actualName, configuredName){
+      const a = String(actualName || '').trim().toLowerCase();
+      const c = String(configuredName || '').trim().toLowerCase();
+      if(a === c) return true;
+      return ISS_TASK_ISSUETYPE_ALIASES.includes(a) && ISS_TASK_ISSUETYPE_ALIASES.includes(c);
+    }
+
     async function getProjectAndIssueTypeIds(projectKey, issuetypeName){
       const r = await fetch(`${location.origin}/rest/api/3/project/${encodeURIComponent(projectKey)}`, {
         credentials:'same-origin', headers:{ Accept:'application/json' }
@@ -3385,7 +3399,7 @@
       if(!r.ok) throw new Error(`HTTP ${r.status} ao ler projeto ${projectKey}: ${txt.slice(0,200)}`);
       const d = JSON.parse(txt);
       const its = d?.issueTypes || [];
-      const it = its.find(t => t.name === issuetypeName);
+      const it = its.find(t => _issuetypeNameMatches(t.name, issuetypeName));
       if(!it) throw new Error(`Issue type "${issuetypeName}" nao existe em ${projectKey}. Vistos: ${its.map(t=>t.name).join(', ')}`);
       return { projectId: String(d.id), issuetypeId: String(it.id) };
     }
@@ -6118,7 +6132,7 @@
         });
         if(!r.ok) return false;
         const d = await r.json();
-        return (d.issueTypes || []).some(t => t.name === issuetypeName);
+        return (d.issueTypes || []).some(t => _issuetypeNameMatches(t.name, issuetypeName));
       }catch(_){ return false; }
     }
 
@@ -9084,7 +9098,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 <div>
                   <label>Tipo da tarefa (issuetype name)</label>
                   <input type="text" id="ml_s_iss_type" value="${esc(cur.ISS_TASK_ISSUETYPE)}" />
-                  <div class="hint">Padrao "${esc(def.ISS_TASK_ISSUETYPE)}" (ou "Task" em ingles).</div>
+                  <div class="hint">Padrao "${esc(def.ISS_TASK_ISSUETYPE)}". O toolkit já reconhece "Tarefa"/"Task"/"Tarea" como o mesmo issuetype (o Jira traduz o nome dos tipos padrão conforme o idioma da conta de quem consulta a API — por isso analistas diferentes podem ver nomes diferentes pro mesmo tipo). Só precisa trocar aqui se o projeto usar um issuetype com outro nome de verdade.</div>
                 </div>
                 <div class="full">
                   <label>Template do summary</label>
