@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.5
+// @version      2.5.6
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -6037,12 +6037,34 @@
             const _hasValue = (v) => Array.isArray(v) ? v.length > 0 : (v != null && v !== '' && !(typeof v === 'object' && !Object.keys(v).length));
             const autoFilled = {};
             const stillMissing = {};
+            const needsManualEdit = [];
             for(const [k, meta] of Object.entries(newlyMatched)){
-              if(_hasValue(currentValues[k])) autoFilled[k] = currentValues[k];
-              else stillMissing[k] = meta;
+              if(_hasValue(currentValues[k])){ autoFilled[k] = currentValues[k]; continue; }
+              // v2.5.6: os 4 campos de categoria (Incident/Service Type, Problem/Service
+              // Hardware) sao, nesta instancia, campos DEPENDENTES de um objeto do
+              // Assets/Insight — confirmado pelo proprio erro real do Jira: "es un campo
+              // dinamico, debe seleccionar primero el objeto y luego el [tipo]". Um select
+              // solto com o texto da opcao (tentado nas v2.5.3/v2.5.4) NAO satisfaz esse
+              // validador (confirmado em teste real: preencheu, reaplicou, falhou de novo com
+              // a mesma reclamacao) — entao paramos de tentar adivinhar o formato certo sem
+              // dados reais da API pra esse campo, e so avisamos que precisa editar direto no
+              // proprio ticket, no Jira (mesma orientacao que a mensagem de erro do Jira ja da).
+              if(_isDependentAssetsCategoryField(k)){ needsManualEdit.push(meta?.name || k); continue; }
+              stillMissing[k] = meta;
             }
             if(Object.keys(autoFilled).length){
               log(`recovery: ${Object.keys(autoFilled).length} campo(s) ja tinham valor no ticket (${Object.keys(autoFilled).join(', ')}) — reenviando sem perguntar`);
+            }
+
+            if(needsManualEdit.length){
+              // Nao adianta seguir com o resto do recovery — essa transicao vai continuar
+              // falhando enquanto esse campo dependente de objeto nao for setado direto no
+              // Jira. Para aqui com uma mensagem clara, em vez de abrir mais um formulario
+              // (ou insistir num campo que ja sabemos que nao vai funcionar por essa via).
+              throw new Error(
+                `Essa transição exige "${needsManualEdit.join(', ')}", que aqui ${needsManualEdit.length > 1 ? 'são campos dependentes' : 'é um campo dependente'} de um objeto do Assets — ` +
+                `precisa selecionar direto no próprio ticket, no Jira (abra o ticket, preencha esse campo lá — o Jira pede pra escolher o objeto primeiro e o tipo depois) e tentar fechar de novo em seguida.`
+              );
             }
 
             let filled2Fields = {};
@@ -6878,6 +6900,23 @@
       resolution: ['resolution', 'resolucion', 'resolución', 'resolução'],
       priority:   ['priority', 'prioridad', 'prioridade'],
     };
+
+    // v2.5.6: os 4 campos de categoria/tipo do Assets/CMDB (Incident/Service Type, Problem/
+    // Service Hardware) sao, nesta instancia, campos DEPENDENTES de um objeto do Assets/Insight
+    // (confirmado por um erro real do Jira citando esse campo: "es un campo dinamico, debe
+    // seleccionar primero el objeto y luego el tipo") — nao dao pra preencher com um select
+    // solto de texto (tentativa da v2.5.3/v2.5.4, que nao satisfez o validador num teste real).
+    // Usado no recovery (runStatusAction) pra parar de tentar adivinhar o valor desses campos e
+    // avisar que precisa editar direto no proprio ticket, no Jira.
+    function _isDependentAssetsCategoryField(key){
+      const ids = [
+        Number(SETTINGS?.CF_CATEGORY_INCIDENT || 0),
+        Number(SETTINGS?.CF_CATEGORY_SERVICE || 0),
+        Number(SETTINGS?.CF_SUBCATEGORY_INCIDENT || 0),
+        Number(SETTINGS?.CF_SUBCATEGORY_SERVICE || 0),
+      ].filter(Boolean);
+      return ids.some(id => key === `customfield_${id}`);
+    }
     function _matchFieldsByName(namesList, fieldsMetaObj){
       const norm = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
       const entries = Object.entries(fieldsMetaObj || {});
