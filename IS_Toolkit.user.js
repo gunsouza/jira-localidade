@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.4.0
+// @version      2.4.1
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -618,7 +618,7 @@
       // ATENCAO: isso NAO e seguranca de verdade — o codigo fica no proprio script (que
       // qualquer um pode ler/inspecionar), e so uma trava simples pra o card nao aparecer
       // sem querer pra quem nao deveria ver dado agregado do time. Troque livremente.
-      ADMIN_MODE_SECRET: 'natis-n1-admin',
+      ADMIN_MODE_SECRET: 'N4tis_4dmin',
       ADMIN_CODE: '', // o que a pessoa digitou em Configuracoes (comparado contra o de cima)
 
       // ---- Campos customizados de auditoria (IDs por instancia Jira) ----
