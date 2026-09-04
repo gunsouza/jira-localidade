@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.3
+// @version      2.5.4
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -5471,10 +5471,32 @@
       // no uso real: ticket com "Incident Type" obrigatorio e vazio, formulario so mostrava
       // um campo de texto em branco).
       const _knownCategoryOptionsByKey = {};
-      if(Number(SETTINGS?.CF_CATEGORY_INCIDENT || 0))    _knownCategoryOptionsByKey[`customfield_${Number(SETTINGS.CF_CATEGORY_INCIDENT)}`]    = CATEGORY_HARDWARE_INCIDENT_OPTIONS;
-      if(Number(SETTINGS?.CF_CATEGORY_SERVICE || 0))     _knownCategoryOptionsByKey[`customfield_${Number(SETTINGS.CF_CATEGORY_SERVICE)}`]     = CATEGORY_HARDWARE_SERVICE_OPTIONS;
-      if(Number(SETTINGS?.CF_SUBCATEGORY_INCIDENT || 0)) _knownCategoryOptionsByKey[`customfield_${Number(SETTINGS.CF_SUBCATEGORY_INCIDENT)}`] = CATEGORY_TYPE_INCIDENT_OPTIONS;
-      if(Number(SETTINGS?.CF_SUBCATEGORY_SERVICE || 0))  _knownCategoryOptionsByKey[`customfield_${Number(SETTINGS.CF_SUBCATEGORY_SERVICE)}`]  = CATEGORY_TYPE_SERVICE_OPTIONS;
+      // Mapa key -> qual campo da sugestao da auditoria (category_suggestion = equipamento,
+      // subcategory_suggestion = tipo de problema) serve pra PRE-selecionar esse dropdown
+      // (v2.5.4) — mesma ideia ja usada pra Resolucao/Solution, so que aqui usando a sugestao
+      // estruturada "equipamento > tipo de problema" que a auditoria por IA ja calcula (v2.0.0),
+      // quando o ticket ja tiver uma auditoria rodada em cache.
+      const _categorySuggestionFieldByKey = {};
+      if(Number(SETTINGS?.CF_CATEGORY_INCIDENT || 0)){
+        const k = `customfield_${Number(SETTINGS.CF_CATEGORY_INCIDENT)}`;
+        _knownCategoryOptionsByKey[k] = CATEGORY_HARDWARE_INCIDENT_OPTIONS;
+        _categorySuggestionFieldByKey[k] = 'category_suggestion';
+      }
+      if(Number(SETTINGS?.CF_CATEGORY_SERVICE || 0)){
+        const k = `customfield_${Number(SETTINGS.CF_CATEGORY_SERVICE)}`;
+        _knownCategoryOptionsByKey[k] = CATEGORY_HARDWARE_SERVICE_OPTIONS;
+        _categorySuggestionFieldByKey[k] = 'category_suggestion';
+      }
+      if(Number(SETTINGS?.CF_SUBCATEGORY_INCIDENT || 0)){
+        const k = `customfield_${Number(SETTINGS.CF_SUBCATEGORY_INCIDENT)}`;
+        _knownCategoryOptionsByKey[k] = CATEGORY_TYPE_INCIDENT_OPTIONS;
+        _categorySuggestionFieldByKey[k] = 'subcategory_suggestion';
+      }
+      if(Number(SETTINGS?.CF_SUBCATEGORY_SERVICE || 0)){
+        const k = `customfield_${Number(SETTINGS.CF_SUBCATEGORY_SERVICE)}`;
+        _knownCategoryOptionsByKey[k] = CATEGORY_TYPE_SERVICE_OPTIONS;
+        _categorySuggestionFieldByKey[k] = 'subcategory_suggestion';
+      }
 
       return new Promise((resolve) => {
         const overlay = document.createElement('div');
@@ -5539,7 +5561,15 @@
             // caso alguma instancia/projeto use um).
             const isSolutionTypeField = key === 'resolution'
               || (key === _cfSolutionTypeKey && Number(SETTINGS?.CF_SOLUTION_TYPE || 0) > 0);
-            const suggested = isSolutionTypeField ? String(auditSug.resolution_suggestion || '').trim() : '';
+            // v2.5.4: campo de categoria sintetico (Incident/Service Type, Problem/Service
+            // Hardware) tambem pode vir pre-selecionado, se a auditoria por IA ja tiver rodado
+            // nesse ticket e sugerido "equipamento > tipo de problema" (v2.0.0) — mesmo dado
+            // que ja aparece no painel de auditoria, so nunca tinha sido usado pra preencher
+            // nada automaticamente ate agora.
+            const categorySugField = _categorySuggestionFieldByKey[key];
+            const suggested = isSolutionTypeField
+              ? String(auditSug.resolution_suggestion || '').trim()
+              : (categorySugField ? String(auditSug[categorySugField] || '').trim() : '');
             let matched = false;
             // Select com valores permitidos. Shape do payload (v2.5.3): campos "de verdade" do
             // Jira quase sempre tem allowedValues com .id (ex: resolution) -> manda {id:...};
@@ -5915,23 +5945,32 @@
       const hasOtherRequired = Object.keys(otherRequired).length > 0;
       const commentIsRequired = !!requiredFields?.comment?.required;
 
-      if(hasOtherRequired || (commentIsRequired && !defaultComment)){
-        // Sugestoes da auditoria (v1.97.0), se houver uma em cache pra este ticket — usadas so
-        // pra pre-preencher Solution/Resolucao/Validated with the user; nunca aplicadas sem o
-        // analista ver e poder trocar no proprio modal de campos obrigatorios.
-        const cachedAuditForFields = _loadAuditGM(issueKey);
-        // opts.forcedSuggestions (v2.5.1) permite o CHAMADOR de runStatusAction forcar uma
-        // pre-selecao independente de auditoria — ex: "Vincular + Fechar" em Duplicados sempre
-        // quer Resolucao = "Duplicado", sem depender de ter rodado (ou nao) uma auditoria por
-        // IA nesse ticket. Sobrescreve a sugestao da auditoria quando os dois existirem.
-        const auditSuggestions = {
-          solution_text: cachedAuditForFields?.solution_text || '',
-          resolution_suggestion: cachedAuditForFields?.resolution_suggestion || '',
-          validated_with_user_suggestion: cachedAuditForFields?.validated_with_user_suggestion || '',
-          validated_with_user_channel_suggestion: cachedAuditForFields?.validated_with_user_channel_suggestion || '',
-          ...(opts.forcedSuggestions || {})
-        };
+      // Sugestoes da auditoria (v1.97.0), se houver uma em cache pra este ticket — usadas so
+      // pra pre-preencher Solution/Resolucao/Validated with the user/Categoria; nunca
+      // aplicadas sem o analista ver e poder trocar no proprio modal de campos obrigatorios.
+      // Calculado aqui (fora do "if" de baixo, v2.5.4) pra tambem poder ser reusado la embaixo
+      // no recovery de campos extras (secao 6a), que pode disparar mesmo quando este primeiro
+      // "if" nao rodou (ex: so o comentario era obrigatorio na 1a leitura da transicao).
+      const cachedAuditForFields = _loadAuditGM(issueKey);
+      // opts.forcedSuggestions (v2.5.1) permite o CHAMADOR de runStatusAction forcar uma
+      // pre-selecao independente de auditoria — ex: "Vincular + Fechar" em Duplicados sempre
+      // quer Resolucao = "Duplicado", sem depender de ter rodado (ou nao) uma auditoria por
+      // IA nesse ticket. Sobrescreve a sugestao da auditoria quando os dois existirem.
+      const auditSuggestions = {
+        solution_text: cachedAuditForFields?.solution_text || '',
+        resolution_suggestion: cachedAuditForFields?.resolution_suggestion || '',
+        validated_with_user_suggestion: cachedAuditForFields?.validated_with_user_suggestion || '',
+        validated_with_user_channel_suggestion: cachedAuditForFields?.validated_with_user_channel_suggestion || '',
+        // v2.5.4: reaproveita a sugestao "equipamento > tipo de problema" que a auditoria por
+        // IA ja calcula (v2.0.0, so informativa ate aqui) pra pre-selecionar os campos de
+        // categoria (Incident/Service Type, Problem/Service Hardware) quando o recovery de
+        // campos extras (v2.5.2) precisar deles.
+        category_suggestion: cachedAuditForFields?.category_suggestion || '',
+        subcategory_suggestion: cachedAuditForFields?.subcategory_suggestion || '',
+        ...(opts.forcedSuggestions || {})
+      };
 
+      if(hasOtherRequired || (commentIsRequired && !defaultComment)){
         const filled = await promptForTransitionFields(requiredFields, {
           me,
           defaultComment,
@@ -5986,7 +6025,7 @@
               `Vou abrir mais um formulário só com o que faltou.`
             );
             const filled2 = await promptForTransitionFields(newlyMatched, {
-              me, defaultComment: commentForTransition, internalComment: isInternal, auditSuggestions: {}
+              me, defaultComment: commentForTransition, internalComment: isInternal, auditSuggestions
             });
             if(!filled2) throw new Error('cancelado');
             if(filled2.comment) commentForTransition = filled2.comment;
