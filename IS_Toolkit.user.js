@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.0
+// @version      2.5.1
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -5874,12 +5874,17 @@
         // pra pre-preencher Solution/Resolucao/Validated with the user; nunca aplicadas sem o
         // analista ver e poder trocar no proprio modal de campos obrigatorios.
         const cachedAuditForFields = _loadAuditGM(issueKey);
-        const auditSuggestions = cachedAuditForFields ? {
-          solution_text: cachedAuditForFields.solution_text || '',
-          resolution_suggestion: cachedAuditForFields.resolution_suggestion || '',
-          validated_with_user_suggestion: cachedAuditForFields.validated_with_user_suggestion || '',
-          validated_with_user_channel_suggestion: cachedAuditForFields.validated_with_user_channel_suggestion || ''
-        } : null;
+        // opts.forcedSuggestions (v2.5.1) permite o CHAMADOR de runStatusAction forcar uma
+        // pre-selecao independente de auditoria — ex: "Vincular + Fechar" em Duplicados sempre
+        // quer Resolucao = "Duplicado", sem depender de ter rodado (ou nao) uma auditoria por
+        // IA nesse ticket. Sobrescreve a sugestao da auditoria quando os dois existirem.
+        const auditSuggestions = {
+          solution_text: cachedAuditForFields?.solution_text || '',
+          resolution_suggestion: cachedAuditForFields?.resolution_suggestion || '',
+          validated_with_user_suggestion: cachedAuditForFields?.validated_with_user_suggestion || '',
+          validated_with_user_channel_suggestion: cachedAuditForFields?.validated_with_user_channel_suggestion || '',
+          ...(opts.forcedSuggestions || {})
+        };
 
         const filled = await promptForTransitionFields(requiredFields, {
           me,
@@ -11808,6 +11813,12 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               comment,
               internal,
               assignToMe: false
+            }, {
+              // O ticket atual esta sendo fechado POR SER um duplicado — entao a Resolucao
+              // (campo nativo "resolution" do Jira) e sempre "Duplicado", nunca depende de ter
+              // rodado uma auditoria por IA nesse ticket antes. Ainda aparece no modal pra
+              // revisar/trocar, so vem pre-selecionada.
+              forcedSuggestions: { resolution_suggestion: 'Duplicado' }
             });
             closed = true;
           }catch(e){
