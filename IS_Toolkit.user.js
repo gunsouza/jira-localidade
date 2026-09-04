@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.98.0
+// @version      1.99.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -608,12 +608,19 @@
       CF_CATEGORY:        0,
       CF_SUBCATEGORY:     0,
       CF_REQUEST_TYPE:    0,
-      CF_USER_VALIDATION: 0,
+      // Confirmado via XML de um ticket real (IS-1098196, v1.99.0): customfield_26217
+      // "Validated with the user" — cascading select (Yes/No -> canal, ver screenshots).
+      CF_USER_VALIDATION: 26217,
+      // NAO e customfield — "Resolucao" (as 7 opcoes tipo "With technical intervention") e o
+      // campo NATIVO "resolution" do Jira (confirmado via XML: <resolution id="10115">No
+      // Response</resolution>), nao um customfield configuravel. Mantido aqui so como
+      // fallback/override legado pra instancias que tiverem um customfield separado com esse
+      // papel — na pratica, o codigo ja detecta e sugere pro campo nativo automaticamente,
+      // sem precisar configurar nada aqui (ver promptForTransitionFields/key==='resolution').
       CF_SOLUTION_TYPE:   0,
       // Campo de texto "Solution" (analise tecnica/diagnostico ao resolver — distinto do
-      // CF_SOLUTION_TYPE acima, que e a lista "Solucao aplicada"). Usado pela auditoria pra
-      // pre-preencher com um texto tecnico ao ir pra uma transicao final em "Mudar status".
-      CF_SOLUTION_TEXT:   0,
+      // CF_SOLUTION_TYPE acima). Confirmado via XML de ticket real (IS-1098196, v1.99.0).
+      CF_SOLUTION_TEXT:   12729,
       // Flag "Changed priority" (No/Yes): quando Yes, indica que houve reclassificacao
       // de prioridade (mesmo aplicada por automacao). A auditoria cobra justificativa.
       CF_CHANGED_PRIORITY: 26266,
@@ -5319,7 +5326,12 @@
           }
 
           if(allowed && allowed.length){
-            const isSolutionTypeField = key === _cfSolutionTypeKey && Number(SETTINGS?.CF_SOLUTION_TYPE || 0) > 0;
+            // "Resolucao" (With technical intervention/etc.) e o campo NATIVO "resolution" do
+            // Jira, nao um customfield (confirmado via XML real, v1.99.0) — bate pela key
+            // literal. CF_SOLUTION_TYPE fica so como fallback legado (customfield separado,
+            // caso alguma instancia/projeto use um).
+            const isSolutionTypeField = key === 'resolution'
+              || (key === _cfSolutionTypeKey && Number(SETTINGS?.CF_SOLUTION_TYPE || 0) > 0);
             const suggested = isSolutionTypeField ? String(auditSug.resolution_suggestion || '').trim() : '';
             let matched = false;
             // Select com valores permitidos
@@ -5357,7 +5369,16 @@
 
           // Generico: text — vira textarea + pre-preenchido quando bate com o campo "Solution"
           // configurado (CF_SOLUTION_TEXT), que costuma ser um texto tecnico mais longo.
-          const isSolutionTextField = key === _cfSolutionTextKey && Number(SETTINGS?.CF_SOLUTION_TEXT || 0) > 0;
+          // Fallback por nome (v1.99.0) se o ID configurado nao bater nesta transicao
+          // especifica (projeto diferente etc.) — mesmo padrao ja usado em
+          // closeIssTaskAfterCreate pra achar o campo "Solution" sem falso positivo com
+          // "resolution" (que tambem contem a substring "solution").
+          const _normFieldName = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+          const _looksLikeSolutionText = key !== 'resolution' && (() => {
+            const n = _normFieldName(label);
+            return n === 'solution' || n === 'solucion' || n === 'solucao' || n.startsWith('soluc') || n.startsWith('solut');
+          })();
+          const isSolutionTextField = (key === _cfSolutionTextKey && Number(SETTINGS?.CF_SOLUTION_TEXT || 0) > 0) || _looksLikeSolutionText;
           const solutionSuggestion = isSolutionTextField ? String(auditSug.solution_text || '').trim() : '';
           if(isSolutionTextField){
             return `
@@ -6767,13 +6788,19 @@
       const catSubcategoria = _readCf('CF_SUBCATEGORY');
       const catRequestType = _readCf('CF_REQUEST_TYPE');
       const catUserValidation = _readCf('CF_USER_VALIDATION');
-      const catSolutionType = _readCf('CF_SOLUTION_TYPE');
+      // "Resolucao" (With technical intervention/etc.) e o campo NATIVO "resolution" do Jira,
+      // nao um customfield (confirmado via XML real, v1.99.0) — le direto de f.resolution,
+      // com _readCf('CF_SOLUTION_TYPE') so como fallback legado (instancia com customfield
+      // separado, caso exista).
+      const catSolutionType = (f.resolution && f.resolution.name) ? f.resolution.name : _readCf('CF_SOLUTION_TYPE');
       const hasCategoryData = !!(catCategoria || catSubcategoria || catRequestType);
       // IDs configurados p/ os campos de sugestao de fechamento (usados so pra decidir SE
       // pedimos essas sugestoes no prompt — o valor atual nao importa aqui, sao campos que o
       // ticket ainda nao tem preenchido enquanto estiver aberto).
       const hasSolutionTextField   = Number(SETTINGS.CF_SOLUTION_TEXT   || DEFAULTS.CF_SOLUTION_TEXT   || 0) > 0;
-      const hasSolutionTypeField   = Number(SETTINGS.CF_SOLUTION_TYPE   || DEFAULTS.CF_SOLUTION_TYPE   || 0) > 0;
+      // "Resolucao" e campo nativo, sempre existe em qualquer ticket Jira — nao depende de
+      // nenhum customfield configurado (v1.99.0).
+      const hasSolutionTypeField   = true;
       const hasUserValidationField = Number(SETTINGS.CF_USER_VALIDATION || DEFAULTS.CF_USER_VALIDATION || 0) > 0;
 
       // Ticket considerado aberto se nao estiver em status "done"
@@ -7271,7 +7298,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         .map(k => Number(SETTINGS[k] || DEFAULTS[k] || 0))
         .filter(id => id > 0);
       const _extraCfIds = [...new Set([...(_cpId ? [_cpId] : []), ..._categCfIds])];
-      const fields = 'summary,description,priority,status,attachment,comment,issuetype,labels,assignee,reporter'
+      // "resolution" (v1.99.0): campo NATIVO do Jira (nao customfield) — confirmado via XML
+      // real que "Resolucao" (With technical intervention/etc.) vive ali, nao em customfield
+      // nenhum. Sem isso no fetch, catSolutionType/resolution_suggestion nunca tinham o valor
+      // atual do ticket pra comparar.
+      const fields = 'summary,description,priority,status,attachment,comment,issuetype,labels,assignee,reporter,resolution'
         + _extraCfIds.map(id => `,customfield_${id}`).join('');
       const resp = await fetch(
         `${location.origin}/rest/api/3/issue/${encodeURIComponent(issueKey)}?expand=changelog&fields=${fields}`,
@@ -9247,7 +9278,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         { key: 'CF_SUBCATEGORY',     label: 'Subcategoria' },
         { key: 'CF_REQUEST_TYPE',    label: 'Tipo de solicitação' },
         { key: 'CF_USER_VALIDATION', label: 'Validação do usuário' },
-        { key: 'CF_SOLUTION_TYPE',   label: 'Solução aplicada' },
+        { key: 'CF_SOLUTION_TYPE',   label: 'Resolução — override legado (normalmente não precisa; campo nativo já é auto-detectado)' },
         { key: 'CF_SOLUTION_TEXT',   label: 'Solution (texto técnico, distinto de "Solução aplicada")' },
         { key: 'CF_USAGE_MARK',      label: 'Categorias (marcação de uso — texto livre)' },
         { key: 'SLA_FIELD_ID',       label: 'Campo de SLA (ex: "Time to resolution") — Painel do analista' },
@@ -9973,9 +10004,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <div class="hint">Se for um campo em cascata (Yes/No + canal), a auditoria detecta automaticamente e sugere os dois n&iacute;veis ao resolver (v1.97.0).</div>
                 </div>
                 <div>
-                  <label>Solu&ccedil;&atilde;o aplicada (CF ID)</label>
+                  <label>Resolu&ccedil;&atilde;o &mdash; override legado (CF ID, normalmente deixe 0)</label>
                   <input type="number" id="ml_s_cf_solution_type" value="${Number(cur.CF_SOLUTION_TYPE)||0}" min="0" />
-                  <div class="hint">Campo de sele&ccedil;&atilde;o (ex: "With technical intervention"). A auditoria SUGERE um valor ao ir pra uma transi&ccedil;&atilde;o final em "Mudar status" (v1.97.0) — o analista revisa e pode trocar.</div>
+                  <div class="hint">"Resolu&ccedil;&atilde;o" (With technical intervention/etc.) &eacute; o campo <b>nativo</b> do Jira, n&atilde;o um customfield &mdash; a auditoria j&aacute; detecta e sugere automaticamente, <b>sem precisar configurar nada aqui</b> (v1.99.0). S&oacute; preencha este ID se sua inst&acirc;ncia usar um customfield separado no lugar do nativo.</div>
                 </div>
                 <div>
                   <label>Solution &mdash; texto t&eacute;cnico (CF ID)</label>
