@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.89.0
+// @version      1.90.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -11318,7 +11318,10 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             const mode = RANKING_DISPLAY_MODE;
             const avgFmt = Number.isFinite(data.teamAverage) ? data.teamAverage.toFixed(1) : '—';
             if(mode === 'leaderboard'){
-              const rows = data.members.map((m, i) => `
+              // So mostra quem resolveu pelo menos 1 no periodo — quem esta zerado so polui a
+              // lista sem informar nada (a media do time abaixo continua contando todo mundo).
+              const active = data.members.filter(m => m.count > 0);
+              const rows = active.map((m, i) => `
                 <div style="display:flex; justify-content:space-between; padding:4px 0; ${m.accountId === (data.myAccountId||'') ? 'font-weight:700;' : ''}">
                   <span>${i+1}. ${esc(m.displayName)}</span>
                   <span>${m.count}</span>
@@ -11327,7 +11330,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               return `
                 <div style="background:var(--ml-bg-2); border:1px solid var(--ml-border-2); border-radius:8px; padding:14px;">
                   <div style="font-weight:700; margin-bottom:6px;">Ranking — ${esc(label)}</div>
-                  ${rows || '<div class="muted">Sem dados ainda.</div>'}
+                  ${rows || '<div class="muted">Ninguém resolveu nenhum chamado ainda.</div>'}
                   <div class="meta" style="margin-top:6px;">Média do time: ${avgFmt}</div>
                 </div>
               `;
