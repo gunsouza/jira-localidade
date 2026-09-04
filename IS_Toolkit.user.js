@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.87.0
+// @version      1.88.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -1924,11 +1924,20 @@
 
     // Resolvidos por dia nos ultimos 7 dias corridos (hoje incluido), pro grafico de barras
     // do Painel do analista. Retorna [{ label, count }] do mais antigo pro mais recente.
+    // Formata um offset relativo de dia pro Jira (ex: -3d, 0d, 1d) a partir de um inteiro
+    // (positivo = dias no passado, negativo = dias no futuro). NAO faca `-${n}d` direto quando
+    // `n` pode ser negativo — vira duplo sinal de menos (ex: "--1d"), que o Jira nao interpreta
+    // como "1 dia no futuro" (bug real: fazia o bucket de HOJE do grafico de produtividade dar
+    // sempre 0, ja que o limite superior virava um intervalo vazio/invalido em vez de "amanha").
+    function _dayOffsetExpr(n){
+      if(n === 0) return '0d';
+      return n > 0 ? `-${n}d` : `${Math.abs(n)}d`;
+    }
     async function getWeeklyProductivityCounts(){
       const projScope = PROJECTS.length ? `project in (${PROJECTS.map(p=>`"${p}"`).join(',')}) AND ` : '';
       const days = [];
       for(let i = 6; i >= 0; i--){
-        const jql = `${projScope}assignee = currentUser() AND resolutiondate >= startOfDay(-${i}d) AND resolutiondate < startOfDay(-${i-1}d)`;
+        const jql = `${projScope}assignee = currentUser() AND resolutiondate >= startOfDay(${_dayOffsetExpr(i)}) AND resolutiondate < startOfDay(${_dayOffsetExpr(i-1)})`;
         days.push({ offset: i, jql });
       }
       const results = await Promise.all(days.map(async (d) => {
@@ -2061,28 +2070,39 @@
     }
 
     // period: 'day' | 'month' (mes corrente, dia 1 ao ultimo dia — nao janela rolante).
+    //
+    // Por que contar por analista com /search/approximate-count (countByJql) em vez de UMA
+    // busca /search/jql pro time inteiro: a versao antiga trazia so ate 100 issues (maxResults)
+    // SEM paginar e SEM ORDER BY, entao um time que resolve mais de 100 chamados no MES inteiro
+    // tinha a contagem cortada de forma imprevisivel — inclusive podendo mostrar "este mes" menor
+    // que "hoje" pro mesmo analista, ja que os resolvidos dele podiam simplesmente nao estar
+    // dentro dos primeiros 100 retornados pelo Jira. Contando por analista (uma query de
+    // aproximada-contagem por pessoa, sem baixar issues) nao tem esse teto.
     async function getTeamRanking(period){
       if(!RANKING_ENABLED || !RANKING_TEAM_GROUP) return null;
       const members = await getGroupMembers(RANKING_TEAM_GROUP);
       if(!members.length) return { members: [], myCount: 0, teamAverage: 0, period };
 
       const startFn = period === 'month' ? 'startOfMonth()' : 'startOfDay()';
-      const jql = `${_rankingProjScope()}assignee in membersOf("${RANKING_TEAM_GROUP}") AND resolutiondate >= ${startFn}`;
-      const r = await fetch(`${location.origin}/rest/api/3/search/jql`, {
-        method: 'POST', credentials: 'same-origin',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jql, maxResults: 100, fields: ['assignee'] })
-      });
-      if(!r.ok) throw new Error(`HTTP ${r.status} no ranking (${period})`);
-      const d = await r.json();
-      const issues = d.issues || [];
+      const scope = _rankingProjScope();
 
       const countByAccount = {};
-      for(const it of issues){
-        const acc = it.fields?.assignee?.accountId;
-        if(!acc) continue;
-        countByAccount[acc] = (countByAccount[acc] || 0) + 1;
+      const CONCURRENCY = 6;
+      let idx = 0;
+      async function worker(){
+        while(idx < members.length){
+          const m = members[idx++];
+          try{
+            countByAccount[m.accountId] = await countByJql(
+              `${scope}assignee = "${m.accountId}" AND resolutiondate >= ${startFn}`
+            );
+          }catch(e){
+            console.warn(`[IS Toolkit][ranking] falha contando ${m.displayName} (${period}):`, e);
+            countByAccount[m.accountId] = 0;
+          }
+        }
       }
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, members.length) }, worker));
 
       const rows = members.map(m => ({ ...m, count: countByAccount[m.accountId] || 0 }))
         .sort((a, b) => b.count - a.count);
@@ -2097,10 +2117,7 @@
       const myCount = myRow ? myRow.count : (countByAccount[myAccountId] || 0);
       const myPosition = myRow ? (rows.indexOf(myRow) + 1) : null;
 
-      return {
-        period, members: rows, teamAverage, myCount, myPosition, myAccountId,
-        truncated: (d.total ?? issues.length) > issues.length
-      };
+      return { period, members: rows, teamAverage, myCount, myPosition, myAccountId };
     }
 
     async function searchIssuesWithCache(objectId, jql){
