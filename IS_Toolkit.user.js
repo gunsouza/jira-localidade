@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.7
+// @version      2.5.8
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -6039,16 +6039,18 @@
             const stillMissing = {};
             const needsManualEdit = [];
             for(const [k, meta] of Object.entries(newlyMatched)){
-              // v2.5.7: essa checagem PRECISA vir antes do "ja tem valor" — o campo pode ter
-              // *aparencia* de preenchido (visivel no detalhe do ticket, com objeto/icone do
-              // Assets) mas o GET desse campo devolve uma representacao que, reenviada como
-              // esta (round-trip), NAO satisfaz a API de escrita — confirmado em teste real:
-              // o campo aparecia preenchido no ticket, mesmo assim o recovery reenviou o valor
-              // lido e a transicao falhou de novo com a mesma reclamacao. Campos de
-              // objeto do Assets/Insight tipicamente exigem um formato de escrita diferente do
-              // formato de leitura, entao NUNCA tentamos adivinhar/reenviar esses 4 campos —
-              // sempre pedimos pra editar direto no Jira, mesmo que pareçam preenchidos.
-              if(_isDependentAssetsCategoryField(k)){ needsManualEdit.push(meta?.name || k); continue; }
+              // v2.5.8: agora com o formato de escrita CORRETO pra campos de objeto do
+              // Assets/Insight (descoberto com payload real capturado do proprio Jira, ver
+              // _cmdbFieldToWriteShape) — em vez de so desistir e pedir edicao manual (v2.5.6/
+              // v2.5.7), tenta converter o valor lido (GET) pro formato de escrita certo
+              // ({workspaceId, id}) e reenviar. So cai em "precisa editar manual" se o campo
+              // realmente nao tiver valor nenhum pra converter.
+              if(_isCmdbObjectField(k)){
+                const cmdbShape = _cmdbFieldToWriteShape(currentValues[k]);
+                if(cmdbShape){ autoFilled[k] = cmdbShape; continue; }
+                needsManualEdit.push(meta?.name || k);
+                continue;
+              }
               if(_hasValue(currentValues[k])){ autoFilled[k] = currentValues[k]; continue; }
               stillMissing[k] = meta;
             }
@@ -6058,14 +6060,13 @@
 
             if(needsManualEdit.length){
               // Nao adianta seguir com o resto do recovery — essa transicao vai continuar
-              // falhando enquanto esse campo dependente de objeto nao for RE-selecionado direto
-              // no Jira (mesmo que ja pareça preenchido no detalhe do ticket — o formato salvo
-              // ali nao e o mesmo que a API de escrita da transicao aceita de volta). Para aqui
-              // com uma mensagem clara, em vez de abrir mais um formulario ou fingir que
-              // reenviar o valor existente resolve.
+              // falhando enquanto esse campo de objeto do Assets nao for setado direto no
+              // Jira (aqui SEM valor nenhum pra converter — se tivesse valor, o bloco acima ja
+              // teria montado o formato certo e caido em autoFilled). Para aqui com uma
+              // mensagem clara, em vez de abrir mais um formulario que sabemos que nao ajuda.
               throw new Error(
-                `Essa transição exige "${needsManualEdit.join(', ')}", que aqui ${needsManualEdit.length > 1 ? 'são campos dependentes' : 'é um campo dependente'} de um objeto do Assets. ` +
-                `Mesmo que já apareça preenchido no detalhe do ticket, o Jira não aceita esse valor de volta nesta transição — abra o ticket direto no Jira, clique no campo e RE-selecione o objeto/tipo por lá (pode ser preciso escolher de novo, mesmo já estando visível) e tente fechar de novo em seguida.`
+                `Essa transição exige "${needsManualEdit.join(', ')}", que aqui ${needsManualEdit.length > 1 ? 'são campos' : 'é um campo'} de objeto do Assets sem valor definido — ` +
+                `precisa selecionar direto no próprio ticket, no Jira (abra o ticket, escolha o objeto/tipo nesse campo) e tentar fechar de novo em seguida.`
               );
             }
 
@@ -6910,14 +6911,40 @@
     // solto de texto (tentativa da v2.5.3/v2.5.4, que nao satisfez o validador num teste real).
     // Usado no recovery (runStatusAction) pra parar de tentar adivinhar o valor desses campos e
     // avisar que precisa editar direto no proprio ticket, no Jira.
-    function _isDependentAssetsCategoryField(key){
+    // v2.5.8: renomeado de _isDependentAssetsCategoryField. Agora com dados REAIS (payload
+    // capturado do proprio Jira, da mutation GraphQL "useMakeTransitionMutation" que o
+    // frontend usa pra aplicar transicao) — confirmamos que esses campos sao do tipo
+    // "JiraCMDBField" (objeto do Assets/Insight), e que "IS Ubicacion" (CF_ASSET) e do MESMO
+    // tipo (nao so os 4 campos de categoria). Ver _cmdbFieldToWriteShape logo abaixo pro
+    // formato de escrita correto — descoberto no mesmo payload real.
+    function _isCmdbObjectField(key){
       const ids = [
+        Number(SETTINGS?.CF_ASSET || 0),
         Number(SETTINGS?.CF_CATEGORY_INCIDENT || 0),
         Number(SETTINGS?.CF_CATEGORY_SERVICE || 0),
         Number(SETTINGS?.CF_SUBCATEGORY_INCIDENT || 0),
         Number(SETTINGS?.CF_SUBCATEGORY_SERVICE || 0),
       ].filter(Boolean);
       return ids.some(id => key === `customfield_${id}`);
+    }
+
+    // Converte o valor LIDO (GET) de um campo de objeto do Assets/Insight — formato
+    // { workspaceId, objectId, label, objectKey, ... } ou array disso — pro formato de
+    // ESCRITA que a API de edicao/transicao do Jira aceita de volta: um array de
+    // { workspaceId, id } (SO esses 2 campos; "objectId" do GET vira "id" na escrita, o resto
+    // — label/objectKey/etc — nao entra). Confirmado com o payload real da mutation
+    // "useMakeTransitionMutation" (v2.5.8) — antes (v2.5.5) a gente reenviava o objeto do GET
+    // como estava, sem essa renomeacao, e por isso a API rejeitava (formato errado, nao porque
+    // o campo estivesse "realmente" vazio). Retorna null se nao tiver workspaceId+objectId
+    // suficiente pra montar (ex: campo de fato vazio no ticket).
+    function _cmdbFieldToWriteShape(v){
+      const arr = Array.isArray(v) ? v : (v ? [v] : []);
+      const out = arr.map(o => {
+        const workspaceId = o?.workspaceId;
+        const id = o?.objectId ?? o?.id;
+        return (workspaceId && id) ? { workspaceId: String(workspaceId), id: String(id) } : null;
+      }).filter(Boolean);
+      return out.length ? out : null;
     }
     function _matchFieldsByName(namesList, fieldsMetaObj){
       const norm = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
