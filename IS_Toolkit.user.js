@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.95.0
+// @version      1.96.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -542,18 +542,22 @@
       //
       // Historico: na v1.84.0 trocamos temporariamente pro proxy HTTPS via furycloud.io, pois um
       // colega nao conseguia alcancar este dominio interno direto (erro de rede, confirmado
-      // tambem do lado do n8n). O proxy respondia bem a um GET de teste (404 "use POST" do
-      // proprio n8n, ou seja, roteava certo) — mas na v1.88.0+ confirmamos ao vivo que o proxy
-      // NAO completa o POST de verdade (fica preso ate dar timeout, mesmo em rede que sempre
-      // alcancou o endpoint direto sem problema nenhum). Revertido de volta pro direto na
-      // v1.89.0: e o que funciona pra praticamente todo mundo. Pra quem tiver o mesmo problema
-      // de alcance do colega original, ha um fallback automatico pro proxy SO em erro de rede
-      // (nao em timeout) — ver _runAuditCore/_callWebhook.
+      // tambem do lado do n8n). Revertido de volta pro direto na v1.89.0: e o que funciona pra
+      // praticamente todo mundo, e o proxy e' bem mais lento (chega a esgotar os 3 retries em
+      // alguns testes ao vivo). CORRECAO (v1.91.0): a suposicao inicial da v1.89.0 de que "o
+      // proxy nao completa o POST de verdade" estava ERRADA — testes ao vivo confirmaram que ele
+      // completa sim, so que devagar. Pra quem tiver o mesmo problema de alcance do colega
+      // original, ha um fallback automatico pro proxy SO em erro de rede (nao em timeout puro,
+      // que nao indica necessariamente um problema de alcance) — ver _runAuditCore/_callWebhook.
       AUDIT_WEBHOOK_URL: 'http://verdi-flows.melisystems.com/webhook/ist-ticket-audit',
       // Usado so como fallback automatico quando o endpoint acima da erro de REDE (host
-      // inalcancavel) — nao quando so da timeout (o proxy tambem pode nao completar o POST,
-      // ver nota acima; nao adianta trocar de URL se o problema e o proxy nao entregar).
+      // inalcancavel) — nao quando so da timeout (que pode ser so lentidao pontual, nao
+      // necessariamente falta de alcance).
       AUDIT_WEBHOOK_URL_FALLBACK: 'https://web.furycloud.io/api/proxy/verdi_flows/webhook/ist-ticket-audit',
+      // Ao selecionar uma transicao final (Resolve/Close/etc.) em "Mudar status", roda a
+      // auditoria automaticamente se nao houver uma valida em cache — e usa o "closing_comment"
+      // sugerido pela IA pra pre-preencher o comentario. Nunca bloqueia o Aplicar (so informa).
+      AUDIT_AUTO_ON_RESOLVE: true,
 
       // ---- Central do Grid (dashboard de arquivos usados pelo time) ----
       // Link fixo pra central de Grid do time. Aparece como atalho na Home do toolkit.
@@ -5673,6 +5677,7 @@
             </div>
           </div>
           <div id="ml_st_details" style="display:none;">
+            <div id="ml_st_audit" style="display:none; margin-bottom:12px;"></div>
             <div style="display:flex; gap:8px; align-items:baseline; margin-bottom:6px;">
               <span id="ml_st_msg_label" style="font-weight:700;">Comentario</span>
               <span id="ml_st_snip_wrap" style="margin-left:auto;"></span>
@@ -5742,6 +5747,120 @@
       }catch(_){}
 
       let selectedTransition = null; // { id, name, action? }
+      let issueData = null; // preenchido apos o fetch inicial (status atual, updated ts p/ staleness)
+      let auditBusy = false;
+      let autoAuditTriggered = false; // evita reauditar sozinho mais de 1x por selecao de transicao
+
+      // Pre-preenche o comentario com a sugestao de fechamento da auditoria — SO se o campo
+      // ainda estiver com o valor padrao da acao (ou vazio), pra nunca sobrescrever algo que o
+      // analista ja tenha digitado/editado na hora.
+      const _applyClosingSuggestion = (closingComment) => {
+        const txt = String(closingComment || '').trim();
+        if(!txt) return;
+        const ta = $('#ml_st_comment');
+        if(!ta) return;
+        const a = selectedTransition?.action || {};
+        const cur = String(ta.value || '').trim();
+        const isDefaultOrEmpty = !cur || cur === String(a.comment || '').trim();
+        if(isDefaultOrEmpty) ta.value = txt;
+      };
+
+      // Roda a auditoria (via _runAuditCore, o mesmo nucleo do botao "Auditar") direto de dentro
+      // do modal de Mudar Status, sem abrir nenhum outro painel. Usado tanto pelo auto-trigger
+      // (transicao final sem auditoria em cache) quanto pelos botoes manuais "Auditar agora"/
+      // "Reauditar". Nunca lanca pra fora — falha vira toast leve, nunca bloqueia o Aplicar.
+      const _runInlineAudit = async () => {
+        auditBusy = true; _renderAuditBlock();
+        try{
+          const result = await _runAuditCore(issueKey, {
+            onRetry: (attempt, usedFallback) => {
+              const el = $('#ml_st_audit');
+              if(el) el.innerHTML = `<div style="padding:10px 12px;border:1px dashed var(--ml-border);border-radius:10px;font-size:12px;color:var(--ml-text-mut);"><span class="ml-spinner">&#x21bb;</span> Tentativa ${attempt}/3${usedFallback ? ' (proxy)' : ''}...</div>`;
+            }
+          });
+          showToast('✓ Auditoria concluída', 'success', 2500);
+          auditBusy = false;
+          _renderAuditBlock();
+          _applyClosingSuggestion(result?.closing_comment);
+        }catch(e){
+          auditBusy = false;
+          _renderAuditBlock();
+          showToast('Auditoria falhou: ' + (e.message || String(e)), 'warn', 5000);
+        }
+      };
+
+      // Card informativo (NUNCA bloqueia) mostrado so quando a transicao selecionada e final
+      // (Resolve/Close/etc. — ver _isFinalTransition). Mostra estado da auditoria: sem cache ->
+      // dispara sozinho (se AUDIT_AUTO_ON_RESOLVE); em cache -> score + pendencias + botao pra
+      // usar a sugestao de fechamento da IA no comentario.
+      const _renderAuditBlock = () => {
+        const box = $('#ml_st_audit');
+        if(!box) return;
+        const t = selectedTransition;
+        if(!t || !_isFinalTransition(t.name)){
+          box.style.display = 'none';
+          box.innerHTML = '';
+          return;
+        }
+        box.style.display = '';
+
+        if(auditBusy){
+          box.innerHTML = `<div style="padding:10px 12px;border:1px dashed var(--ml-border);border-radius:10px;font-size:12px;color:var(--ml-text-mut);"><span class="ml-spinner">&#x21bb;</span> Auditando ticket...</div>`;
+          return;
+        }
+
+        const cached = _loadAuditGM(issueKey);
+        const updatedTs = issueData?.fields?.updated ? new Date(issueData.fields.updated).getTime() : null;
+        const stale = !!(cached && _isAuditStale(cached, updatedTs));
+
+        if(!cached || stale){
+          box.innerHTML = `
+            <div style="padding:10px 12px;border:1px dashed var(--ml-border);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+              <div style="font-size:12px;color:var(--ml-text-mut);">
+                ${stale ? '⚠️ Auditoria salva está desatualizada (ticket mudou depois).' : 'Ticket ainda não foi auditado.'}
+              </div>
+              <button type="button" id="ml_st_audit_run" class="ghost" style="font-size:11.5px;padding:5px 10px;">🔍 ${stale ? 'Reauditar' : 'Auditar agora'}</button>
+            </div>`;
+          box.querySelector('#ml_st_audit_run').onclick = () => { autoAuditTriggered = true; _runInlineAudit(); };
+
+          // Auto-dispara 1x por selecao de transicao (se habilitado nas Configuracoes) —
+          // e' exatamente esse o pedido original: ao ir pra uma transicao final, a auditoria
+          // roda sozinha, sem precisar clicar em nada.
+          if(!autoAuditTriggered && SETTINGS.AUDIT_AUTO_ON_RESOLVE !== false && SETTINGS.AUDIT_WEBHOOK_URL){
+            autoAuditTriggered = true;
+            _runInlineAudit();
+          }
+          return;
+        }
+
+        // Auditoria em cache e fresca: mostra score + pendencias, tudo so informativo.
+        const items = Array.isArray(cached.items) ? cached.items : [];
+        const pending = items.filter(i => i.status === 'error' || i.status === 'warn');
+        const scoreColor = cached.score >= 80 ? '#34c578' : cached.score >= 50 ? '#f59e0b' : '#ef4444';
+        const closingComment = String(cached.closing_comment || '').trim();
+        box.innerHTML = `
+          <div style="padding:10px 12px;border:1px solid ${scoreColor}44;background:${scoreColor}14;border-radius:10px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:${pending.length ? '8px' : '0'};">
+              <span style="font-weight:800;font-size:13px;color:${scoreColor};">${Number(cached.score)||0}/100</span>
+              <span style="font-size:11.5px;color:var(--ml-text-mut);">— auditoria da IA</span>
+              <button type="button" id="ml_st_audit_rerun" class="ghost" style="margin-left:auto;font-size:11px;padding:3px 8px;">Reauditar</button>
+            </div>
+            ${pending.length ? `
+              <div style="display:flex;flex-direction:column;gap:4px;">
+                ${pending.map(i => `
+                  <div style="font-size:11.5px;color:var(--ml-text-mut);line-height:1.4;">
+                    <b style="color:${i.status === 'error' ? '#fca5a5' : '#fbbf24'};">${i.status === 'error' ? '✕' : '⚠'} ${esc(i.check || '')}</b>${i.detail ? ` — ${esc(i.detail)}` : ''}
+                  </div>
+                `).join('')}
+              </div>
+            ` : `<div style="font-size:11.5px;color:#34c578;">Sem pendências detectadas.</div>`}
+            ${closingComment ? `<button type="button" id="ml_st_audit_usesug" class="ghost" style="margin-top:8px;font-size:11.5px;padding:5px 10px;">📋 Usar sugestão de encerramento da auditoria</button>` : ''}
+          </div>`;
+
+        box.querySelector('#ml_st_audit_rerun').onclick = () => { autoAuditTriggered = true; _runInlineAudit(); };
+        const useBtn = box.querySelector('#ml_st_audit_usesug');
+        if(useBtn) useBtn.onclick = () => _applyClosingSuggestion(closingComment);
+      };
 
       const refreshDetails = () => {
         const details = $('#ml_st_details');
@@ -5762,10 +5881,12 @@
         if(!ta.value || ta.dataset.lastTr !== String(t.id)){
           ta.value = String(a.comment || '');
           ta.dataset.lastTr = String(t.id);
+          autoAuditTriggered = false; // nova selecao de transicao -> permite auto-audit de novo
         }
         internalChk.checked = a.internal === true;
         assignChk.checked = a.assignToMe !== false;
         $('#ml_st_msg_label').innerHTML = `Comentario para <b>${esc(t.name)}</b>${a.label && a.label !== t.name ? ` <span style="color:var(--ml-text-dim);font-weight:400;">(acao "${esc(a.label)}")</span>` : ''}`;
+        _renderAuditBlock();
       };
 
       const renderGrid = (transitions, statusName) => {
@@ -5893,10 +6014,11 @@
 
       // Carrega transicoes + status atual em paralelo
       try{
-        const [trData, issueData] = await Promise.all([
+        const [trData, _issueData] = await Promise.all([
           jiraGetTransitions(issueKey),
           getIssueAllFields(issueKey).catch(() => null)
         ]);
+        issueData = _issueData; // guarda no escopo externo (usado por _renderAuditBlock p/ staleness)
         const transitions = trData?.transitions || [];
         const statusName = issueData?.fields?.status?.name || '';
         renderGrid(transitions, statusName);
@@ -5922,26 +6044,10 @@
           assignToMe
         };
 
-        // Verificacao pre-fechamento: auditoria pendente ou score baixo
-        try{
-          if(_isFinalTransition(t.name)){
-            const cached = _loadAuditGM(issueKey);
-            if(!cached){
-              const go = confirm('⚠️ Este ticket não foi auditado.\n\nDeseja auditar antes de fechar?');
-              if(go) return; // usuario clicou OK = quer auditar, cancela transicao
-            } else {
-              const updatedTs = await _getIssueUpdatedTs(issueKey);
-              if(_isAuditStale(cached, updatedTs)){
-                const go = confirm('⚠️ Este ticket foi alterado depois da última auditoria salva (auditoria desatualizada).\n\nDeseja reauditar antes de fechar?');
-                if(go) return;
-              } else if(cached.score < 60){
-                const errs = (cached.items||[]).filter(i=>i.status==='error').map(i=>i.check).join(', ');
-                const go = confirm(`⚠️ Score de auditoria: ${cached.score}/100\nPendências: ${errs || 'ver painel'}\n\nFechar mesmo assim?`);
-                if(!go) return;
-              }
-            }
-          }
-        }catch(e){} // se falhar, deixar a transicao acontecer normalmente
+        // Auditoria pendente/desatualizada/score baixo em transicoes finais: aviso NAO-bloqueante,
+        // mostrado dentro do proprio card de detalhes (ver _renderAuditBlock, roda automatico ao
+        // selecionar a transicao). O usuario nunca deve ser impedido de encerrar o ticket mesmo
+        // com pendencias (v1.96.0) — antes havia confirms bloqueantes aqui, removidos.
 
         const applyBtn = $('#ml_st_apply');
         applyBtn.disabled = true;
@@ -9510,6 +9616,10 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                     Deixe vazio para desabilitar o card de auditoria na home.
                   </div>
                 </div>
+                <div class="full">
+                  <label class="checkbox"><input type="checkbox" id="ml_s_audit_auto_resolve" ${cur.AUDIT_AUTO_ON_RESOLVE !== false ? 'checked' : ''} /> Auditar automaticamente ao ir para uma transi&ccedil;&atilde;o final (Resolve/Close/etc.)</label>
+                  <div class="hint">Em "Mudar status", ao selecionar uma transi&ccedil;&atilde;o de encerramento sem auditoria em cache (ou desatualizada), roda a auditoria sozinha e usa a sugest&atilde;o de fechamento da IA pra pr&eacute;-preencher o coment&aacute;rio. Nunca impede de aplicar a transi&ccedil;&atilde;o, mesmo com pend&ecirc;ncias.</div>
+                </div>
               </div>
             </div>
 
@@ -10322,6 +10432,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
             // Integracoes
             AUDIT_WEBHOOK_URL: String(modal.querySelector('#ml_s_audit_webhook')?.value || '').trim(),
+            AUDIT_AUTO_ON_RESOLVE: !!modal.querySelector('#ml_s_audit_auto_resolve')?.checked,
             GRID_CENTRAL_URL: String(modal.querySelector('#ml_s_grid_url')?.value || '').trim(),
             AUDIT_PENDING_JQL: String(modal.querySelector('#ml_s_audit_pending_jql')?.value || '').replace(/\r\n/g,'\n').trim(),
             SLA_FIELD_ID:      Math.max(0, Number(modal.querySelector('#ml_s_sla_field_id')?.value) || 0),
