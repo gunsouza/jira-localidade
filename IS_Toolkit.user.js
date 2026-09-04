@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.1
+// @version      2.5.2
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -1948,12 +1948,16 @@
       return result;
     }
 
-    async function searchByJql(jql){
+    async function searchByJql(jql, extraFields){
       const url = `${location.origin}/rest/api/3/search/jql`;
+      const baseFields = ["summary","description","assignee","issuetype","project","updated","priority", `customfield_${CF_RES_TEAM}`, `customfield_${CF_ASSET}`];
+      // extraFields (v2.5.2): campos adicionais so pra este call (ex: Serial Number resolvido
+      // dinamicamente na tela de Duplicados), sem afetar os outros usos genericos da funcao.
+      const fields = (Array.isArray(extraFields) && extraFields.length) ? [...baseFields, ...extraFields] : baseFields;
       const payload = {
         jql,
         maxResults: MAX_RESULTS,
-        fields: ["summary","description","assignee","issuetype","project","updated","priority", `customfield_${CF_RES_TEAM}`, `customfield_${CF_ASSET}`]
+        fields
       };
       const r = await fetch(url, {
         method:'POST',
@@ -2277,10 +2281,10 @@
       return { period, members: rows };
     }
 
-    async function searchIssuesWithCache(objectId, jql){
+    async function searchIssuesWithCache(objectId, jql, extraFields){
       const cached = cacheGet(objectId);
       if (cached && cached.jql === jql && cached.issues) return cached.issues;
-      const data = await searchByJql(jql);
+      const data = await searchByJql(jql, extraFields);
       const issues = data.issues || [];
       cacheSet(objectId, { ...(cached || {}), jql, issues });
       return issues;
@@ -2681,6 +2685,18 @@
       return false;
     }
 
+    // Extrai texto "plano" de um valor de campo do Jira, seja qual for o formato: string
+    // simples, objeto { value/name } (select, opcao), ou array de qualquer um dos dois
+    // (multi-select, campo de texto multivalorado). Usado pra Serial Number e outros campos
+    // extras que a gente le pra ampliar a deteccao de duplicados (v2.5.2).
+    function _plainFieldText(v){
+      if(v == null) return '';
+      if(typeof v === 'string') return v;
+      if(Array.isArray(v)) return v.map(_plainFieldText).filter(Boolean).join(', ');
+      if(typeof v === 'object') return String(v.value || v.name || '').trim();
+      return String(v);
+    }
+
     function extractIdentifiersFromText(text){
       const t = String(text || '');
       const up = t.toUpperCase();
@@ -2688,7 +2704,11 @@
 
       found.push(...extractQtyTokens(t));
 
-      const ipRe = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
+      // IP: usa lookbehind/lookahead em vez de \b antes/depois, pra tambem pegar IPs "colados"
+      // em nomes sem espaco (ex: "BRSGO2_C28_10.190.107.26" — underscore e digito sao ambos
+      // \w, entao \b nao "quebra" ali e o IP embutido nunca batia). So exige que nao venha
+      // logo antes/depois outro digito ou ponto (evita capturar pedaco de numero maior).
+      const ipRe = /(?<![\d.])(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?![\d.])/g;
       for(const m of t.matchAll(ipRe)){
         const ip = m[0];
         found.push({ type:'ip', value: ip, weight: isPrivateIp(ip) ? 4 : 3 });
@@ -5898,30 +5918,78 @@
       }
 
       // 6) Aplica transicao com comment + fields inline
+      const attemptTransition = (fields) => jiraApplyTransitionWithFields(issueKey, chosenTransition.id, {
+        commentText: commentForTransition,
+        internal: isInternal,
+        fields
+      });
+
       try{
-        await jiraApplyTransitionWithFields(issueKey, chosenTransition.id, {
-          commentText: commentForTransition,
-          internal: isInternal,
-          fields: extraFields
-        });
+        await attemptTransition(extraFields);
         log(`transicao aplicada (comment ${isInternal ? 'INTERNO' : 'PUBLICO'} + fields inline)`);
       }catch(e){
         const msg = String(e?.message || '');
         const is400 = /HTTP 400/.test(msg);
-        if(is400 && Object.keys(extraFields).length){
-          log('400 com fields - tentando fallback sem fields...');
-          try{
-            await jiraApplyTransitionWithFields(issueKey, chosenTransition.id, {
-              commentText: commentForTransition,
-              internal: isInternal,
-              fields: {}
+        if(!is400) throw e;
+
+        // 6a) Recovery (v2.5.2): a tela da transicao (?expand=transitions.fields) nem sempre
+        // reporta TODOS os campos que um validador de workflow do JSM exige pra fechar o
+        // ticket (ex: "Incident Type", "Solution", "IS Ubicación", "Request Type") — alguns
+        // so aparecem citados no PROPRIO texto do erro 400. Tenta casar esses nomes contra os
+        // campos reais do ticket via /editmeta e abre um 2o formulario so com o que faltou,
+        // em vez de simplesmente desistir e jogar o JSON cru na cara do analista.
+        log('400 na 1a tentativa - procurando campos extras citados no erro...');
+        const namesFromError = _parseRequiredFieldNamesFromError(msg);
+        let recovered = false;
+
+        if(namesFromError.length){
+          let editMetaFields = {};
+          try{ editMetaFields = await getIssueEditMeta(issueKey); }
+          catch(metaErr){ console.warn('[IS Toolkit][recovery] falha ao ler editmeta:', metaErr); }
+
+          const { matched, unresolved } = _matchFieldsByName(namesFromError, editMetaFields);
+          const newlyMatched = Object.fromEntries(
+            Object.entries(matched).filter(([k]) => k !== 'comment' && !(k in extraFields))
+          );
+
+          if(Object.keys(newlyMatched).length){
+            log(`recovery: achou ${Object.keys(newlyMatched).length} campo(s) extra(s) via editmeta (${Object.keys(newlyMatched).join(', ')})`);
+            alert(
+              `Essa transição também exige: ${namesFromError.join(', ')}.\n\n` +
+              (unresolved.length ? `Não encontrei automaticamente: ${unresolved.join(', ')} (pode precisar editar direto no ticket, no Jira).\n\n` : '') +
+              `Vou abrir mais um formulário só com o que faltou.`
+            );
+            const filled2 = await promptForTransitionFields(newlyMatched, {
+              me, defaultComment: commentForTransition, internalComment: isInternal, auditSuggestions: {}
             });
-            log('transicao aplicada (fallback sem fields)');
-          }catch(e2){
-            throw new Error(`${e.message}\n\nFallback tambem falhou: ${e2.message}`);
+            if(!filled2) throw new Error('cancelado');
+            if(filled2.comment) commentForTransition = filled2.comment;
+            const mergedFields = { ...extraFields, ...(filled2.fields || {}) };
+            try{
+              await attemptTransition(mergedFields);
+              log('transicao aplicada (apos preencher campos extras do erro)');
+              recovered = true;
+            }catch(e3){
+              throw new Error(`${msg}\n\nApós preencher os campos extras, a transição falhou de novo: ${e3.message}`);
+            }
           }
-        } else {
-          throw e;
+        }
+
+        if(!recovered){
+          // 6b) Fallback antigo (mantido por compatibilidade): se enviamos fields e mesmo
+          // assim deu 400 sem citar nomes reconheciveis, tenta sem eles — cobre o raro caso
+          // de o FORMATO que mandamos ser o problema, nao a ausencia do campo.
+          if(Object.keys(extraFields).length){
+            log('sem campos extras identificados - tentando fallback sem fields...');
+            try{
+              await attemptTransition({});
+              log('transicao aplicada (fallback sem fields)');
+            }catch(e2){
+              throw new Error(`${msg}\n\nFallback tambem falhou: ${e2.message}`);
+            }
+          } else {
+            throw e;
+          }
         }
       }
 
@@ -6637,6 +6705,82 @@
       });
       if(!r.ok) throw new Error(`HTTP ${r.status} listando campos`);
       return r.json();
+    }
+
+    // Resolve dinamicamente o customfield "Serial Number" pelo NOME (em vez de pedir pro
+    // usuario configurar um ID, igual tivemos que fazer manualmente com o SLA_FIELD_ID) —
+    // usado na tela de Duplicados (v2.5.2) pra tambem ler/mostrar esse campo, que as vezes
+    // tem um identificador util (ex: hostname de camera com IP embutido) que nao aparece
+    // no titulo nem na descricao. Cacheado em memoria pra sessao inteira (nao muda em
+    // runtime). Retorna o field id (ex: "customfield_12345") ou null se nao encontrar.
+    let _serialNumberFieldIdCache; // undefined = ainda nao resolvido nesta sessao
+    async function getSerialNumberFieldId(){
+      if(_serialNumberFieldIdCache !== undefined) return _serialNumberFieldIdCache;
+      try{
+        const fields = await listAllFields();
+        const norm = s => String(s || '').trim().toLowerCase();
+        const exact = fields.find(f => /^(serial\s*number|n[uú]mero\s*de\s*s[eé]rie)$/i.test(norm(f.name)));
+        const loose = exact || fields.find(f => /serial/i.test(norm(f.name)));
+        _serialNumberFieldIdCache = loose ? loose.id : null;
+      }catch(e){
+        console.warn('[IS Toolkit][duplicados] falha ao resolver campo Serial Number:', e);
+        _serialNumberFieldIdCache = null;
+      }
+      return _serialNumberFieldIdCache;
+    }
+
+    // Le TODOS os campos editaveis do ticket (schema/allowedValues/required), via /editmeta.
+    // Mais completo que a tela da transicao (?expand=transitions.fields) pra alguns casos:
+    // alguns validadores de workflow do JSM (ex: campos do Request Type) exigem um campo sem
+    // ele aparecer como "required" na tela da transicao — so aparece no texto do erro 400.
+    // Usado como RECOVERY (v2.5.2) depois de uma transicao falhar, pra tentar achar esses
+    // campos "escondidos" pelo nome citado no erro. Ver runStatusAction.
+    async function getIssueEditMeta(issueKey){
+      const url = `${location.origin}/rest/api/3/issue/${encodeURIComponent(issueKey)}/editmeta`;
+      const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
+      const txt = await r.text().catch(()=> '');
+      if(!r.ok) throw new Error(`HTTP ${r.status} ao ler editmeta de ${issueKey}: ${txt.slice(0,200)}`);
+      const data = JSON.parse(txt);
+      return data?.fields || {};
+    }
+
+    // Tenta extrair os NOMES de campo citados numa mensagem de erro do Jira do tipo:
+    // "Los campos 'Incident Type', 'Assignee', 'Resolution' no pueden estar vacios." (ou em
+    // qualquer outro idioma — so procura o que esta entre aspas simples, nao depende do texto
+    // ao redor). Se a lista de nomes capturados tiver virgula sobrando dentro de algum item
+    // (sinal de aspas desencontradas na mensagem original), tenta de novo achatando tudo e
+    // resplitando por virgula, como fallback tolerante.
+    function _parseRequiredFieldNamesFromError(msg){
+      const s = String(msg || '');
+      const jsonStart = s.indexOf('{');
+      const body = jsonStart >= 0 ? s.slice(jsonStart) : s;
+      const clean = (arr) => [...new Set(
+        arr.map(n => String(n || '').replace(/^[,\s]+|[,\s]+$/g, '').trim())
+           .filter(n => n.length >= 2 && n.length <= 60)
+      )];
+      let names = clean([...body.matchAll(/'([^']{1,60})'/g)].map(m => m[1]));
+      if(names.some(n => n.includes(','))){
+        names = clean(names.join(',').split(','));
+      }
+      return names;
+    }
+
+    // Casa uma lista de NOMES de campo (extraidos do erro) contra o mapa de campos { fieldKey:
+    // meta } (de /editmeta ou de transitions.fields), comparando por nome normalizado (sem
+    // acento, minusculo). Retorna { matched: { fieldKey: meta com required forcado pra true },
+    // unresolved: [nomes que nao bateram em nenhum campo conhecido] }.
+    function _matchFieldsByName(namesList, fieldsMetaObj){
+      const norm = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+      const entries = Object.entries(fieldsMetaObj || {});
+      const matched = {};
+      const unresolved = [];
+      for(const rawName of namesList){
+        const target = norm(rawName);
+        const hit = entries.find(([, meta]) => norm(meta?.name) === target);
+        if(hit) matched[hit[0]] = { ...hit[1], required: true };
+        else unresolved.push(rawName);
+      }
+      return { matched, unresolved };
     }
 
     // Verifica se um project existe via GET /rest/api/3/project/{key}.
@@ -11407,18 +11551,24 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const manualIdsRaw = Array.isArray(opts.manualIds) ? opts.manualIds : [];
       modal.setBody(`<div class="meta">Carregando duplicados…</div>`);
 
-      const [issueCurrent, asset] = await Promise.all([
+      const [issueCurrent, asset, serialFieldId] = await Promise.all([
         getIssueFields(issueKey, ["summary","description","*all"]),
         getAssetFromIssue(issueKey),
+        getSerialNumberFieldId(),
       ]);
 
       const summaryCurrent = String(issueCurrent?.fields?.summary || '').trim();
       const descCurrent = descriptionToText(issueCurrent?.fields?.description);
+      // Serial Number (v2.5.2): campo resolvido dinamicamente pelo nome (ver
+      // getSerialNumberFieldId), lido explicitamente aqui pra poder MOSTRAR na tela (o scan
+      // generico abaixo ja pegava o valor pra fins de deteccao, quando era string simples, mas
+      // nao exibia separado pro analista ver de relance).
+      const serialValCurrent = serialFieldId ? _plainFieldText(issueCurrent?.fields?.[serialFieldId]) : '';
       // Inclui campos de texto extras (ex: Serial Number, campos custom) para ampliar detecção
       const extraFieldsText = Object.values(issueCurrent?.fields || {})
         .filter(v => typeof v === 'string' && v.length > 2 && v.length < 200)
         .join(' ');
-      const currentText = `${summaryCurrent}\n${descCurrent}\n${extraFieldsText}`.trim();
+      const currentText = `${summaryCurrent}\n${descCurrent}\n${extraFieldsText}\n${serialValCurrent}`.trim();
 
       const autoIds = extractIdentifiersFromText(currentText);
       // IDs digitados manualmente (quando o auto-detect nao pega, ex: formato fora do padrao).
@@ -11453,12 +11603,17 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const jql = `project in (${proj}) AND key in (${quotedKeys}) AND ${OPEN_FILTER} ORDER BY ${ORDER_BY}`;
       const issuesUrl = `${location.origin}/issues/?jql=${encodeURIComponent(jql)}`;
 
-      const issues = await searchIssuesWithCache(objectId, jql);
+      // Serial Number (v2.5.2): pede tambem esse campo pros candidatos, senao so o ticket
+      // atual teria essa informacao disponivel pra bater match (o campo nunca era buscado
+      // aqui antes, so summary/description/asset/etc — por isso o valor do Serial Number
+      // nunca contava como match do lado dos candidatos, mesmo quando tinha IP/serial util).
+      const issues = await searchIssuesWithCache(objectId, jql, serialFieldId ? [serialFieldId] : []);
 
       const items = (issues || []).map(issue => {
         const f = issue.fields || {};
         const descText = descriptionToText(f.description);
-        const otherText = `${f.summary || ''}\n${descText}`;
+        const serialValOther = serialFieldId ? _plainFieldText(f[serialFieldId]) : '';
+        const otherText = `${f.summary || ''}\n${descText}\n${serialValOther}`;
         const otherIds = extractIdentifiersFromText(otherText);
         const hits = intersectByExtraction(currentIds, otherIds);
         const score = scoreHits(hits);
@@ -11485,6 +11640,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         <div class="dupCurrentBox" style="margin-bottom:10px;">
           <details open>
             <summary style="cursor:pointer;font-weight:700;">Descrição do ticket atual (${esc(issueKey)})</summary>
+            ${serialValCurrent ? `<div class="meta" style="margin-top:6px;"><b>Serial Number:</b> ${esc(serialValCurrent)}</div>` : ''}
             <div class="meta" style="white-space:pre-wrap;margin-top:6px;">${esc(descCurrent) || '<span class="muted">(sem descrição)</span>'}</div>
           </details>
           <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">
