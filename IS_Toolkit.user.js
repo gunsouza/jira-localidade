@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.4.1
+// @version      2.5.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -491,9 +491,11 @@
       ],
 
       // ---- Vincular + Fechar (tela de Duplicados) ----
-      // Transicao aplicada em cada ticket apos vincula-lo como duplicado. {vinculado} = key do
-      // ticket que permanece aberto; {meu_nome} = quem esta logado. Campos exigidos pela
-      // transicao (Resolucao, custom fields, etc.) sao pedidos na hora via formulario generico.
+      // Vincula o TICKET ATUAL como duplicado do(s) selecionado(s) e aplica esta transicao
+      // SO no ticket atual (v2.5.0+) — o(s) selecionado(s) sao os "originais" e permanecem
+      // abertos. {vinculado} = key(s) do(s) ticket(s) que permanecem abertos (os originais);
+      // {meu_nome} = quem esta logado. Campos exigidos pela transicao (Resolucao, custom
+      // fields, etc.) sao pedidos na hora via formulario generico.
       DUPLICATE_CLOSE_TRANSITION: 'Resolve',
       DUPLICATE_CLOSE_COMMENT: 'Chamado duplicado e sendo atendido através do: {vinculado}\n\nAtenciosamente,',
       DUPLICATE_CLOSE_INTERNAL: false,
@@ -1502,6 +1504,15 @@
           border-bottom: 1px solid var(--ml-border);
           padding: 14px 0 12px 0;
           margin: -18px 0 16px 0;
+        }
+        /* Bloco de descricao do ticket atual + campo de ID manual (Duplicados). Antes reusava
+           a classe .topbar (sticky) — como o .topbar de baixo (contadores/acoes) TAMBEM e
+           sticky top:0, os dois disputavam o mesmo topo da area de scroll e se sobrepunham,
+           cortando visualmente o campo de digitar ID manual. Este bloco NAO e sticky: rola
+           normalmente, só o .topbar de contadores/ações fica fixo no topo. */
+        #${IDS.modal} .dupCurrentBox {
+          padding-bottom: 12px;
+          border-bottom: 1px solid var(--ml-border);
         }
         #${IDS.modal} .toprow { display:flex; gap:12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
         #${IDS.modal} .counts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
@@ -9918,9 +9929,10 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               <div class="grid">
                 <div class="full">
                   <div class="hint" style="margin-bottom: 10px;">
-                    Na tela de <b>Duplicados</b>, o botao <b>"Vincular + Fechar"</b> vincula o(s) ticket(s) selecionado(s) como
-                    duplicado e, em seguida, aplica esta transicao de fechamento em cada um. Campos exigidos pela transicao
-                    (Resolucao, campos custom, etc.) aparecem num formulario na hora — igual as outras Acoes de Status.
+                    Na tela de <b>Duplicados</b>, o botao <b>"Vincular + Fechar"</b> vincula o <b>ticket atual</b> como duplicado
+                    do(s) ticket(s) selecionado(s) e, em seguida, aplica esta transicao de fechamento <b>no ticket atual</b>
+                    (o(s) selecionado(s) permanecem abertos — sao os "originais"). Campos exigidos pela transicao (Resolucao,
+                    campos custom, etc.) aparecem num formulario na hora — igual as outras Acoes de Status.
                   </div>
                 </div>
                 <div>
@@ -11465,7 +11477,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         ? manualIdsRaw.map((raw, i) => `<span class="chip manual" data-manual-remove="${i}" title="Remover">${esc(raw)} ✕</span>`).join('')
         : '';
       const currentBox = `
-        <div class="topbar" style="margin-bottom:10px;">
+        <div class="dupCurrentBox" style="margin-bottom:10px;">
           <details open>
             <summary style="cursor:pointer;font-weight:700;">Descrição do ticket atual (${esc(issueKey)})</summary>
             <div class="meta" style="white-space:pre-wrap;margin-top:6px;">${esc(descCurrent) || '<span class="muted">(sem descrição)</span>'}</div>
@@ -11748,13 +11760,19 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           }
         });
 
+        // Vincula o TICKET ATUAL (issueKey) como duplicado do(s) ticket(s) selecionado(s) e
+        // fecha SO o ticket atual — os selecionados sao os "originais" e permanecem abertos
+        // (ficam sendo trabalhados por quem ja estava com eles). Antes da v2.5.0 era o
+        // contrario (fechava os selecionados, mantinha o atual aberto) — invertido a pedido
+        // do usuario, que so faz sentido fechar o proprio ticket quando ele e o duplicado.
         linkCloseBtn.addEventListener('click', async () => {
           if(selected.size === 0) return;
           const selectedKeys = [...selected];
           const transitionName = SETTINGS.DUPLICATE_CLOSE_TRANSITION || DEFAULTS.DUPLICATE_CLOSE_TRANSITION;
           const ok = confirm(
-            `Vincular ${selectedKeys.length} ticket(s) como duplicado do ticket atual (${issueKey}) E aplicar a transicao "${transitionName}" em cada um?\n\n` +
-            `Isso abre um formulario por ticket pra preencher os campos que a transicao exigir (ex: Resolucao).`
+            `Vincular o ticket atual (${issueKey}) como duplicado de ${selectedKeys.length} ticket(s) selecionado(s) ` +
+            `E aplicar a transicao "${transitionName}" no ticket atual (${issueKey})?\n\n` +
+            `Os selecionados permanecem ABERTOS (sao os "originais"). Isso abre um formulario pra preencher os campos que a transicao exigir (ex: Resolucao).`
           );
           if(!ok) return;
 
@@ -11763,32 +11781,44 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
           const commentTmpl = String(SETTINGS.DUPLICATE_CLOSE_COMMENT || DEFAULTS.DUPLICATE_CLOSE_COMMENT || '');
           const internal = SETTINGS.DUPLICATE_CLOSE_INTERNAL === true;
-          let okCount = 0, failCount = 0;
+          let linkOk = 0, linkFail = 0;
 
+          // 1) Vincula o ticket atual como duplicado de cada selecionado (eles nao sao tocados
+          // alem do link — continuam abertos, sem transicao nenhuma aplicada neles).
           for(const k of selectedKeys){
-            linkCloseBtn.textContent = `Processando ${k}...`;
+            linkCloseBtn.textContent = `Vinculando ${k}...`;
             try{
               await linkDuplicate(issueKey, k);
-              const comment = commentTmpl.replace(/\{vinculado\}/gi, issueKey);
-              await runStatusAction(k, {
-                label: 'Vincular + Fechar',
-                transition: transitionName,
-                comment,
-                internal,
-                assignToMe: false
-              });
-              okCount++;
+              linkOk++;
             }catch(e){
-              failCount++;
-              console.warn(`[IS Toolkit][Vincular+Fechar] falha em ${k}:`, e);
-              if(String(e?.message||'') !== 'cancelado'){
-                alert(`Falha em ${k}: ${e.message || e}`);
-              }
+              linkFail++;
+              console.warn(`[IS Toolkit][Vincular+Fechar] falha ao vincular ${k}:`, e);
+              alert(`Falha ao vincular ${k}: ${e.message || e}`);
             }
           }
 
-          linkCloseBtn.textContent = `OK: ${okCount}${failCount ? ` · Falhou: ${failCount}` : ''}`;
-          setTimeout(() => { linkCloseBtn.textContent = oldText; }, 1600);
+          // 2) Fecha SO o ticket atual, uma unica vez — o comentario referencia o(s) original(is).
+          linkCloseBtn.textContent = `Fechando ${issueKey}...`;
+          const comment = commentTmpl.replace(/\{vinculado\}/gi, selectedKeys.join(', '));
+          let closed = false;
+          try{
+            await runStatusAction(issueKey, {
+              label: 'Vincular + Fechar',
+              transition: transitionName,
+              comment,
+              internal,
+              assignToMe: false
+            });
+            closed = true;
+          }catch(e){
+            console.warn(`[IS Toolkit][Vincular+Fechar] falha ao fechar ${issueKey}:`, e);
+            if(String(e?.message||'') !== 'cancelado'){
+              alert(`Falha ao fechar ${issueKey}: ${e.message || e}`);
+            }
+          }
+
+          linkCloseBtn.textContent = `Vinculado: ${linkOk}${linkFail ? ` · Falhou: ${linkFail}` : ''} · ${closed ? 'Fechado!' : 'Nao fechado'}`;
+          setTimeout(() => { linkCloseBtn.textContent = oldText; }, 2200);
           linkCloseBtn.disabled = false;
         });
 
