@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.91.0
+// @version      1.92.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -6525,8 +6525,17 @@
       const isClosed = statusCatKey === 'done'
         || /close|resolv|done|fechar|encerr|conclu|finaliz/i.test(statusName);
 
-      // Helper: detecta autor bot
-      const isBot = name => /automation|bot|system|jira\s*service|auto\s*assign|trigger/i.test(name || '');
+      // Helper: detecta autor bot/automacao. Prioriza o campo oficial da API (accountType
+      // === 'app', que o Jira ja marca pra contas de app/bot/integracao, tipo o dispatcher
+      // automatico que manda a mensagem generica de "seu ticket foi recebido") — muito mais
+      // confiavel que so tentar adivinhar pelo nome, ja que contas de bot podem ter nome de
+      // pessoa (ex: "sup_appdispatcher_01" assinando como "Naty"). O regex de nome fica so
+      // como reforço pra quando accountType nao vier preenchido por algum motivo.
+      const isBot = author => {
+        if(!author) return false;
+        if(author.accountType === 'app') return true;
+        return /automation|bot|system|jira\s*service|auto\s*assign|trigger|dispatcher/i.test(author.displayName || author.accountId || '');
+      };
 
       // Anexos (nomes de arquivo)
       const allAttachments = (f.attachment || []);
@@ -6536,8 +6545,8 @@
       // Separa comentarios por autor: relator vs analistas
       const allCommentsFull = (f.comment?.comments) || [];
       const reporterComments  = allCommentsFull.filter(c => c.author?.displayName === reporter);
-      const analystComments   = allCommentsFull.filter(c => c.author?.displayName !== reporter && !isBot(c.author?.displayName));
-      const botComments       = allCommentsFull.filter(c => isBot(c.author?.displayName));
+      const analystComments   = allCommentsFull.filter(c => c.author?.displayName !== reporter && !isBot(c.author));
+      const botComments       = allCommentsFull.filter(c => isBot(c.author));
 
       const fmtComment = (c, maxLen) => {
         const text = c.body ? _adfToText(c.body, maxLen || 600) : '';
@@ -6562,7 +6571,7 @@
       // Transicoes de status feitas por humanos — com comentarios proximos pre-cruzados
       const WINDOW_MS = 30 * 60 * 1000; // 30 minutos
       const humanTransitions = changelog
-        .filter(h => (h.items || []).some(i => i.field === 'status') && !isBot(h.author?.displayName));
+        .filter(h => (h.items || []).some(i => i.field === 'status') && !isBot(h.author));
 
       const statusHistory = humanTransitions.length
         ? humanTransitions.map(h => {
@@ -6571,7 +6580,7 @@
             const tsH   = new Date(h.created || 0).getTime();
             // busca comentarios de analista dentro da janela de ±30min
             const nearby = allCommentsFull.filter(c => {
-              if(isBot(c.author?.displayName)) return false;
+              if(isBot(c.author)) return false;
               const tsC = new Date(c.created || 0).getTime();
               return Math.abs(tsC - tsH) <= WINDOW_MS;
             });
@@ -6589,7 +6598,7 @@
 
       // Alteracoes de prioridade feitas por humanos — com comentarios proximos pre-cruzados
       const humanPrioChanges = changelog
-        .filter(h => (h.items || []).some(i => i.field === 'priority') && !isBot(h.author?.displayName));
+        .filter(h => (h.items || []).some(i => i.field === 'priority') && !isBot(h.author));
 
       const prioHistory = humanPrioChanges.length
         ? humanPrioChanges.map(h => {
@@ -6597,7 +6606,7 @@
             const when  = (h.created || '').slice(0, 10);
             const tsH   = new Date(h.created || 0).getTime();
             const nearby = allCommentsFull.filter(c => {
-              if(isBot(c.author?.displayName)) return false;
+              if(isBot(c.author)) return false;
               const tsC = new Date(c.created || 0).getTime();
               return Math.abs(tsC - tsH) <= WINDOW_MS;
             });
@@ -6628,7 +6637,7 @@
       // Reclassificações de Urgência e Impacto feitas por humanos
       const RECLASSIF_FIELDS = /^(urgencia|urgência|urgency|impacto|impact)$/i;
       const humanReclassifChanges = changelog
-        .filter(h => (h.items || []).some(i => RECLASSIF_FIELDS.test(i.field || '') || RECLASSIF_FIELDS.test(i.fieldId || '')) && !isBot(h.author?.displayName));
+        .filter(h => (h.items || []).some(i => RECLASSIF_FIELDS.test(i.field || '') || RECLASSIF_FIELDS.test(i.fieldId || '')) && !isBot(h.author));
 
       const reclassifHistory = humanReclassifChanges.length
         ? humanReclassifChanges.map(h => {
@@ -6636,7 +6645,7 @@
             const when  = (h.created || '').slice(0, 16).replace('T',' ');
             const tsH   = new Date(h.created || 0).getTime();
             const nearby = allCommentsFull.filter(c => {
-              if(isBot(c.author?.displayName)) return false;
+              if(isBot(c.author)) return false;
               const tsC = new Date(c.created || 0).getTime();
               return Math.abs(tsC - tsH) <= WINDOW_MS;
             });
