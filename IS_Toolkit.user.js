@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.90.0
+// @version      1.91.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -7087,8 +7087,12 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
       try{
         const result = await _runAuditCore(issueKey, {
-          onRetry: (attempt) => { if(btn) btn.textContent = `Tentativa ${attempt}/3...`; }
+          onRetry: (attempt, usedFallback) => { if(btn) btn.textContent = usedFallback ? `Tentativa ${attempt}/3 (proxy)...` : `Tentativa ${attempt}/3...`; }
         });
+        // Toast de confirmacao: antes so a tela de pontuacao aparecendo indicava sucesso, sem
+        // nenhum aviso — confuso principalmente quando o fallback de rede entra em acao e a
+        // espera passa de alguns minutos (usuario nao sabe se travou ou se deu certo).
+        showToast('✓ Auditoria concluída', 'success', 3000);
         showAuditPanel(modal, issueKey, result, true);
       }catch(e){
         showToast('Auditoria falhou: ' + (e.message || String(e)), 'error', 6000);
