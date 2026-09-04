@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.9
+// @version      2.5.10
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -12118,10 +12118,17 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           if(selected.size === 0) return;
           const selectedKeys = [...selected];
           const transitionName = SETTINGS.DUPLICATE_CLOSE_TRANSITION || DEFAULTS.DUPLICATE_CLOSE_TRANSITION;
+          // v2.5.9: aviso extra pra tickets do projeto IS (nao ISS) — esses as vezes tem
+          // campos ligados a objeto do Assets (Incident Type, IS Ubicacion) que essa
+          // integracao nao consegue preencher via API (ver runStatusAction/recovery). Avisa
+          // ANTES de tentar, pra nao pegar o analista de surpresa se precisar finalizar no
+          // Jira nativo depois de vincular.
+          const isIsProject = issueKey.split('-')[0] === 'IS';
           const ok = confirm(
             `Vincular o ticket atual (${issueKey}) como duplicado de ${selectedKeys.length} ticket(s) selecionado(s) ` +
             `E aplicar a transicao "${transitionName}" no ticket atual (${issueKey})?\n\n` +
-            `Os selecionados permanecem ABERTOS (sao os "originais"). Isso abre um formulario pra preencher os campos que a transicao exigir (ex: Resolucao).`
+            `Os selecionados permanecem ABERTOS (sao os "originais"). Isso abre um formulario pra preencher os campos que a transicao exigir (ex: Resolucao).` +
+            (isIsProject ? `\n\nAtencao: chamados IS as vezes exigem campos (Incident Type, IS Ubicacion) que essa integracao nao consegue preencher automaticamente — se acontecer, o vinculo ja fica feito, mas voce vai precisar finalizar a transicao direto no Jira depois.` : '')
           );
           if(!ok) return;
 
