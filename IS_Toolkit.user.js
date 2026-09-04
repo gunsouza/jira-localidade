@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.6
+// @version      2.5.7
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -6039,17 +6039,17 @@
             const stillMissing = {};
             const needsManualEdit = [];
             for(const [k, meta] of Object.entries(newlyMatched)){
-              if(_hasValue(currentValues[k])){ autoFilled[k] = currentValues[k]; continue; }
-              // v2.5.6: os 4 campos de categoria (Incident/Service Type, Problem/Service
-              // Hardware) sao, nesta instancia, campos DEPENDENTES de um objeto do
-              // Assets/Insight — confirmado pelo proprio erro real do Jira: "es un campo
-              // dinamico, debe seleccionar primero el objeto y luego el [tipo]". Um select
-              // solto com o texto da opcao (tentado nas v2.5.3/v2.5.4) NAO satisfaz esse
-              // validador (confirmado em teste real: preencheu, reaplicou, falhou de novo com
-              // a mesma reclamacao) — entao paramos de tentar adivinhar o formato certo sem
-              // dados reais da API pra esse campo, e so avisamos que precisa editar direto no
-              // proprio ticket, no Jira (mesma orientacao que a mensagem de erro do Jira ja da).
+              // v2.5.7: essa checagem PRECISA vir antes do "ja tem valor" — o campo pode ter
+              // *aparencia* de preenchido (visivel no detalhe do ticket, com objeto/icone do
+              // Assets) mas o GET desse campo devolve uma representacao que, reenviada como
+              // esta (round-trip), NAO satisfaz a API de escrita — confirmado em teste real:
+              // o campo aparecia preenchido no ticket, mesmo assim o recovery reenviou o valor
+              // lido e a transicao falhou de novo com a mesma reclamacao. Campos de
+              // objeto do Assets/Insight tipicamente exigem um formato de escrita diferente do
+              // formato de leitura, entao NUNCA tentamos adivinhar/reenviar esses 4 campos —
+              // sempre pedimos pra editar direto no Jira, mesmo que pareçam preenchidos.
               if(_isDependentAssetsCategoryField(k)){ needsManualEdit.push(meta?.name || k); continue; }
+              if(_hasValue(currentValues[k])){ autoFilled[k] = currentValues[k]; continue; }
               stillMissing[k] = meta;
             }
             if(Object.keys(autoFilled).length){
@@ -6058,12 +6058,14 @@
 
             if(needsManualEdit.length){
               // Nao adianta seguir com o resto do recovery — essa transicao vai continuar
-              // falhando enquanto esse campo dependente de objeto nao for setado direto no
-              // Jira. Para aqui com uma mensagem clara, em vez de abrir mais um formulario
-              // (ou insistir num campo que ja sabemos que nao vai funcionar por essa via).
+              // falhando enquanto esse campo dependente de objeto nao for RE-selecionado direto
+              // no Jira (mesmo que ja pareça preenchido no detalhe do ticket — o formato salvo
+              // ali nao e o mesmo que a API de escrita da transicao aceita de volta). Para aqui
+              // com uma mensagem clara, em vez de abrir mais um formulario ou fingir que
+              // reenviar o valor existente resolve.
               throw new Error(
-                `Essa transição exige "${needsManualEdit.join(', ')}", que aqui ${needsManualEdit.length > 1 ? 'são campos dependentes' : 'é um campo dependente'} de um objeto do Assets — ` +
-                `precisa selecionar direto no próprio ticket, no Jira (abra o ticket, preencha esse campo lá — o Jira pede pra escolher o objeto primeiro e o tipo depois) e tentar fechar de novo em seguida.`
+                `Essa transição exige "${needsManualEdit.join(', ')}", que aqui ${needsManualEdit.length > 1 ? 'são campos dependentes' : 'é um campo dependente'} de um objeto do Assets. ` +
+                `Mesmo que já apareça preenchido no detalhe do ticket, o Jira não aceita esse valor de volta nesta transição — abra o ticket direto no Jira, clique no campo e RE-selecione o objeto/tipo por lá (pode ser preciso escolher de novo, mesmo já estando visível) e tente fechar de novo em seguida.`
               );
             }
 
