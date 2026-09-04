@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.97.0
+// @version      1.98.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -9179,6 +9179,68 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       }
     }
 
+    // Descoberta ESCOPADA (v1.98.0) — em vez de listar TODOS os customfields da instancia
+    // inteira (facilmente centenas, a maioria irrelevante — a fonte de "lista 1 milhao de
+    // coisas" reportada), busca so os campos que aparecem na TELA de uma transicao especifica
+    // (normalmente "Resolve"/"Resolver"), reaproveitando a mesma chamada que ja monta o
+    // formulario de campos obrigatorios (?expand=transitions.fields). Tipicamente 4-6 campos —
+    // exatamente os relevantes pra Solution/Resolucao/Validated with the user.
+    async function discoverTransitionFields(){
+      const m = location.pathname.match(/\/browse\/([A-Z][A-Z0-9_]+-\d+)/);
+      if(!m){
+        alert('Abra um ticket Jira antes de usar a descoberta de campos.');
+        return null;
+      }
+      const issueKey = m[1];
+      try{
+        const trData = await jiraGetTransitions(issueKey);
+        const transitions = trData?.transitions || [];
+        if(!transitions.length){
+          alert('Nenhuma transição disponível neste ticket.');
+          return null;
+        }
+
+        // Prioriza transicoes que parecem de fechamento (Resolve/Close/etc.); se nenhuma bater,
+        // cai pra todas (raro — workflow sem nenhuma transicao final de verdade).
+        let candidates = transitions.filter(t => _isFinalTransition(t.name));
+        if(!candidates.length) candidates = transitions;
+
+        let chosen = candidates[0];
+        if(candidates.length > 1){
+          const picked = await pickTransitionInteractive(candidates, { triedName: 'Resolver' });
+          if(!picked) return null;
+          chosen = transitions.find(t => String(t.id) === String(picked.id)) || chosen;
+        }
+
+        const fieldsMeta = chosen?.fields || {};
+        const customs = Object.entries(fieldsMeta)
+          .filter(([k]) => k.startsWith('customfield_'))
+          .map(([k, meta]) => {
+            const id = Number(k.replace('customfield_', ''));
+            const allowed = Array.isArray(meta?.allowedValues) ? meta.allowedValues : null;
+            const isCascading = !!(allowed && allowed.some(v => Array.isArray(v.children)));
+            const optsPreview = allowed
+              ? allowed.slice(0, 4).map(v => v.value || v.name || v.id).filter(Boolean).join(', ') + (allowed.length > 4 ? ', …' : '')
+              : '';
+            const bits = [meta?.required ? 'obrigatório' : 'opcional'];
+            if(isCascading) bits.push('cascata');
+            if(optsPreview) bits.push(`opções: ${optsPreview}`);
+            return { id, key: k, name: meta?.name || '', display: bits.join(' · '), empty: false };
+          })
+          .sort((a, b) => a.id - b.id);
+
+        if(!customs.length){
+          alert(`A transição "${chosen?.name || '?'}" não tem nenhum campo customizado além do comentário.`);
+          return null;
+        }
+
+        return { issueKey, customs, transitionName: chosen?.name || '' };
+      }catch(e){
+        alert('Erro ao buscar campos da transição: ' + (e.message || e));
+        return null;
+      }
+    }
+
     function openDiscoverModal(issueKey, customs, settingsModal){
       const ROLES = [
         { key: 'CF_CATEGORY',        label: 'Categoria' },
@@ -9880,11 +9942,17 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 <div class="full" style="margin-bottom:4px;">
                   <div class="hint" style="margin:0 0 8px;">
                     Informe os IDs dos custom fields usados pela Auditoria. Deixe 0 para ignorar.<br/>
-                    Use o bot&atilde;o abaixo para descobrir os IDs a partir de um ticket aberto.
+                    Pra <b>Solution / Solu&ccedil;&atilde;o aplicada / Valida&ccedil;&atilde;o do usu&aacute;rio</b>, use o primeiro bot&atilde;o (lista s&oacute; os poucos campos da tela de Resolver). Pra
+                    <b>Categoria / Subcategoria / Tipo de solicita&ccedil;&atilde;o / SLA</b> (n&atilde;o costumam estar na tela de Resolver), use o segundo.
                   </div>
-                  <button type="button" id="ml_s_discover_fields" style="background:var(--ml-blue);color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px;">
-                    🔍 Descobrir campos do ticket atual
-                  </button>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button type="button" id="ml_s_discover_transition_fields" style="background:var(--ml-blue);color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px;">
+                      🔍 Descobrir campos da transi&ccedil;&atilde;o de Resolver
+                    </button>
+                    <button type="button" id="ml_s_discover_fields" class="ghost" style="border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px;">
+                      Ver todos os campos do ticket (lista completa)
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label>Categoria (CF ID)</label>
@@ -10370,6 +10438,17 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         btn.disabled = true;
         btn.textContent = '⏳ Buscando...';
         const result = await discoverJiraFields();
+        btn.disabled = false;
+        btn.textContent = orig;
+        if(result) openDiscoverModal(result.issueKey, result.customs, modal);
+      });
+
+      modal.querySelector('#ml_s_discover_transition_fields')?.addEventListener('click', async () => {
+        const btn = modal.querySelector('#ml_s_discover_transition_fields');
+        const orig = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '⏳ Buscando...';
+        const result = await discoverTransitionFields();
         btn.disabled = false;
         btn.textContent = orig;
         if(result) openDiscoverModal(result.issueKey, result.customs, modal);
