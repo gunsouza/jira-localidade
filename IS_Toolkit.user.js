@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.0.0
+// @version      2.1.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -571,11 +571,15 @@
       AUDIT_PENDING_JQL: 'project = ISSM AND "request type" = "Audit (ISSM)" AND status = "Analyst approval" AND "Analyst[User Picker (single user)]" = currentUser()',
 
       // ---- SLA (Painel do analista — Meu risco de SLA / tickets sem risco agora) ----
-      // ID do customfield de SLA (ex: "Time to resolution"), referenciado em JQL via cf[ID]
-      // (funciona igual pra campos de SLA, sem depender do nome exato do campo).
-      // 0 = nao configurado (esconde os 2 cards de SLA no Painel do analista).
-      // Preenchido via "Descobrir campos" em Configuracoes → Integrações.
-      SLA_FIELD_ID: 0,
+      // ID do customfield de SLA "Time to resolution" (customfield_12400, key
+      // com.atlassian.servicedesk:sd-sla-field), referenciado em JQL via cf[ID].
+      // Confirmado via XML real do ticket IS-1098196 (v2.0.0) — o projeto IS tem mais
+      // campos de SLA (Time to first response = 12401, Time to close after resolution = 12429,
+      // ECAS 15/30/45/60 Shipping = 16135/14462/16137/14463), mas "Time to resolution" e o que
+      // corresponde ao "risco de estourar o prazo geral do ticket", entao e o usado aqui por padrao.
+      // 0 = nao configurado (esconde os 2 cards de SLA no Painel do analista). Pra usar um dos
+      // outros campos de SLA no seu lugar, troque o numero em Configuracoes → Integrações.
+      SLA_FIELD_ID: 12400,
       // Quantas horas ou menos de tempo restante contam como "em risco" de estourar o SLA.
       SLA_RISK_HOURS: 4,
 
@@ -9976,7 +9980,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 <div>
                   <label>Campo de SLA (ID do customfield)</label>
                   <input type="number" id="ml_s_sla_field_id" min="0" value="${Number(cur.SLA_FIELD_ID ?? def.SLA_FIELD_ID) || 0}" />
-                  <div class="hint">ID do campo de SLA (ex: "Time to resolution"). Use "Descobrir campos" (aba Auditoria) pra achar o ID. <b>0</b> = esconde os cards de SLA.</div>
+                  <div class="hint">J&aacute; vem preenchido com <b>12400</b> ("Time to resolution", confirmado via XML real do projeto IS). O projeto tem outros campos de SLA (Time to first response = 12401, Time to close after resolution = 12429, ECAS 15/30/45/60 Shipping), troque o n&uacute;mero aqui se quiser acompanhar um deles no lugar. <b>0</b> = esconde os cards de SLA.</div>
                 </div>
                 <div>
                   <label>Risco de SLA &mdash; horas restantes</label>
