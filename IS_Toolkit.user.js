@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.10
+// @version      2.5.11
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -6038,19 +6038,31 @@
             const autoFilled = {};
             const stillMissing = {};
             const needsManualEdit = [];
+            const cmdbSetOk = []; // v2.5.11: nomes dos campos CMDB setados com sucesso via PUT dedicado (fora do payload da transicao)
             for(const [k, meta] of Object.entries(newlyMatched)){
-              // v2.5.9: a v2.5.8 tentou reenviar esses campos com o formato "correto"
-              // ({workspaceId, id} — confirmado no payload real da mutation GraphQL que o
-              // Jira nativo usa) via a API REST classica de transicao — e MESMO ASSIM falhou
-              // de novo, testado num ticket real. Ou seja: nao e so questao de formato — a
-              // API REST classica (POST /issue/{key}/transitions) parece simplesmente NAO
-              // suportar escrever nesse tipo de campo (objeto do Assets/Insight), custe o
-              // formato que for. O Jira nativo so consegue porque usa uma mutation GraphQL
-              // interna e nao-documentada (useMakeTransitionMutation, com hash de query
-              // amarrado a versao do frontend) — replicar isso aqui seria fragil e quebraria
-              // sem aviso a qualquer atualizacao do Jira, entao NAO tentamos. Voltamos a
-              // sempre pedir edicao manual pra esses campos, mesmo que ja tenham valor.
-              if(_isCmdbObjectField(k)){ needsManualEdit.push(meta?.name || k); continue; }
+              if(_isCmdbObjectField(k)){
+                // v2.5.11: tenta a forma documentada oficialmente pela Atlassian (PUT dedicado
+                // em /issue/{key}, fora de /transitions — ver _cmdbFieldToUpdateSetShape) ANTES
+                // de desistir. So cai em pedido de edicao manual se o campo estiver realmente
+                // vazio (sem objeto pra reenviar — ainda nao temos um seletor de objetos do
+                // Assets dentro do modal) ou se essa tentativa tambem falhar/nao confirmar.
+                const current = currentValues[k];
+                if(!_hasValue(current)){ needsManualEdit.push(meta?.name || k); continue; }
+                const setArr = _cmdbFieldToUpdateSetShape(current);
+                if(!setArr){ needsManualEdit.push(meta?.name || k); continue; }
+                try{
+                  await jiraSetCmdbField(issueKey, k, setArr);
+                  const expectedIds = setArr.map(o => o.objectId);
+                  const ok = await _verifyCmdbFieldSet(issueKey, k, expectedIds);
+                  if(!ok) throw new Error('GET pos-PUT nao confirmou o objeto vinculado');
+                  cmdbSetOk.push(meta?.name || k);
+                  log(`recovery: campo CMDB "${meta?.name || k}" setado via PUT dedicado (${setArr.length} objeto(s)) e confirmado`);
+                }catch(cmdbErr){
+                  console.warn('[IS Toolkit][recovery] falha ao setar campo CMDB via PUT dedicado:', cmdbErr);
+                  needsManualEdit.push(meta?.name || k);
+                }
+                continue;
+              }
               if(_hasValue(currentValues[k])){ autoFilled[k] = currentValues[k]; continue; }
               stillMissing[k] = meta;
             }
@@ -6059,13 +6071,13 @@
             }
 
             if(needsManualEdit.length){
-              // Nao adianta seguir com o resto do recovery — a API REST classica nao consegue
-              // escrever nesse tipo de campo (objeto do Assets/Insight), entao a transicao vai
-              // continuar falhando por essa via de qualquer forma. Para aqui com uma mensagem
-              // clara, em vez de tentar reenviar (ja testamos e nao funciona) ou abrir mais um
-              // formulario inutil.
+              // Sem um seletor de objetos do Assets dentro do modal, nao da pra adivinhar QUAL
+              // objeto o analista quer quando o campo esta genuinamente vazio — e se o PUT
+              // dedicado (forma documentada pela Atlassian) tambem falhou/nao confirmou, nao ha
+              // mais nenhuma via segura por aqui. Para com uma mensagem clara.
               throw new Error(
-                `Essa transição exige "${needsManualEdit.join(', ')}" — esse tipo de campo (objeto do Assets/Insight) não pode ser escrito por essa integração, mesmo já tendo valor no ticket (é uma limitação da API REST clássica do Jira, confirmada em teste real). ` +
+                `Essa transição exige "${needsManualEdit.join(', ')}" — esse tipo de campo (objeto do Assets/Insight) não pôde ser preenchido por essa integração ` +
+                (cmdbSetOk.length ? `(mesmo já tendo setado com sucesso: ${cmdbSetOk.join(', ')}). ` : `(tentamos via PUT dedicado, no formato documentado pela própria Atlassian, e mesmo assim não funcionou ou não confirmou). `) +
                 `Abra o ticket direto no Jira e finalize a transição por lá (o próprio Jira já traz o campo preenchido — normalmente só precisa confirmar/aplicar a transição na tela nativa).`
               );
             }
@@ -6086,10 +6098,12 @@
               filled2Fields = filled2.fields || {};
             }
 
+            // cmdbSetOk ja foi persistido direto no ticket via PUT dedicado (fora do payload
+            // de transicao) — NAO entra em mergedFields, so serve pro log/mensagem.
             const mergedFields = { ...extraFields, ...autoFilled, ...filled2Fields };
             try{
               await attemptTransition(mergedFields);
-              log('transicao aplicada (apos recovery de campos extras)');
+              log(`transicao aplicada (apos recovery de campos extras)${cmdbSetOk.length ? ' + campo(s) CMDB via PUT dedicado: '+cmdbSetOk.join(', ') : ''}`);
               recovered = true;
             }catch(e3){
               throw new Error(`${msg}\n\nApós preencher os campos extras, a transição falhou de novo: ${e3.message}`);
@@ -6928,23 +6942,61 @@
       return ids.some(id => key === `customfield_${id}`);
     }
 
-    // Converte o valor LIDO (GET) de um campo de objeto do Assets/Insight — formato
-    // { workspaceId, objectId, label, objectKey, ... } ou array disso — pro formato
-    // {workspaceId, id} que a Atlassian documenta pra esse tipo de campo. Testado em
-    // v2.5.8 (via API REST classica de transicao) e AINDA ASSIM falhou num ticket real —
-    // ou seja, mesmo com o formato certo, a API REST classica parece nao conseguir escrever
-    // nesse tipo de campo. Por isso NAO e mais usada no fluxo de recovery (v2.5.9, ver
-    // _isCmdbObjectField ali embaixo) — mantida so como referencia/documentacao do que ja foi
-    // tentado e nao funcionou, caso alguem queira investigar a mutation GraphQL interna do
-    // Jira (useMakeTransitionMutation) como alternativa no futuro.
-    function _cmdbFieldToWriteShape(v){
+    // v2.5.11: v2.5.8 tentou reenviar campo de objeto do Assets/Insight (Incident Type, IS
+    // Ubicacion etc) no formato {workspaceId, id:objectId} DENTRO do payload "fields" da PROPRIA
+    // chamada de transicao (POST /issue/{key}/transitions) — e falhou num ticket real, o que
+    // v2.5.9 interpretou como "a API REST classica simplesmente nao suporta esse tipo de campo".
+    // Descobrimos depois, na documentacao oficial da Atlassian ("Format the payload to update
+    // Assets Custom Fields via REST API"), que existe uma forma DIFERENTE e documentada: um PUT
+    // dedicado em /issue/{key} (NAO dentro de /transitions), usando "update" (nao "fields") com
+    // shape { campo: [{ set: [{workspaceId, id: "workspaceId:objectId", objectId}] }] } — ou
+    // seja, v2.5.8 tinha o endpoint errado, a chave errada ("fields" em vez de "update") E o
+    // shape do id incompleto (faltava o prefixo "workspaceId:" e o objectId separado). Isso NAO
+    // prova que a API REST classica seja incapaz de escrever esse tipo de campo — so prova que
+    // aquela combinacao especifica nao funciona. Tentamos agora a forma documentada, ANTES da
+    // transicao, e conferimos com um GET depois (a propria doc da Atlassian avisa que um PUT
+    // pode devolver 200/204 e mesmo assim nao ter vinculado o objeto de verdade).
+    function _cmdbFieldToUpdateSetShape(v){
       const arr = Array.isArray(v) ? v : (v ? [v] : []);
       const out = arr.map(o => {
         const workspaceId = o?.workspaceId;
-        const id = o?.objectId ?? o?.id;
-        return (workspaceId && id) ? { workspaceId: String(workspaceId), id: String(id) } : null;
+        const objectId = o?.objectId ?? o?.id;
+        return (workspaceId && objectId)
+          ? { workspaceId: String(workspaceId), id: `${workspaceId}:${objectId}`, objectId: String(objectId) }
+          : null;
       }).filter(Boolean);
       return out.length ? out : null;
+    }
+
+    // PUT dedicado (fora de /transitions) pra setar um campo de objeto do Assets/Insight, no
+    // formato documentado oficialmente pela Atlassian. `setArr` deve vir de
+    // _cmdbFieldToUpdateSetShape.
+    async function jiraSetCmdbField(issueKey, fieldKey, setArr){
+      const url = `${location.origin}/rest/api/3/issue/${encodeURIComponent(issueKey)}`;
+      const payload = { update: { [fieldKey]: [ { set: setArr } ] } };
+      const r = await fetch(url, {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Accept':'application/json', 'Content-Type':'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if(!r.ok){
+        const txt = await r.text().catch(() => '');
+        throw new Error(`HTTP ${r.status} ao setar campo CMDB ${fieldKey} em ${issueKey}: ${txt.slice(0, 350)}`);
+      }
+      return true;
+    }
+
+    // Confere (via GET) se o campo CMDB realmente ficou com os objectId esperados depois do
+    // PUT — a doc da Atlassian avisa que o PUT pode "aceitar" (200/204) sem de fato vincular.
+    async function _verifyCmdbFieldSet(issueKey, fieldKey, expectedObjectIds){
+      try{
+        const issue = await getIssueFields(issueKey, [fieldKey]);
+        const v = issue?.fields?.[fieldKey];
+        const arr = Array.isArray(v) ? v : (v ? [v] : []);
+        const gotIds = arr.map(o => String(o?.objectId ?? o?.id ?? '')).filter(Boolean);
+        return expectedObjectIds.every(id => gotIds.includes(String(id)));
+      }catch(_){ return false; }
     }
     function _matchFieldsByName(namesList, fieldsMetaObj){
       const norm = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -12119,16 +12171,18 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           const selectedKeys = [...selected];
           const transitionName = SETTINGS.DUPLICATE_CLOSE_TRANSITION || DEFAULTS.DUPLICATE_CLOSE_TRANSITION;
           // v2.5.9: aviso extra pra tickets do projeto IS (nao ISS) — esses as vezes tem
-          // campos ligados a objeto do Assets (Incident Type, IS Ubicacion) que essa
-          // integracao nao consegue preencher via API (ver runStatusAction/recovery). Avisa
-          // ANTES de tentar, pra nao pegar o analista de surpresa se precisar finalizar no
-          // Jira nativo depois de vincular.
+          // campos ligados a objeto do Assets (Incident Type, IS Ubicacion). v2.5.11: agora
+          // tentamos preencher esses campos via PUT dedicado (forma documentada pela propria
+          // Atlassian, ver jiraSetCmdbField) antes de desistir — mas isso so funciona se o
+          // campo ja tiver algum valor no ticket pra reenviar; se estiver genuinamente vazio,
+          // ou se o PUT falhar/nao confirmar, ainda cai no fallback manual (finalizar no Jira
+          // nativo). Avisa ANTES de tentar, pra nao pegar o analista de surpresa.
           const isIsProject = issueKey.split('-')[0] === 'IS';
           const ok = confirm(
             `Vincular o ticket atual (${issueKey}) como duplicado de ${selectedKeys.length} ticket(s) selecionado(s) ` +
             `E aplicar a transicao "${transitionName}" no ticket atual (${issueKey})?\n\n` +
             `Os selecionados permanecem ABERTOS (sao os "originais"). Isso abre um formulario pra preencher os campos que a transicao exigir (ex: Resolucao).` +
-            (isIsProject ? `\n\nAtencao: chamados IS as vezes exigem campos (Incident Type, IS Ubicacion) que essa integracao nao consegue preencher automaticamente — se acontecer, o vinculo ja fica feito, mas voce vai precisar finalizar a transicao direto no Jira depois.` : '')
+            (isIsProject ? `\n\nAtencao: chamados IS as vezes exigem campos (Incident Type, IS Ubicacion). A integracao tenta preencher automaticamente — mas se o campo estiver vazio ou a tentativa falhar, o vinculo ja fica feito e voce vai precisar finalizar a transicao direto no Jira depois.` : '')
           );
           if(!ok) return;
 
