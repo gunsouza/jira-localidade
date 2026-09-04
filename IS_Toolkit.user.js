@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.85.0
+// @version      1.86.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -2332,10 +2332,36 @@
       return JSON.parse(txt);
     }
 
+    // Resolve o ID real do issueLinkType "Duplicate" (cacheado em memoria).
+    // Por que nao usar so o nome literal: assim como issuetypes, os link types PADRAO do Jira
+    // (Duplicate/Blocks/Relates/etc.) tem seu campo "name" traduzido pelo Jira Cloud de acordo
+    // com o idioma da conta que faz a chamada (mesma causa-raiz do bug "Tarefa"/"Task"/"Tarea").
+    // Buscamos a lista real da instancia e casamos por radical "duplic" (cobre Duplicate/
+    // Duplicado/Duplicata/Duplicar em EN/ES/PT), assim funciona em qualquer locale sem
+    // precisarmos manter uma lista exaustiva de traducoes. Se a busca falhar por qualquer
+    // motivo (permissao, rede), caimos de volta pro nome literal "Duplicate" (comportamento
+    // anterior) para nao quebrar quem já funcionava.
+    let _duplicateLinkTypeIdCache = null;
+    async function _resolveDuplicateLinkTypeId(){
+      if(_duplicateLinkTypeIdCache) return _duplicateLinkTypeIdCache;
+      try{
+        const url = `${location.origin}/rest/api/3/issueLinkType`;
+        const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
+        if(r.ok){
+          const d = await r.json();
+          const types = d?.issueLinkTypes || [];
+          const found = types.find(t => /duplic/i.test(String(t.name || '')));
+          if(found?.id){ _duplicateLinkTypeIdCache = found.id; return found.id; }
+        }
+      }catch(e){ console.warn('[jira-localidade][linkDuplicate] erro resolvendo issueLinkType, usando fallback por nome:', e); }
+      return null;
+    }
+
     async function linkDuplicate(currentKey, duplicateKey) {
       const url = `${location.origin}/rest/api/3/issueLink`;
+      const linkTypeId = await _resolveDuplicateLinkTypeId();
       const payload = {
-        type: { name: "Duplicate" },
+        type: linkTypeId ? { id: linkTypeId } : { name: "Duplicate" },
         outwardIssue: { key: currentKey },
         inwardIssue: { key: duplicateKey }
       };
@@ -3444,7 +3470,7 @@
           const d = await r.json();
           const list = d?.values || d?.issueTypes || [];
           log(`(novo) issuetypes pagina startAt=${startAt} -> ${list.length} itens (total=${d?.total ?? '?'}, isLast=${d?.isLast ?? '?'})`);
-          const it = list.find(v => v.name === issuetypeName);
+          const it = list.find(v => _issuetypeNameMatches(v.name, issuetypeName));
           if(it){ issueTypeId = it.id; log(`(novo) achou "${issuetypeName}" id=${it.id}`); break; }
           if(d?.isLast || list.length < pageSize) break;
           startAt += pageSize;
@@ -3478,18 +3504,29 @@
       }
 
       // 2) API legacy
-      try{
-        const url = `${location.origin}/rest/api/3/issue/createmeta?projectKeys=${encodeURIComponent(projectKey)}&issuetypeNames=${encodeURIComponent(issuetypeName)}&expand=projects.issuetypes.fields`;
-        const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
-        if(!r.ok){ warn(`(legacy) HTTP ${r.status}`); return null; }
-        const d = await r.json();
-        const fields = ((d?.projects || [])[0]?.issuetypes || [])[0]?.fields || {};
-        if(Object.keys(fields).length){
-          log(`(legacy) total ${Object.keys(fields).length} campos`);
-          return fields;
-        }
-        warn('(legacy) 0 campos. Raw:', d);
-      }catch(e){ warn('(legacy) erro:', e); }
+      // O parametro issuetypeNames e' resolvido pelo PROPRIO Jira (server-side) contra o nome
+      // literal do issuetype no idioma da conta que faz a chamada - sujeito ao mesmo problema
+      // de traducao por locale ja visto com issuetype "Tarefa"/"Task"/"Tarea". Por isso, se o
+      // nome configurado for um dos aliases conhecidos (Tarefa/Task/Tarea), tentamos cada
+      // variante em sequencia ate uma retornar campos.
+      const legacyCandidates = ISS_TASK_ISSUETYPE_ALIASES.includes(String(issuetypeName||'').trim().toLowerCase())
+        ? [issuetypeName, ...ISS_TASK_ISSUETYPE_ALIASES.filter(a => a.toLowerCase() !== String(issuetypeName||'').trim().toLowerCase())
+            .map(a => a.charAt(0).toUpperCase() + a.slice(1))]
+        : [issuetypeName];
+      for(const candidate of legacyCandidates){
+        try{
+          const url = `${location.origin}/rest/api/3/issue/createmeta?projectKeys=${encodeURIComponent(projectKey)}&issuetypeNames=${encodeURIComponent(candidate)}&expand=projects.issuetypes.fields`;
+          const r = await fetch(url, { credentials:'same-origin', headers:{ Accept:'application/json' }});
+          if(!r.ok){ warn(`(legacy) HTTP ${r.status} para candidato "${candidate}"`); continue; }
+          const d = await r.json();
+          const fields = ((d?.projects || [])[0]?.issuetypes || [])[0]?.fields || {};
+          if(Object.keys(fields).length){
+            log(`(legacy) total ${Object.keys(fields).length} campos (candidato "${candidate}")`);
+            return fields;
+          }
+          warn(`(legacy) 0 campos para candidato "${candidate}". Raw:`, d);
+        }catch(e){ warn(`(legacy) erro para candidato "${candidate}":`, e); }
+      }
 
       return null;
     }
