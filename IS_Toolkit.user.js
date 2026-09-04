@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.86.0
+// @version      1.87.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -647,6 +647,23 @@
     const _IS_FRESH_INSTALL = (_gmGet(_STORAGE_KEY) == null) && !localStorage.getItem(_STORAGE_KEY);
 
     const SETTINGS = loadSettings(DEFAULTS);
+
+    // Migracao unica: o botao "Salvar" de Configuracoes SEMPRE regrava AUDIT_WEBHOOK_URL com
+    // o valor exibido no campo (mesmo que o usuario so tenha mexido em outra aba) — entao quem
+    // ja salvou Configuracoes qualquer vez antes da v1.84.0 ficou com o endpoint ANTIGO
+    // "congelado" no storage pra sempre, e a troca do DEFAULTS pro proxy furycloud.io na v1.84.0
+    // nunca chegou a valer de fato (loadSettings da preferencia ao que ja esta salvo). Foi
+    // exatamente essa a causa da auditoria continuar dando timeout mesmo depois daquele fix.
+    // Aqui, se o valor salvo for EXATAMENTE o endpoint antigo (nunca customizado de verdade pelo
+    // usuario, so herdado do default velho), atualiza silenciosamente pro novo e persiste.
+    {
+      const _LEGACY_AUDIT_WEBHOOK_URL = 'http://verdi-flows.melisystems.com/webhook/ist-ticket-audit';
+      if(String(SETTINGS.AUDIT_WEBHOOK_URL || '').trim() === _LEGACY_AUDIT_WEBHOOK_URL){
+        SETTINGS.AUDIT_WEBHOOK_URL = DEFAULTS.AUDIT_WEBHOOK_URL;
+        saveSettings(SETTINGS);
+        console.log('[is-toolkit] AUDIT_WEBHOOK_URL migrado do endpoint antigo (verdi-flows direto) pro proxy furycloud.io.');
+      }
+    }
 
     const CF_ASSET = SETTINGS.CF_ASSET;
     const CF_RES_TEAM = SETTINGS.CF_RES_TEAM;
@@ -13137,7 +13154,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       _aiClearPopover();
       const pop = document.createElement('div');
       pop.id = 'ml_ai_popover';
-      pop.style.cssText = 'position:fixed;z-index:2147483600;max-width:380px;width:min(380px,92vw);'
+      pop.style.cssText = 'position:fixed;z-index:5000003;max-width:380px;width:min(380px,92vw);'
         + 'background:var(--ml-bg-3,#1a2030);'
         + 'color:var(--ml-text,#e6ecf6);border:1px solid var(--ml-border-2,#2a3550);border-radius:12px;'
         + 'box-shadow:0 16px 44px rgba(0,0,0,.55);padding:12px 14px;font:13px var(--ml-font,-apple-system,BlinkMacSystemFont,sans-serif);max-height:70vh;overflow:auto;';
@@ -13204,14 +13221,14 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const outline = document.createElement('div');
       const worst = items.some(it => it.status === 'error') ? 'error' : 'warn';
       const sev = _AI_SEV[worst];
-      outline.style.cssText = `position:fixed;z-index:2147483590;pointer-events:none;border:2px solid ${sev};border-radius:8px;box-shadow:0 0 0 3px ${sev}22;transition:opacity .1s;`;
+      outline.style.cssText = `position:fixed;z-index:5000000;pointer-events:none;border:2px solid ${sev};border-radius:8px;box-shadow:0 0 0 3px ${sev}22;transition:opacity .1s;`;
       // Marcador com RÓTULO: mostra o critério + um resumo do problema, sem precisar clicar.
       const single = items.length === 1 ? items[0] : null;
       const name = label || (single ? single.check : `${items.length} sugestões`);
       const issueTxt = single ? String(single.suggestion || single.detail || '').replace(/\s+/g,' ').trim() : 'clique para ver';
       const short = issueTxt.slice(0, 48);
       const marker = document.createElement('button');
-      marker.style.cssText = `position:fixed;z-index:2147483595;max-width:min(360px,60vw);display:flex;align-items:center;gap:6px;`
+      marker.style.cssText = `position:fixed;z-index:5000001;max-width:min(360px,60vw);display:flex;align-items:center;gap:6px;`
         + `padding:3px 10px;border-radius:20px;border:none;background:${sev};color:#0b0e15;`
         + `font:600 11px var(--ml-font,-apple-system,BlinkMacSystemFont,sans-serif);cursor:pointer;`
         + `box-shadow:0 2px 8px rgba(0,0,0,.45);white-space:nowrap;overflow:hidden;`;
@@ -13253,7 +13270,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
     }
     function _aiBuildCoachPanel(items, issueKey){
       const panel = document.createElement('div');
-      panel.style.cssText = 'position:fixed;z-index:2147483595;width:340px;max-width:88vw;'
+      panel.style.cssText = 'position:fixed;z-index:5000001;width:340px;max-width:88vw;'
         + 'background:var(--ml-bg-3,#1a2030);color:var(--ml-text,#e6ecf6);'
         + 'border:1px solid var(--ml-border-2,#2a3550);border-radius:12px;'
         + 'box-shadow:0 16px 44px rgba(0,0,0,.55);font:13px var(--ml-font,-apple-system,BlinkMacSystemFont,sans-serif);'
@@ -13296,7 +13313,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const outline = document.createElement('div');
       const worst = items.some(it => it.status === 'error') ? 'error' : 'warn';
       const sev = _AI_SEV[worst];
-      outline.style.cssText = `position:fixed;z-index:2147483590;pointer-events:none;border:2px solid ${sev};border-radius:8px;box-shadow:0 0 0 3px ${sev}22;transition:opacity .1s;`;
+      outline.style.cssText = `position:fixed;z-index:5000000;pointer-events:none;border:2px solid ${sev};border-radius:8px;box-shadow:0 0 0 3px ${sev}22;transition:opacity .1s;`;
       const panel = _aiBuildCoachPanel(items, issueKey);
       document.body.appendChild(outline);
       document.body.appendChild(panel);
@@ -13325,7 +13342,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const scColor = sc == null ? '#8b9ab5' : (sc >= 80 ? '#34c578' : sc >= 50 ? '#f59e0b' : '#ef4444');
       const bar = document.createElement('div');
       bar.id = 'ml_ai_banner';
-      bar.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483596;'
+      bar.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:5000002;'
         + 'display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:22px;'
         + 'background:#141728;border:1px solid #2a3550;box-shadow:0 6px 20px rgba(0,0,0,.5);'
         + 'font:600 12px var(--ml-font,-apple-system,BlinkMacSystemFont,sans-serif);color:#e6ecf6;';
