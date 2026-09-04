@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.8
+// @version      2.5.9
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -6039,18 +6039,18 @@
             const stillMissing = {};
             const needsManualEdit = [];
             for(const [k, meta] of Object.entries(newlyMatched)){
-              // v2.5.8: agora com o formato de escrita CORRETO pra campos de objeto do
-              // Assets/Insight (descoberto com payload real capturado do proprio Jira, ver
-              // _cmdbFieldToWriteShape) — em vez de so desistir e pedir edicao manual (v2.5.6/
-              // v2.5.7), tenta converter o valor lido (GET) pro formato de escrita certo
-              // ({workspaceId, id}) e reenviar. So cai em "precisa editar manual" se o campo
-              // realmente nao tiver valor nenhum pra converter.
-              if(_isCmdbObjectField(k)){
-                const cmdbShape = _cmdbFieldToWriteShape(currentValues[k]);
-                if(cmdbShape){ autoFilled[k] = cmdbShape; continue; }
-                needsManualEdit.push(meta?.name || k);
-                continue;
-              }
+              // v2.5.9: a v2.5.8 tentou reenviar esses campos com o formato "correto"
+              // ({workspaceId, id} — confirmado no payload real da mutation GraphQL que o
+              // Jira nativo usa) via a API REST classica de transicao — e MESMO ASSIM falhou
+              // de novo, testado num ticket real. Ou seja: nao e so questao de formato — a
+              // API REST classica (POST /issue/{key}/transitions) parece simplesmente NAO
+              // suportar escrever nesse tipo de campo (objeto do Assets/Insight), custe o
+              // formato que for. O Jira nativo so consegue porque usa uma mutation GraphQL
+              // interna e nao-documentada (useMakeTransitionMutation, com hash de query
+              // amarrado a versao do frontend) — replicar isso aqui seria fragil e quebraria
+              // sem aviso a qualquer atualizacao do Jira, entao NAO tentamos. Voltamos a
+              // sempre pedir edicao manual pra esses campos, mesmo que ja tenham valor.
+              if(_isCmdbObjectField(k)){ needsManualEdit.push(meta?.name || k); continue; }
               if(_hasValue(currentValues[k])){ autoFilled[k] = currentValues[k]; continue; }
               stillMissing[k] = meta;
             }
@@ -6059,14 +6059,14 @@
             }
 
             if(needsManualEdit.length){
-              // Nao adianta seguir com o resto do recovery — essa transicao vai continuar
-              // falhando enquanto esse campo de objeto do Assets nao for setado direto no
-              // Jira (aqui SEM valor nenhum pra converter — se tivesse valor, o bloco acima ja
-              // teria montado o formato certo e caido em autoFilled). Para aqui com uma
-              // mensagem clara, em vez de abrir mais um formulario que sabemos que nao ajuda.
+              // Nao adianta seguir com o resto do recovery — a API REST classica nao consegue
+              // escrever nesse tipo de campo (objeto do Assets/Insight), entao a transicao vai
+              // continuar falhando por essa via de qualquer forma. Para aqui com uma mensagem
+              // clara, em vez de tentar reenviar (ja testamos e nao funciona) ou abrir mais um
+              // formulario inutil.
               throw new Error(
-                `Essa transição exige "${needsManualEdit.join(', ')}", que aqui ${needsManualEdit.length > 1 ? 'são campos' : 'é um campo'} de objeto do Assets sem valor definido — ` +
-                `precisa selecionar direto no próprio ticket, no Jira (abra o ticket, escolha o objeto/tipo nesse campo) e tentar fechar de novo em seguida.`
+                `Essa transição exige "${needsManualEdit.join(', ')}" — esse tipo de campo (objeto do Assets/Insight) não pode ser escrito por essa integração, mesmo já tendo valor no ticket (é uma limitação da API REST clássica do Jira, confirmada em teste real). ` +
+                `Abra o ticket direto no Jira e finalize a transição por lá (o próprio Jira já traz o campo preenchido — normalmente só precisa confirmar/aplicar a transição na tela nativa).`
               );
             }
 
@@ -6929,14 +6929,14 @@
     }
 
     // Converte o valor LIDO (GET) de um campo de objeto do Assets/Insight — formato
-    // { workspaceId, objectId, label, objectKey, ... } ou array disso — pro formato de
-    // ESCRITA que a API de edicao/transicao do Jira aceita de volta: um array de
-    // { workspaceId, id } (SO esses 2 campos; "objectId" do GET vira "id" na escrita, o resto
-    // — label/objectKey/etc — nao entra). Confirmado com o payload real da mutation
-    // "useMakeTransitionMutation" (v2.5.8) — antes (v2.5.5) a gente reenviava o objeto do GET
-    // como estava, sem essa renomeacao, e por isso a API rejeitava (formato errado, nao porque
-    // o campo estivesse "realmente" vazio). Retorna null se nao tiver workspaceId+objectId
-    // suficiente pra montar (ex: campo de fato vazio no ticket).
+    // { workspaceId, objectId, label, objectKey, ... } ou array disso — pro formato
+    // {workspaceId, id} que a Atlassian documenta pra esse tipo de campo. Testado em
+    // v2.5.8 (via API REST classica de transicao) e AINDA ASSIM falhou num ticket real —
+    // ou seja, mesmo com o formato certo, a API REST classica parece nao conseguir escrever
+    // nesse tipo de campo. Por isso NAO e mais usada no fluxo de recovery (v2.5.9, ver
+    // _isCmdbObjectField ali embaixo) — mantida so como referencia/documentacao do que ja foi
+    // tentado e nao funcionou, caso alguem queira investigar a mutation GraphQL interna do
+    // Jira (useMakeTransitionMutation) como alternativa no futuro.
     function _cmdbFieldToWriteShape(v){
       const arr = Array.isArray(v) ? v : (v ? [v] : []);
       const out = arr.map(o => {
