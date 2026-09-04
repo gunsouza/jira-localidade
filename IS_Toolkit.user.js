@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.99.0
+// @version      2.0.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -607,6 +607,17 @@
       // 0 = nao configurado (campo ignorado na auditoria).
       CF_CATEGORY:        0,
       CF_SUBCATEGORY:     0,
+      // Categoria/Subcategoria REAIS do projeto IS (v2.0.0): o Assets/CMDB (schema "Portal
+      // Internal Systems") usa um par de campos pra INCIDENTE e outro pra SOLICITACAO — nao um
+      // campo unico. Confirmado pelo usuario direto do esquema Assets (Schema ID 19).
+      // "Problem Hardware" (categoria/equipamento, ticket de incidente).
+      CF_CATEGORY_INCIDENT:    24989,
+      // "Service Hardware" (categoria/equipamento, ticket de solicitacao).
+      CF_CATEGORY_SERVICE:     18703,
+      // "Incident Type" (subcategoria/tipo de problema, ticket de incidente).
+      CF_SUBCATEGORY_INCIDENT: 18629,
+      // "Service Type" (subcategoria/tipo de problema, ticket de solicitacao).
+      CF_SUBCATEGORY_SERVICE:  18621,
       CF_REQUEST_TYPE:    0,
       // Confirmado via XML de um ticket real (IS-1098196, v1.99.0): customfield_26217
       // "Validated with the user" — cascading select (Yes/No -> canal, ver screenshots).
@@ -4166,6 +4177,46 @@
       'Thundera', 'Tunnel', 'VPN', 'WIFI', 'Zabbix Proxy'
     ];
 
+    // Listas REAIS do Assets/CMDB (schema "Portal Internal Systems", ID 19, projeto IS) —
+    // usadas pela auditoria (v2.0.0) pra sugerir Categoria/Subcategoria de forma validada
+    // (nunca inventando um valor fora do universo real). O projeto usa PARES DIFERENTES
+    // dependendo do tipo de ticket: Problem/Incident Type pra incidentes, Service Hardware/
+    // Service Type pra solicitacoes — ver isIncidentIssueType em _buildAuditPrompt.
+    const CATEGORY_HARDWARE_INCIDENT_OPTIONS = [ // "Problem Hardware", customfield_24989
+      'Alarma', 'Barrera de acceso', 'Botón de pánico', 'Cable', 'Cámara - CCTV',
+      'Celular Corporativo', 'Chromebox', 'Cubiscan (Báscula)', 'Detector de metales',
+      'Handheld (Colector)', 'Impresora Cracha', 'Impresora Laser', 'Impresora Portatil',
+      'Impresora Térmica', 'Lector biométrico', 'Lector de reconocimiento facial', 'Monitor',
+      'Mouse', 'Notebook - Laptop', 'Otro', 'Packing Machine', 'Porton PNE',
+      'Puerta controlada', 'Radio', 'RFID', 'Robotics', 'SE', 'Sorter', 'Tablet', 'Teclado',
+      'Torniquete - Molinete', 'Torniquete completo', 'Totem/Kiosko', 'Video Wall'
+    ];
+    const CATEGORY_HARDWARE_SERVICE_OPTIONS = [ // "Service Hardware", customfield_18703
+      'Alarma', 'Cámara - CCTV', 'Chromebox', 'Cubiscan (Báscula)', 'Detector de metales',
+      'Handheld (Colector)', 'Impresora Cracha', 'Impresora Laser', 'Impresora Portatil',
+      'Impresora Térmica', 'Lector biométrico', 'Notebook - Laptop', 'Radio', 'RFID',
+      'Tablet', 'Totem/Kiosko'
+    ];
+    const CATEGORY_TYPE_INCIDENT_OPTIONS = [ // "Incident Type", customfield_18629
+      'Apagada', 'Atasco de Flyer', 'Biometría no funciona', 'Conectividad parcial',
+      'Detenido', 'El programa no abre', 'Error al actualizar contenido',
+      'Error al desbloquear', 'Fallo de comunicación', 'Generando falsas alarmas',
+      'Intermitencia', 'Lentitud en el equipo', 'Muestra una pantalla de error',
+      'No disponible', 'No funciona', 'No lee e no identifica codigos', 'No puedo acceder',
+      'No se enciende o no funciona', 'Otros problemas físicos', 'Panel offline',
+      'Problemas de Bateria y Carga', 'Problemas de conectividad',
+      'Problemas de enfoque o posición', 'Problemas de grabación', 'Problemas físicos',
+      'Reporte y reemplazo por robo', 'Se conecta pero es lento', 'Se conecta pero no navega',
+      'Sin acceso a la aplicación', 'Sin acceso a la máquina', 'Sin conectividad total'
+    ];
+    const CATEGORY_TYPE_SERVICE_OPTIONS = [ // "Service Type", customfield_18621
+      'Acceso a link o aplicativo', 'Actualizar', 'Asignar privilegio',
+      'Calibración de Sensibilidad', 'Cambiar Nomenclatura', 'Configurar', 'Instalar',
+      'Mover', 'No lee e no identifica codigos', 'No se incende o no funciona',
+      'Problemas de Bateria y Carga', 'Problemas físicos', 'Solicitar un nuevo (a)',
+      'Solicitar un nuevo cargador', 'Solicitar un nuevo dispositivo', 'Solicitar un préstamo'
+    ];
+
     // Orquestra a criacao completa da tarefa ISS a partir de um ticket de origem.
     // Retorna { newKey, linkType, attachmentsReport } em caso de sucesso. Lanca em caso de erro.
     // onProgress(stage:string) opcional para feedback de UI.
@@ -6784,8 +6835,22 @@
         const id = Number(SETTINGS[key] || DEFAULTS[key] || 0);
         return id ? _cfStr(f[`customfield_${id}`]) : '';
       };
-      const catCategoria   = _readCf('CF_CATEGORY');
-      const catSubcategoria = _readCf('CF_SUBCATEGORY');
+      // Categoria/Subcategoria (v2.0.0): o projeto IS usa DOIS pares de campos diferentes
+      // dependendo do tipo de ticket — "Problem Hardware"/"Incident Type" pra incidentes,
+      // "Service Hardware"/"Service Type" pra solicitacoes (confirmado com o usuario: listas
+      // reais do Assets/CMDB, schema "Portal Internal Systems"). Detecta pelo issuetype
+      // (contem "Incident" nos tickets de incidente, ex: "[System] Incident").
+      // CF_CATEGORY/CF_SUBCATEGORY (sem sufixo) continuam como fallback legado, caso algum
+      // projeto/instancia use um campo unico em vez do par incidente/solicitacao.
+      const isIncidentIssueType = /incident|incidente/i.test(issueType);
+      const catCategoria = isIncidentIssueType
+        ? (_readCf('CF_CATEGORY_INCIDENT') || _readCf('CF_CATEGORY'))
+        : (_readCf('CF_CATEGORY_SERVICE') || _readCf('CF_CATEGORY'));
+      const catSubcategoria = isIncidentIssueType
+        ? (_readCf('CF_SUBCATEGORY_INCIDENT') || _readCf('CF_SUBCATEGORY'))
+        : (_readCf('CF_SUBCATEGORY_SERVICE') || _readCf('CF_SUBCATEGORY'));
+      const categoryOptions = isIncidentIssueType ? CATEGORY_HARDWARE_INCIDENT_OPTIONS : CATEGORY_HARDWARE_SERVICE_OPTIONS;
+      const subcategoryOptions = isIncidentIssueType ? CATEGORY_TYPE_INCIDENT_OPTIONS : CATEGORY_TYPE_SERVICE_OPTIONS;
       const catRequestType = _readCf('CF_REQUEST_TYPE');
       const catUserValidation = _readCf('CF_USER_VALIDATION');
       // "Resolucao" (With technical intervention/etc.) e o campo NATIVO "resolution" do Jira,
@@ -7047,7 +7112,10 @@ Avalie cada criterio e retorne "ok", "warn", "error" ou "skip":
 
 3. CATEGORIA
    ${hasCategoryData
-     ? `Categoria/Subcategoria/Tipo de solicitacao atuais: "${catCategoria || '(vazio)'}" / "${catSubcategoria || '(vazio)'}" / "${catRequestType || '(vazio)'}".
+     ? `Categoria (equipamento) / Subcategoria (tipo de problema) / Tipo de solicitacao atuais: "${catCategoria || '(vazio)'}" / "${catSubcategoria || '(vazio)'}" / "${catRequestType || '(vazio)'}".
+   Este ticket e do tipo ${isIncidentIssueType ? 'INCIDENTE' : 'SOLICITACAO'} — as unicas categorias/subcategorias VALIDAS pra esse tipo sao:
+   Categorias (equipamento) validas: ${categoryOptions.join(', ')}.
+   Subcategorias (tipo de problema) validas: ${subcategoryOptions.join(', ')}.
    Compare com a CAUSA RAIZ REAL discutida nos comentarios dos analistas — nao so a queixa inicial do relator (o sintoma inicial pode nao refletir o que foi de fato investigado; ex: "instabilidade" pode virar "lentidao por sobrecarga de AP" ou "queda intermitente real" dependendo do que foi apurado).
    IMPORTANTE: a categoria inicial normalmente e preenchida pelo PROPRIO SOLICITANTE no portal ao abrir o chamado, nao pelo analista. O analista tem autonomia pra corrigir mas nem sempre corrige — uma categoria errada nao e automaticamente "culpa" do analista, mas se a causa raiz apurada e claramente diferente da categoria e o analista nao ajustou nem comentou, isso e um ajuste legitimo a sinalizar.
    - ok: categoria/subcategoria coerente com a causa raiz discutida, OU categoria inicial ficou desatualizada mas o analista corrigiu/comentou a divergencia.
@@ -7175,6 +7243,12 @@ preencher manualmente do que sugerir algo errado.
   (Ex: se a confirmacao foi por uma chamada Meet, use "Google Meet"; se foi por mensagem no Jira/comentario do proprio solicitante, use "Jira"; se foi WhatsApp, use "Whatsapp"; se foi visita presencial, use "In loco"; chat interno da empresa (Google Chat/Slack Meli) use "Canales de comunicación Meli".)
   Se "validated_with_user_suggestion" for "No" ou "", deixe "".` : `Deixe "".`}
 
+"category_suggestion" e "subcategory_suggestion" (v2.0.0 — informativo, NAO afeta o score; complementa o criterio "Categoria" acima com uma sugestao ESTRUTURADA no formato equipamento > tipo de problema, ex: "Notebook - Laptop > Problemas físicos"):
+${hasCategoryData ? `Com base na causa raiz REAL discutida nos comentarios (nao so a queixa inicial do relator), escolha:
+  "category_suggestion": UM valor EXATO da lista de categorias validas acima (${categoryOptions.slice(0,3).join(', ')}, ...) — o equipamento/hardware real envolvido.
+  "subcategory_suggestion": UM valor EXATO da lista de subcategorias validas acima (${subcategoryOptions.slice(0,3).join(', ')}, ...) — o tipo de problema real, conforme apurado.
+  Preencha os dois SOMENTE se a categoria/subcategoria atual do ticket estiver incoerente com o que foi apurado (mesmo criterio de warn/error do item 3 acima) E houver evidencia real suficiente nos comentarios pra escolher com seguranca um valor exato da lista. Se a categoria atual ja estiver coerente (ok), ou se nao houver evidencia suficiente pra escolher com seguranca, deixe AMBOS "" — nunca force uma sugestao so pra preencher, e NUNCA escolha um valor fora das listas informadas.` : `Campos de categoria nao configurados. Deixe ambos "".`}
+
 "comment_reviews": Revisao INFORMATIVA dos comentarios dos analistas — NAO afeta o score nem os criterios acima. O objetivo e apenas sugerir melhorias de escrita, nao penalizar.
   Para CADA comentario dos ANALISTAS (nao do relator, nao de bots), avalie individualmente:
   - "id": indice do comentario (0, 1, 2...)
@@ -7188,7 +7262,7 @@ preencher manualmente do que sugerir algo errado.
   Se nao houver comentarios de analistas, retorne array vazio [].
 
 Formato exato (todo item de "items" e o "title_review" seguem {"check","status","confidence","detail","evidence_quote","suggestion","suggested_text"}):
-{"score":0,"items":[{"check":"Evidencias","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Descricao","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Categoria","status":"skip","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Status Comentado","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Escrita","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Solucao Documentada","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Solucao Efetiva","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Validacao Usuario","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Reclassificacao","status":"skip","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Qualidade Geral","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""}],"summary":"resumo de 1-2 frases do estado geral","closing_comment":"texto","solution_text":"texto","resolution_suggestion":"","validated_with_user_suggestion":"","validated_with_user_channel_suggestion":"","title_review":{"status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},"comment_reviews":[{"id":0,"author":"nome","date":"2026-01-01 10:00","excerpt":"primeiros 80 chars...","status":"warn","issue":"o que esta impreciso","improved":"versao reescrita completa"}]}`;
+{"score":0,"items":[{"check":"Evidencias","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Descricao","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Categoria","status":"skip","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Status Comentado","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Escrita","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Solucao Documentada","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Solucao Efetiva","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Validacao Usuario","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Reclassificacao","status":"skip","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Qualidade Geral","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""}],"summary":"resumo de 1-2 frases do estado geral","closing_comment":"texto","solution_text":"texto","resolution_suggestion":"","validated_with_user_suggestion":"","validated_with_user_channel_suggestion":"","category_suggestion":"","subcategory_suggestion":"","title_review":{"status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},"comment_reviews":[{"id":0,"author":"nome","date":"2026-01-01 10:00","excerpt":"primeiros 80 chars...","status":"warn","issue":"o que esta impreciso","improved":"versao reescrita completa"}]}`;
     }
 
     // Abre o campo de comentario do Jira e preenche com o texto fornecido.
@@ -7293,7 +7367,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       // configurado, mesmo com os IDs certos salvos nas Configuracoes. Agora todo CF_* de
       // categorizacao com ID > 0 entra dinamicamente na lista de campos buscados.
       const _cpId = Number(SETTINGS.CF_CHANGED_PRIORITY || DEFAULTS.CF_CHANGED_PRIORITY || 0);
-      const _categCfKeys = ['CF_CATEGORY','CF_SUBCATEGORY','CF_REQUEST_TYPE','CF_USER_VALIDATION','CF_SOLUTION_TYPE','CF_SOLUTION_TEXT'];
+      const _categCfKeys = [
+        'CF_CATEGORY','CF_SUBCATEGORY','CF_CATEGORY_INCIDENT','CF_CATEGORY_SERVICE',
+        'CF_SUBCATEGORY_INCIDENT','CF_SUBCATEGORY_SERVICE','CF_REQUEST_TYPE',
+        'CF_USER_VALIDATION','CF_SOLUTION_TYPE','CF_SOLUTION_TEXT'
+      ];
       const _categCfIds = _categCfKeys
         .map(k => Number(SETTINGS[k] || DEFAULTS[k] || 0))
         .filter(id => id > 0);
@@ -7525,6 +7603,15 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             </div>
           </div>` : '';
 
+        // Sugestao estruturada de categoria/subcategoria (v2.0.0) — so aparece no item
+        // "Categoria", complementando o texto livre acima com um par validado
+        // "equipamento > tipo de problema". So informativo, nunca escreve no Jira sozinho.
+        const catSug = (item.check === 'Categoria' && (result?.category_suggestion || result?.subcategory_suggestion)) ? `
+          <div style="margin-top:8px;padding:8px 10px;background:rgba(96,144,240,0.08);border:1px solid var(--ml-blue-line, #2c3a5c);border-radius:6px;">
+            <div style="font-size:11px;color:#8b9ab5;margin-bottom:4px;font-weight:600;">🏷️ Categorização sugerida pela IA:</div>
+            <div style="font-size:12.5px;color:var(--ml-text);font-weight:600;">${esc(result.category_suggestion || '?')} &rarr; ${esc(result.subcategory_suggestion || '?')}</div>
+          </div>` : '';
+
         const isLowConf = item.confidence === 'baixa';
         const confBadge = isLowConf ? `<span title="Confiança baixa — vale revisão humana antes de aplicar" style="font-size:10px;color:#f59e0b;border:1px solid #f59e0b;border-radius:4px;padding:0 5px;white-space:nowrap;">baixa confiança</span>` : '';
         const evidenceBlock = (item.evidence_quote && item.evidence_quote.trim())
@@ -7544,6 +7631,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 <div style="font-size:12.5px;color:var(--ml-text-dim);line-height:1.55;${hasSugText?'margin-bottom:8px;':''}">${item.detail || ''}</div>
                 ${evidenceBlock}
                 ${sugBlock}
+                ${catSug}
               </div>
             </details>`;
         }
@@ -9986,13 +10074,33 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   </div>
                 </div>
                 <div>
-                  <label>Categoria (CF ID)</label>
+                  <label>Categoria (CF ID) &mdash; legado, deixe 0</label>
                   <input type="number" id="ml_s_cf_category" value="${Number(cur.CF_CATEGORY)||0}" min="0" />
-                  <div class="hint">Ex: customfield_<strong>10200</strong> → ID = 10200</div>
+                  <div class="hint">Ex: customfield_<strong>10200</strong> → ID = 10200. S&oacute; use se o projeto tiver um campo &uacute;nico de Categoria (n&atilde;o for o par incidente/solicita&ccedil;&atilde;o abaixo).</div>
                 </div>
                 <div>
-                  <label>Subcategoria (CF ID)</label>
+                  <label>Subcategoria (CF ID) &mdash; legado, deixe 0</label>
                   <input type="number" id="ml_s_cf_subcategory" value="${Number(cur.CF_SUBCATEGORY)||0}" min="0" />
+                </div>
+                <div>
+                  <label>Categoria &mdash; Incidente (CF ID)</label>
+                  <input type="number" id="ml_s_cf_category_incident" value="${Number(cur.CF_CATEGORY_INCIDENT)||0}" min="0" />
+                  <div class="hint">"Problem Hardware" no Assets/CMDB &mdash; equipamento envolvido quando o ticket &eacute; um incidente. J&aacute; vem preenchido pro projeto IS.</div>
+                </div>
+                <div>
+                  <label>Categoria &mdash; Solicita&ccedil;&atilde;o (CF ID)</label>
+                  <input type="number" id="ml_s_cf_category_service" value="${Number(cur.CF_CATEGORY_SERVICE)||0}" min="0" />
+                  <div class="hint">"Service Hardware" no Assets/CMDB &mdash; equipamento envolvido quando o ticket &eacute; uma solicita&ccedil;&atilde;o.</div>
+                </div>
+                <div>
+                  <label>Subcategoria &mdash; Incidente (CF ID)</label>
+                  <input type="number" id="ml_s_cf_subcategory_incident" value="${Number(cur.CF_SUBCATEGORY_INCIDENT)||0}" min="0" />
+                  <div class="hint">"Incident Type" no Assets/CMDB &mdash; tipo de problema quando o ticket &eacute; um incidente.</div>
+                </div>
+                <div>
+                  <label>Subcategoria &mdash; Solicita&ccedil;&atilde;o (CF ID)</label>
+                  <input type="number" id="ml_s_cf_subcategory_service" value="${Number(cur.CF_SUBCATEGORY_SERVICE)||0}" min="0" />
+                  <div class="hint">"Service Type" no Assets/CMDB &mdash; tipo de problema quando o ticket &eacute; uma solicita&ccedil;&atilde;o. A auditoria (v2.0.0) usa esse par pra sugerir categoriza&ccedil;&atilde;o validada (ex: "Notebook - Laptop &rarr; Problemas f&iacute;sicos"), s&oacute; informativo.</div>
                 </div>
                 <div>
                   <label>Tipo de solicita&ccedil;&atilde;o (CF ID)</label>
@@ -10728,6 +10836,10 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             // Campos de auditoria
             CF_CATEGORY:        Math.max(0, Number(modal.querySelector('#ml_s_cf_category')?.value)  || 0),
             CF_SUBCATEGORY:     Math.max(0, Number(modal.querySelector('#ml_s_cf_subcategory')?.value)  || 0),
+            CF_CATEGORY_INCIDENT:    Math.max(0, Number(modal.querySelector('#ml_s_cf_category_incident')?.value)    || 0),
+            CF_CATEGORY_SERVICE:     Math.max(0, Number(modal.querySelector('#ml_s_cf_category_service')?.value)     || 0),
+            CF_SUBCATEGORY_INCIDENT: Math.max(0, Number(modal.querySelector('#ml_s_cf_subcategory_incident')?.value) || 0),
+            CF_SUBCATEGORY_SERVICE:  Math.max(0, Number(modal.querySelector('#ml_s_cf_subcategory_service')?.value)  || 0),
             CF_REQUEST_TYPE:    Math.max(0, Number(modal.querySelector('#ml_s_cf_request_type')?.value)   || 0),
             CF_USER_VALIDATION: Math.max(0, Number(modal.querySelector('#ml_s_cf_user_validation')?.value)|| 0),
             CF_SOLUTION_TYPE:   Math.max(0, Number(modal.querySelector('#ml_s_cf_solution_type')?.value)  || 0),
