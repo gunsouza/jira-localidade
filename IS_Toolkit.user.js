@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.3.0
+// @version      2.4.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -602,7 +602,10 @@
       // geral). Metrica: so "resolvidos no periodo" (nao usa toolkit).
       RANKING_ENABLED: false,
       RANKING_TEAM_GROUP: 'is-ship-nats-n1', // grupo classico do Jira (time de atendimento de fila)
-      RANKING_DISPLAY_MODE: 'anonimo',  // 'anonimo' | 'posicao' | 'leaderboard'
+      // 'anonimo' | 'posicao' — o modo 'leaderboard' (nomes com numeros) foi REMOVIDO daqui na
+      // v2.4.0 e virou exclusividade do Painel administrativo (ver ADMIN_MODE_SECRET/ADMIN_CODE
+      // abaixo): visao com nomes comparando desempenho e sensivel, so faz sentido pra lideranca.
+      RANKING_DISPLAY_MODE: 'anonimo',
       RANKING_SHOW_DAILY: true,
       RANKING_SHOW_MONTHLY: true,
 
@@ -744,7 +747,10 @@
     const CATEGORY_BREAKDOWN_ENABLED = SETTINGS.CATEGORY_BREAKDOWN_ENABLED ?? DEFAULTS.CATEGORY_BREAKDOWN_ENABLED;
     const RANKING_ENABLED = !!(SETTINGS.RANKING_ENABLED ?? DEFAULTS.RANKING_ENABLED);
     const RANKING_TEAM_GROUP = String(SETTINGS.RANKING_TEAM_GROUP ?? DEFAULTS.RANKING_TEAM_GROUP ?? '').trim();
-    const RANKING_DISPLAY_MODE = String(SETTINGS.RANKING_DISPLAY_MODE ?? DEFAULTS.RANKING_DISPLAY_MODE ?? 'anonimo');
+    // 'leaderboard' foi removido do Ranking geral na v2.4.0 (agora e so do Painel
+    // administrativo) — instalacoes antigas com esse valor salvo caem pra 'anonimo' sozinhas.
+    const _rankModeRaw = String(SETTINGS.RANKING_DISPLAY_MODE ?? DEFAULTS.RANKING_DISPLAY_MODE ?? 'anonimo');
+    const RANKING_DISPLAY_MODE = _rankModeRaw === 'posicao' ? 'posicao' : 'anonimo';
     const RANKING_SHOW_DAILY = !!(SETTINGS.RANKING_SHOW_DAILY ?? DEFAULTS.RANKING_SHOW_DAILY);
     const RANKING_SHOW_MONTHLY = !!(SETTINGS.RANKING_SHOW_MONTHLY ?? DEFAULTS.RANKING_SHOW_MONTHLY);
     // Admin Mode: desbloqueado comparando o codigo digitado (SETTINGS.ADMIN_CODE) contra o
@@ -2222,10 +2228,12 @@
       return { period, created, resolved, backlogDelta: created - resolved };
     }
 
-    // Criados x Resolvidos x Auto-fechados (reporter = assignee = a mesma pessoa, ex: quem
-    // abre uma ISS pra si mesmo e tambem resolve), por pessoa do grupo RANKING_TEAM_GROUP.
-    // 3 contagens por pessoa (em vez de 1, como o Ranking) — concorrencia um pouco menor
-    // pra nao estourar rate limit em grupos grandes.
+    // Criados x Resolvidos x Auto-fechados x Abertos AGORA (reporter = assignee = a mesma
+    // pessoa, ex: quem abre uma ISS pra si mesmo e tambem resolve), por pessoa do grupo
+    // RANKING_TEAM_GROUP. "Abertos agora" e um retrato em tempo real (statusCategory != Done),
+    // independente do periodo escolhido — serve pra enxergar quem esta sobrecarregado AGORA,
+    // nao so quem produziu mais no periodo. 4 contagens por pessoa (em vez de 1, como o
+    // Ranking) — concorrencia um pouco menor pra nao estourar rate limit em grupos grandes.
     async function getAdminTeamOverview(period){
       if(!RANKING_TEAM_GROUP) return null;
       const members = await getGroupMembers(RANKING_TEAM_GROUP);
@@ -2240,15 +2248,16 @@
         while(idx < members.length){
           const m = members[idx++];
           try{
-            const [created, resolved, selfClosed] = await Promise.all([
+            const [created, resolved, selfClosed, openNow] = await Promise.all([
               countByJql(`${scope}reporter = "${m.accountId}" AND created >= ${startFn}`),
               countByJql(`${scope}assignee = "${m.accountId}" AND resolutiondate >= ${startFn}`),
-              countByJql(`${scope}reporter = "${m.accountId}" AND assignee = "${m.accountId}" AND resolutiondate >= ${startFn}`)
+              countByJql(`${scope}reporter = "${m.accountId}" AND assignee = "${m.accountId}" AND resolutiondate >= ${startFn}`),
+              countByJql(`${scope}assignee = "${m.accountId}" AND statusCategory != Done`)
             ]);
-            rows.push({ ...m, created, resolved, selfClosed });
+            rows.push({ ...m, created, resolved, selfClosed, openNow });
           }catch(e){
             console.warn(`[IS Toolkit][admin] falha contando ${m.displayName} (${period}):`, e);
-            rows.push({ ...m, created: 0, resolved: 0, selfClosed: 0, error: true });
+            rows.push({ ...m, created: 0, resolved: 0, selfClosed: 0, openNow: 0, error: true });
           }
         }
       }
@@ -10141,9 +10150,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <select id="ml_s_ranking_mode">
                     <option value="anonimo" ${(cur.RANKING_DISPLAY_MODE || def.RANKING_DISPLAY_MODE || 'anonimo') === 'anonimo' ? 'selected' : ''}>An&ocirc;nimo (voc&ecirc; vs m&eacute;dia do time)</option>
                     <option value="posicao" ${cur.RANKING_DISPLAY_MODE === 'posicao' ? 'selected' : ''}>Sua posi&ccedil;&atilde;o (ex: 3&ordm; de 8), sem nomes</option>
-                    <option value="leaderboard" ${cur.RANKING_DISPLAY_MODE === 'leaderboard' ? 'selected' : ''}>Leaderboard completo (com nomes)</option>
                   </select>
-                  <div class="hint">Padr&atilde;o: an&ocirc;nimo (menos sens&iacute;vel).</div>
+                  <div class="hint">Padr&atilde;o: an&ocirc;nimo (menos sens&iacute;vel). O leaderboard com nomes saiu daqui na v2.4.0 &mdash; agora s&oacute; aparece no <b>Painel administrativo</b> (mais abaixo), vis&iacute;vel apenas pra quem tiver o c&oacute;digo de admin.</div>
                 </div>
                 <div>
                   <label class="checkbox"><input type="checkbox" id="ml_s_ranking_daily" ${cur.RANKING_SHOW_DAILY !== false ? 'checked' : ''} /> Mostrar ranking do dia</label>
@@ -10153,14 +10161,15 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             </div>
 
             <div class="group full" data-tab="painel">
-              <h4>&#128274; Painel administrativo (v2.2.0)</h4>
+              <h4>&#128274; Painel administrativo (v2.4.0)</h4>
               <div class="grid">
                 <div class="full" style="margin-bottom:4px;">
                   <div class="hint" style="margin:0;">
                     Vis&atilde;o de <b>fila/time</b> (n&atilde;o s&oacute; voc&ecirc;): volume de criados/resolvidos/backlog
-                    l&iacute;quido (hoje/semana/m&ecirc;s), criados &times; resolvidos &times; auto-fechados por pessoa
-                    (usa o mesmo grupo do Ranking do time, acima) e categoria do time todo na semana. Sempre
-                    escopado a <code>IS</code>+<code>ISS</code>. <b>N&atilde;o &eacute; seguran&ccedil;a de verdade</b>
+                    l&iacute;quido (hoje/semana/m&ecirc;s), criados &times; resolvidos &times; auto-fechados &times;
+                    <b>carga aberta em tempo real</b> por pessoa (usa o mesmo grupo do Ranking do time, acima) e
+                    categoria do time todo na semana. Bot&otilde;es de exportar (copiar resumo / baixar CSV) inclu&iacute;dos.
+                    Sempre escopado a <code>IS</code>+<code>ISS</code>. <b>N&atilde;o &eacute; seguran&ccedil;a de verdade</b>
                     &mdash; o c&oacute;digo fica no pr&oacute;prio script (qualquer um com acesso ao c&oacute;digo-fonte
                     consegue ler), &eacute; s&oacute; uma trava simples pra o card n&atilde;o aparecer sem querer.
                   </div>
@@ -12114,24 +12123,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             if(!data) return `<div class="homeCard"><div class="err">Falha ao carregar ranking (${esc(label)}).</div></div>`;
             const mode = RANKING_DISPLAY_MODE;
             const avgFmt = Number.isFinite(data.teamAverage) ? data.teamAverage.toFixed(1) : '—';
-            if(mode === 'leaderboard'){
-              // So mostra quem resolveu pelo menos 1 no periodo — quem esta zerado so polui a
-              // lista sem informar nada (a media do time abaixo continua contando todo mundo).
-              const active = data.members.filter(m => m.count > 0);
-              const rows = active.map((m, i) => `
-                <div style="display:flex; justify-content:space-between; padding:4px 0; ${m.accountId === (data.myAccountId||'') ? 'font-weight:700;' : ''}">
-                  <span>${i+1}. ${esc(m.displayName)}</span>
-                  <span>${m.count}</span>
-                </div>
-              `).join('');
-              return `
-                <div style="background:var(--ml-bg-2); border:1px solid var(--ml-border-2); border-radius:8px; padding:14px;">
-                  <div style="font-weight:700; margin-bottom:6px;">Ranking — ${esc(label)}</div>
-                  ${rows || '<div class="muted">Ninguém resolveu nenhum chamado ainda.</div>'}
-                  <div class="meta" style="margin-top:6px;">Média do time: ${avgFmt}</div>
-                </div>
-              `;
-            }
+            // O modo 'leaderboard' (nomes com numeros) foi removido daqui na v2.4.0 — visao
+            // com nomes comparando desempenho agora e exclusividade do Painel administrativo
+            // (mesmos dados, so aparece pra quem tiver o codigo de admin).
             if(mode === 'posicao'){
               const posText = data.myPosition ? `Você está em ${data.myPosition}º de ${data.members.length} analistas` : 'Sem posição calculada';
               return `
@@ -12230,21 +12224,22 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   return;
                 }
                 const rows = data.members.map(m => `
-                  <div style="display:grid; grid-template-columns:1fr 70px 70px 90px; gap:8px; padding:5px 0; border-bottom:1px solid var(--ml-border-2); align-items:center;">
+                  <div style="display:grid; grid-template-columns:1fr 70px 70px 90px 90px; gap:8px; padding:5px 0; border-bottom:1px solid var(--ml-border-2); align-items:center;">
                     <div style="font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(m.displayName)}">${esc(m.displayName)}${m.error ? ' &#9888;&#65039;' : ''}</div>
                     <div style="text-align:right; font-size:12.5px;">${m.created}</div>
                     <div style="text-align:right; font-size:12.5px;">${m.resolved}</div>
                     <div style="text-align:right; font-size:12.5px;">${m.selfClosed}</div>
+                    <div style="text-align:right; font-size:12.5px; font-weight:${m.openNow >= 10 ? '700' : '400'}; color:${m.openNow >= 10 ? 'var(--ml-warn, #d97706)' : 'inherit'};">${m.openNow}</div>
                   </div>
                 `).join('');
                 peopleEl.innerHTML = `
-                  <div style="font-weight:700;margin-bottom:8px;">Criados x Resolvidos por pessoa (esta semana)</div>
+                  <div style="font-weight:700;margin-bottom:8px;">Criados x Resolvidos por pessoa (esta semana) &middot; carga aberta agora</div>
                   <div style="background:var(--ml-bg-2); border:1px solid var(--ml-border-2); border-radius:8px; padding:14px;">
-                    <div style="display:grid; grid-template-columns:1fr 70px 70px 90px; gap:8px; padding-bottom:6px; border-bottom:2px solid var(--ml-border-2); font-size:11px; font-weight:700; color:var(--ml-text-mut);">
-                      <div>Analista</div><div style="text-align:right;">Criados</div><div style="text-align:right;">Resolvidos</div><div style="text-align:right;">Auto-fechados</div>
+                    <div style="display:grid; grid-template-columns:1fr 70px 70px 90px 90px; gap:8px; padding-bottom:6px; border-bottom:2px solid var(--ml-border-2); font-size:11px; font-weight:700; color:var(--ml-text-mut);">
+                      <div>Analista</div><div style="text-align:right;">Criados</div><div style="text-align:right;">Resolvidos</div><div style="text-align:right;">Auto-fechados</div><div style="text-align:right;">Abertos agora</div>
                     </div>
                     ${rows}
-                    <div class="meta" style="margin-top:6px;">"Auto-fechados" = a mesma pessoa abriu e resolveu o ticket (ex: ISS criada e fechada por quem mesmo a criou).</div>
+                    <div class="meta" style="margin-top:6px;">"Auto-fechados" = a mesma pessoa abriu e resolveu o ticket (ex: ISS criada e fechada por quem mesmo a criou). "Abertos agora" é a carga em tempo real (não depende do período acima) — destacado quando ≥10.</div>
                   </div>
                 `;
               }).catch(e => {
@@ -12317,11 +12312,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             txt.push('');
             csv.push('');
 
-            txt.push('CRIADOS X RESOLVIDOS POR PESSOA (esta semana)');
-            csv.push(csvRow(['Criados x Resolvidos por pessoa (semana)']), csvRow(['Analista','Criados','Resolvidos','Auto-fechados']));
+            txt.push('CRIADOS X RESOLVIDOS POR PESSOA (esta semana) + CARGA ABERTA AGORA');
+            csv.push(csvRow(['Criados x Resolvidos por pessoa (semana) + carga aberta agora']), csvRow(['Analista','Criados','Resolvidos','Auto-fechados','Abertos agora']));
             (_adminExportData.people?.members || []).forEach(m => {
-              txt.push(`${m.displayName}: criados ${m.created}, resolvidos ${m.resolved}, auto-fechados ${m.selfClosed}`);
-              csv.push(csvRow([m.displayName, m.created, m.resolved, m.selfClosed]));
+              txt.push(`${m.displayName}: criados ${m.created}, resolvidos ${m.resolved}, auto-fechados ${m.selfClosed}, abertos agora ${m.openNow}`);
+              csv.push(csvRow([m.displayName, m.created, m.resolved, m.selfClosed, m.openNow]));
             });
             txt.push('');
             csv.push('');
