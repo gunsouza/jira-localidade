@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.4
+// @version      2.5.5
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -6019,20 +6019,52 @@
 
           if(Object.keys(newlyMatched).length){
             log(`recovery: achou ${Object.keys(newlyMatched).length} campo(s) extra(s) via editmeta (${Object.keys(newlyMatched).join(', ')})`);
-            alert(
-              `Essa transição também exige: ${namesFromError.join(', ')}.\n\n` +
-              (unresolved.length ? `Não encontrei automaticamente: ${unresolved.join(', ')} (pode precisar editar direto no ticket, no Jira).\n\n` : '') +
-              `Vou abrir mais um formulário só com o que faltou.`
-            );
-            const filled2 = await promptForTransitionFields(newlyMatched, {
-              me, defaultComment: commentForTransition, internalComment: isInternal, auditSuggestions
-            });
-            if(!filled2) throw new Error('cancelado');
-            if(filled2.comment) commentForTransition = filled2.comment;
-            const mergedFields = { ...extraFields, ...(filled2.fields || {}) };
+
+            // v2.5.5: antes de pedir pro analista preencher, verifica se o campo JA TEM VALOR
+            // no ticket (achado no uso real: "Incident Type" ja vinha preenchido desde a
+            // triagem, mas o validador do workflow reclamava mesmo assim — porque o campo nao
+            // tinha sido incluido no PAYLOAD desta transicao especifica, nao porque estava
+            // vazio de verdade). Quando ja tem valor, reenvia o MESMO valor de volta (round-trip
+            // do que o Jira ja devolveu, sem tentar adivinhar o shape) sem perguntar nada — so
+            // abre formulario pros campos que estiverem REALMENTE vazios.
+            let currentValues = {};
+            try{
+              const issueNow = await getIssueFields(issueKey, Object.keys(newlyMatched));
+              currentValues = issueNow?.fields || {};
+            }catch(valErr){
+              console.warn('[IS Toolkit][recovery] falha ao ler valores atuais dos campos extras:', valErr);
+            }
+            const _hasValue = (v) => Array.isArray(v) ? v.length > 0 : (v != null && v !== '' && !(typeof v === 'object' && !Object.keys(v).length));
+            const autoFilled = {};
+            const stillMissing = {};
+            for(const [k, meta] of Object.entries(newlyMatched)){
+              if(_hasValue(currentValues[k])) autoFilled[k] = currentValues[k];
+              else stillMissing[k] = meta;
+            }
+            if(Object.keys(autoFilled).length){
+              log(`recovery: ${Object.keys(autoFilled).length} campo(s) ja tinham valor no ticket (${Object.keys(autoFilled).join(', ')}) — reenviando sem perguntar`);
+            }
+
+            let filled2Fields = {};
+            if(Object.keys(stillMissing).length){
+              alert(
+                `Essa transição também exige: ${namesFromError.join(', ')}.\n\n` +
+                (Object.keys(autoFilled).length ? `${Object.keys(autoFilled).length} já tinha(m) valor no ticket — reenviando sem perguntar.\n\n` : '') +
+                (unresolved.length ? `Não encontrei automaticamente: ${unresolved.join(', ')} (pode precisar editar direto no ticket, no Jira).\n\n` : '') +
+                `Vou abrir mais um formulário só com o que ainda falta.`
+              );
+              const filled2 = await promptForTransitionFields(stillMissing, {
+                me, defaultComment: commentForTransition, internalComment: isInternal, auditSuggestions
+              });
+              if(!filled2) throw new Error('cancelado');
+              if(filled2.comment) commentForTransition = filled2.comment;
+              filled2Fields = filled2.fields || {};
+            }
+
+            const mergedFields = { ...extraFields, ...autoFilled, ...filled2Fields };
             try{
               await attemptTransition(mergedFields);
-              log('transicao aplicada (apos preencher campos extras do erro)');
+              log('transicao aplicada (apos recovery de campos extras)');
               recovered = true;
             }catch(e3){
               throw new Error(`${msg}\n\nApós preencher os campos extras, a transição falhou de novo: ${e3.message}`);
