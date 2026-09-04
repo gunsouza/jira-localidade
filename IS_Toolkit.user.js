@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.2.0
+// @version      2.3.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -12175,7 +12175,13 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           adminEl.innerHTML = '';
         } else {
           adminEl.innerHTML = `
-            <div style="font-weight:700;margin-bottom:10px;">&#128274; Painel administrativo (${esc(_RANKING_SCOPE_PROJECTS.join('+'))})</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+              <div style="font-weight:700;">&#128274; Painel administrativo (${esc(_RANKING_SCOPE_PROJECTS.join('+'))})</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button id="ml_dash_admin_copy" class="btnSecondary" style="font-size:12px;">&#128203; Copiar resumo</button>
+                <button id="ml_dash_admin_csv" class="btnSecondary" style="font-size:12px;">&#11015;&#65039; Baixar CSV</button>
+              </div>
+            </div>
             <div id="ml_dash_admin_volume" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; margin-bottom:14px;">
               <div class="muted">Carregando volume da fila...</div>
             </div>
@@ -12183,10 +12189,15 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             <div id="ml_dash_admin_category"></div>
           `;
 
+          // Guarda os dados ja carregados (em memoria, so pra essa renderizacao) pra alimentar
+          // os botoes de exportar (Copiar resumo / Baixar CSV) sem precisar buscar de novo.
+          const _adminExportData = { volume: null, people: null, category: null };
+
           // Volume da fila: criados / resolvidos / backlog liquido, hoje / semana / mes.
           const volPeriods = [{ key: 'day', label: 'hoje' }, { key: 'week', label: 'semana' }, { key: 'month', label: 'mês' }];
           Promise.all(volPeriods.map(p => getAdminQueueVolume(p.key).catch(e => { console.warn(`[IS Toolkit][admin] falha no volume (${p.key}):`, e); return null; })))
             .then(results => {
+              _adminExportData.volume = volPeriods.map((p, i) => ({ label: p.label, ...(results[i] || {}) }));
               const el = document.getElementById('ml_dash_admin_volume');
               if(!el) return;
               el.innerHTML = volPeriods.map((p, i) => {
@@ -12212,6 +12223,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             } else {
               peopleEl.innerHTML = `<div class="homeCard"><div class="muted">Carregando detalhamento por pessoa (esta semana)...</div></div>`;
               getAdminTeamOverview('week').then(data => {
+                _adminExportData.people = data;
                 if(!document.getElementById('ml_dash_admin_people')) return;
                 if(!data || !data.members.length){
                   peopleEl.innerHTML = `<div class="homeCard"><div class="muted">Nenhum membro encontrado no grupo "${esc(RANKING_TEAM_GROUP)}".</div></div>`;
@@ -12248,6 +12260,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           if(catAdminEl){
             catAdminEl.innerHTML = `<div class="homeCard"><div class="muted">Carregando categorias do time...</div></div>`;
             getCategoryBreakdownThisWeek('team').then(data => {
+              _adminExportData.category = data;
               if(!document.getElementById('ml_dash_admin_category')) return;
               if(!data){ catAdminEl.innerHTML = ''; return; }
               if(!data.breakdown.length){
@@ -12279,6 +12292,77 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               catAdminEl.innerHTML = `<div class="err">Falha ao carregar categorias do time: ${esc(e.message || String(e))}</div>`;
             });
           }
+
+          // Exportar (Copiar resumo / Baixar CSV) — monta em cima do que ja foi carregado em
+          // _adminExportData. Se algum bloco ainda estiver carregando, so entra vazio no
+          // export (sem travar os outros 2 blocos que ja tiverem terminado).
+          const _buildAdminExport = () => {
+            const now = new Date().toLocaleString('pt-BR');
+            const scopeLabel = _RANKING_SCOPE_PROJECTS.join('+');
+            const txt = [];
+            const csv = [];
+            const csvRow = cells => cells.map(v => {
+              const s = String(v == null ? '' : v);
+              return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+            }).join(',');
+
+            txt.push(`Painel administrativo — ${scopeLabel} — gerado em ${now}`, '');
+            txt.push('VOLUME DA FILA');
+            csv.push(csvRow(['Volume da fila']), csvRow(['Período','Criados','Resolvidos','Backlog líquido']));
+            (_adminExportData.volume || []).forEach(v => {
+              if(v.created == null) return; // falhou ao carregar esse periodo
+              txt.push(`${v.label}: criados ${v.created}, resolvidos ${v.resolved}, backlog líquido ${v.backlogDelta > 0 ? '+' : ''}${v.backlogDelta}`);
+              csv.push(csvRow([v.label, v.created, v.resolved, v.backlogDelta]));
+            });
+            txt.push('');
+            csv.push('');
+
+            txt.push('CRIADOS X RESOLVIDOS POR PESSOA (esta semana)');
+            csv.push(csvRow(['Criados x Resolvidos por pessoa (semana)']), csvRow(['Analista','Criados','Resolvidos','Auto-fechados']));
+            (_adminExportData.people?.members || []).forEach(m => {
+              txt.push(`${m.displayName}: criados ${m.created}, resolvidos ${m.resolved}, auto-fechados ${m.selfClosed}`);
+              csv.push(csvRow([m.displayName, m.created, m.resolved, m.selfClosed]));
+            });
+            txt.push('');
+            csv.push('');
+
+            txt.push('CATEGORIA DO TIME (resolvidos esta semana)');
+            csv.push(csvRow(['Categoria do time (resolvidos semana)']), csvRow(['Categoria','Quantidade']));
+            (_adminExportData.category?.breakdown || []).forEach(b => {
+              txt.push(`${b.label}: ${b.count}`);
+              csv.push(csvRow([b.label, b.count]));
+            });
+
+            return { txt: txt.join('\n'), csv: csv.join('\n') };
+          };
+
+          document.getElementById('ml_dash_admin_copy')?.addEventListener('click', async (ev) => {
+            const btn = ev.currentTarget;
+            const oldText = btn.textContent;
+            try{
+              const { txt } = _buildAdminExport();
+              await navigator.clipboard.writeText(txt);
+              btn.textContent = '✅ Copiado!';
+            }catch(e){
+              console.warn('[IS Toolkit][admin] falha ao copiar:', e);
+              btn.textContent = '❌ Falhou';
+            }
+            setTimeout(() => { btn.textContent = oldText; }, 1600);
+          });
+
+          document.getElementById('ml_dash_admin_csv')?.addEventListener('click', (ev) => {
+            const { csv } = _buildAdminExport();
+            const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const dateStr = new Date().toISOString().slice(0,10);
+            a.href = url;
+            a.download = `painel-administrativo-${dateStr}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          });
         }
       }
     }
