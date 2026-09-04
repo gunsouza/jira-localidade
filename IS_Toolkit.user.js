@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.88.0
+// @version      1.89.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -540,14 +540,20 @@
       // isso na instalacao. Deixe vazio pra desabilitar o card de auditoria, ou troque aqui em
       // Configuracoes -> Auditoria se o endpoint mudar de lugar.
       //
-      // Trocado de http://verdi-flows.melisystems.com/... (dominio interno, direto) pra este proxy
-      // HTTPS via furycloud.io na v1.84.0: um colega testando a instalacao nunca conseguia alcancar
-      // o dominio interno (erro de rede no GM_xmlhttpRequest, confirmado tambem do lado do n8n —
-      // a requisicao dele nunca chegava a ser recebida), mesmo estando na mesma rede/VPN do resto
-      // do time. O proxy respondeu normalmente (testado via GET, que o n8n rejeita corretamente
-      // com 404 "use POST" — ou seja, alcancou e roteou certo). @connect furycloud.io ja existia
-      // no cabecalho do script antes dessa mudanca.
-      AUDIT_WEBHOOK_URL: 'https://web.furycloud.io/api/proxy/verdi_flows/webhook/ist-ticket-audit',
+      // Historico: na v1.84.0 trocamos temporariamente pro proxy HTTPS via furycloud.io, pois um
+      // colega nao conseguia alcancar este dominio interno direto (erro de rede, confirmado
+      // tambem do lado do n8n). O proxy respondia bem a um GET de teste (404 "use POST" do
+      // proprio n8n, ou seja, roteava certo) — mas na v1.88.0+ confirmamos ao vivo que o proxy
+      // NAO completa o POST de verdade (fica preso ate dar timeout, mesmo em rede que sempre
+      // alcancou o endpoint direto sem problema nenhum). Revertido de volta pro direto na
+      // v1.89.0: e o que funciona pra praticamente todo mundo. Pra quem tiver o mesmo problema
+      // de alcance do colega original, ha um fallback automatico pro proxy SO em erro de rede
+      // (nao em timeout) — ver _runAuditCore/_callWebhook.
+      AUDIT_WEBHOOK_URL: 'http://verdi-flows.melisystems.com/webhook/ist-ticket-audit',
+      // Usado so como fallback automatico quando o endpoint acima da erro de REDE (host
+      // inalcancavel) — nao quando so da timeout (o proxy tambem pode nao completar o POST,
+      // ver nota acima; nao adianta trocar de URL se o problema e o proxy nao entregar).
+      AUDIT_WEBHOOK_URL_FALLBACK: 'https://web.furycloud.io/api/proxy/verdi_flows/webhook/ist-ticket-audit',
 
       // ---- Central do Grid (dashboard de arquivos usados pelo time) ----
       // Link fixo pra central de Grid do time. Aparece como atalho na Home do toolkit.
@@ -648,20 +654,27 @@
 
     const SETTINGS = loadSettings(DEFAULTS);
 
-    // Migracao unica: o botao "Salvar" de Configuracoes SEMPRE regrava AUDIT_WEBHOOK_URL com
-    // o valor exibido no campo (mesmo que o usuario so tenha mexido em outra aba) — entao quem
-    // ja salvou Configuracoes qualquer vez antes da v1.84.0 ficou com o endpoint ANTIGO
-    // "congelado" no storage pra sempre, e a troca do DEFAULTS pro proxy furycloud.io na v1.84.0
-    // nunca chegou a valer de fato (loadSettings da preferencia ao que ja esta salvo). Foi
-    // exatamente essa a causa da auditoria continuar dando timeout mesmo depois daquele fix.
-    // Aqui, se o valor salvo for EXATAMENTE o endpoint antigo (nunca customizado de verdade pelo
-    // usuario, so herdado do default velho), atualiza silenciosamente pro novo e persiste.
+    // Migracao unica (v1.87.0, revertida de sentido na v1.89.0): o botao "Salvar" de
+    // Configuracoes SEMPRE regrava AUDIT_WEBHOOK_URL com o valor exibido no campo (mesmo que o
+    // usuario so tenha mexido em outra aba) — entao qualquer troca do DEFAULTS fica "congelada"
+    // pra sempre no storage de quem ja salvou Configuracoes uma vez, e loadSettings() da
+    // preferencia ao que ja esta salvo. Isso ja causou dois problemas em sentidos opostos:
+    // 1) na v1.84.0 trocamos o default pro proxy furycloud.io, mas quem ja tinha o endpoint
+    //    direto salvo continuou preso nele (v1.87.0 corrigiu empurrando pro proxy).
+    // 2) na v1.89.0 confirmamos ao vivo que o proxy NAO completa o POST de verdade (fica preso
+    //    ate dar timeout) e revertemos o default de volta pro direto — mas agora e o INVERSO:
+    //    quem foi migrado pro proxy na v1.87.0 (ou pegou o default errado entre v1.84 e v1.88)
+    //    fica preso nele. Aqui desfazemos isso: se o valor salvo for EXATAMENTE o proxy furycloud
+    //    (nunca customizado de verdade, so herdado de um default de uma versao anterior), volta
+    //    silenciosamente pro endpoint direto (o default atual) e persiste.
     {
-      const _LEGACY_AUDIT_WEBHOOK_URL = 'http://verdi-flows.melisystems.com/webhook/ist-ticket-audit';
-      if(String(SETTINGS.AUDIT_WEBHOOK_URL || '').trim() === _LEGACY_AUDIT_WEBHOOK_URL){
+      const _STALE_AUDIT_WEBHOOK_URLS = [
+        'https://web.furycloud.io/api/proxy/verdi_flows/webhook/ist-ticket-audit'
+      ];
+      if(_STALE_AUDIT_WEBHOOK_URLS.includes(String(SETTINGS.AUDIT_WEBHOOK_URL || '').trim())){
         SETTINGS.AUDIT_WEBHOOK_URL = DEFAULTS.AUDIT_WEBHOOK_URL;
         saveSettings(SETTINGS);
-        console.log('[is-toolkit] AUDIT_WEBHOOK_URL migrado do endpoint antigo (verdi-flows direto) pro proxy furycloud.io.');
+        console.log('[is-toolkit] AUDIT_WEBHOOK_URL migrado do proxy furycloud.io de volta pro endpoint direto (proxy nao completa POST de verdade).');
       }
     }
 
@@ -6991,10 +7004,10 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       // e tambem em timeout puro (cold start do n8n, rede lenta etc. — antes so tentava de novo
       // em erro de gateway, um timeout isolado derrubava a auditoria na hora sem segunda chance).
       const AUDIT_WEBHOOK_TIMEOUT_MS = 120000; // 120s por tentativa (antes 60s)
-      const _callWebhook = () => new Promise((resolve, reject) => {
+      const _callWebhook = (url) => new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
           method: 'POST',
-          url: webhookUrl,
+          url,
           headers: { 'Content-Type': 'application/json' },
           data: JSON.stringify({ prompt, issueKey, images }),
           timeout: AUDIT_WEBHOOK_TIMEOUT_MS,
@@ -7010,15 +7023,24 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         });
       });
 
+      // Fallback pro proxy furycloud.io: SO troca de URL quando o endpoint principal da erro de
+      // REDE (host inalcancavel — o caso do colega original, confirmado tambem do lado do n8n).
+      // Nao troca em timeout: ja confirmamos ao vivo (v1.89.0) que o proxy tambem pode nao
+      // completar o POST de verdade, entao trocar de URL so por causa de timeout so dobraria a
+      // espera sem chance real de dar certo.
+      const fallbackUrl = SETTINGS.AUDIT_WEBHOOK_URL_FALLBACK || DEFAULTS.AUDIT_WEBHOOK_URL_FALLBACK;
+      let currentUrl = webhookUrl;
+      let usedFallback = false;
+
       let wData, lastErr;
       for(let attempt = 1; attempt <= 3; attempt++){
         try{
           if(attempt > 1){
             const delay = attempt === 2 ? 3000 : 7000;
-            if(opts.onRetry) opts.onRetry(attempt);
+            if(opts.onRetry) opts.onRetry(attempt, usedFallback);
             await new Promise(r => setTimeout(r, delay));
           }
-          wData = await _callWebhook();
+          wData = await _callWebhook(currentUrl);
           break;
         }catch(e){
           lastErr = e;
@@ -7026,6 +7048,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           // conexao); qualquer 4xx (ex: 404 de rota errada) falha na hora, pois repetir nao muda nada.
           const retryable = e.status === 503 || e.status === 502 || e.status === 504 || e.isTimeout || e.isNetworkError;
           if(!retryable) throw e;
+          if(e.isNetworkError && !usedFallback && fallbackUrl && fallbackUrl !== webhookUrl){
+            currentUrl = fallbackUrl;
+            usedFallback = true;
+            console.warn('[is-toolkit][audit] erro de rede no endpoint principal — tentando proxy de fallback.');
+          }
         }
       }
       if(!wData) throw lastErr;
