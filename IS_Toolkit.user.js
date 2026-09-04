@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.94.0
+// @version      1.95.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -4132,6 +4132,25 @@
       return true;
     }
 
+    // Listas REAIS de valores aceitos pelos campos Demand/Service na tela de criacao de ISS no
+    // Jira (levantadas direto da tela de criacao, print por print) — usadas pra virar os campos
+    // de texto livre (Configuracoes e o modal de escolha manual) em selects validados, ja que
+    // sao campos de selecao no Jira (nao texto livre) e um valor digitado errado (mesmo que só
+    // por acento/maiuscula) falha silenciosamente ou cria a ISS com o campo vazio.
+    const ISS_DEMANDA_OPTIONS = [
+      'Actualización', 'Analisis', 'Audit', 'Configuración', 'Documentación',
+      'Instalación', 'Reinstalación', 'Corrección', 'Reemplazo', 'Activación',
+      'Mantenimiento', 'Remoción', 'Reconfiguración', 'Ejecución'
+    ];
+    const ISS_SERVICE_OPTIONS = [
+      'Access Point', 'Antivirus', 'Blue Print', 'Cable de red', 'CCTV', 'Cloud',
+      'Control Acceso', 'Controller', 'Cubiscan / Bascula', 'Data Center', 'Enlace',
+      'Firewall', 'Google Meet', 'Handheld', 'Impresora', 'Inventory Tools', 'Lector 2D',
+      'NetBox', 'Nobreak', 'Notebook', 'Packing Machine', 'Ringscanner',
+      'Sistema Operacional (Windows / macOS)', 'Site Survey', 'Switch', 'Tablet',
+      'Thundera', 'Tunnel', 'VPN', 'WIFI', 'Zabbix Proxy'
+    ];
+
     // Orquestra a criacao completa da tarefa ISS a partir de um ticket de origem.
     // Retorna { newKey, linkType, attachmentsReport } em caso de sucesso. Lanca em caso de erro.
     // onProgress(stage:string) opcional para feedback de UI.
@@ -4188,15 +4207,15 @@
             return { templateKey, overrides, source: 'rule', rule: r };
           }
         }
-        // Nenhuma regra casou. Pergunta ao usuario qual Service usar.
+        // Nenhuma regra casou. Pergunta ao usuario qual Demanda/Service usar.
         console.log(`[jira-localidade][iss-config] nenhuma regra casou em ${sourceIssueKey}, perguntando ao usuario`);
-        const chosen = await _askUserForIssService(sourceIssueKey, relevantRules);
+        const chosen = await _askUserForIssClassification();
         if(chosen === null){
           throw new Error('Criacao de ISS cancelada pelo usuario.');
         }
         return {
           templateKey: null, // sempre value-based quando vem do prompt (mais simples)
-          overrides: { service: chosen },
+          overrides: { service: chosen.service, demanda: chosen.demanda },
           source: 'user-prompt',
           rule: null
         };
@@ -4208,18 +4227,40 @@
       }
     }
 
-    // Modal sincrono (Promise) pedindo ao usuario qual Service usar quando o plugin
-    // nao consegue identificar a categoria automaticamente. Lista os Services unicos
-    // que aparecem nas regras CONFLUENCE_RULES como sugestao, mas tambem permite digitar.
-    function _askUserForIssService(sourceIssueKey, rules){
+    // Modal sincrono (Promise) pedindo ao usuario qual Demanda + Service usar quando o plugin
+    // nao consegue identificar a categoria automaticamente. Usa as listas REAIS de opcoes do
+    // Jira (ISS_DEMANDA_OPTIONS/ISS_SERVICE_OPTIONS) como <select> — nao mais texto livre —
+    // pra evitar criar a ISS com um valor que nao bate exatamente com o que existe no Jira
+    // (esses campos sao de selecao, nao texto livre; um valor digitado errado falha ou some).
+    // Cada select tem uma opcao "Outro (digitar)..." como valvula de escape, avisando do risco.
+    // Retorna { demanda, service } ou null se cancelado.
+    function _askUserForIssClassification(){
       return new Promise((resolve) => {
-        // Coleta Services unicos das regras pra sugerir
-        const knownServices = [...new Set(
-          rules.map(r => r.issService).filter(Boolean)
-        )].sort();
-
         document.getElementById('ml_iss_svc_overlay')?.remove();
         document.getElementById('ml_iss_svc_modal')?.remove();
+
+        const OTHER = '__other__';
+        const buildSelect = (id, options, defaultValue) => `
+          <select id="${id}" style="
+            width:100%; padding:8px 12px; margin-bottom:6px;
+            background: rgba(255,255,255,.05); color: var(--ml-text);
+            border: 1px solid var(--ml-border, #2a2f40); border-radius:6px;
+            font: 13px var(--ml-font);
+          ">
+            <option value="">— escolha —</option>
+            ${options.map(o => `<option value="${esc(o)}" ${o === defaultValue ? 'selected' : ''}>${esc(o)}</option>`).join('')}
+            <option value="${OTHER}">Outro (digitar)...</option>
+          </select>
+          <input type="text" id="${id}_custom" placeholder="Digite o valor exato como aparece no Jira" style="
+            display:none; width:100%; padding:8px 12px; margin-bottom:4px;
+            background: rgba(255,255,255,.05); color: var(--ml-text);
+            border: 1px solid #f5b301; border-radius:6px;
+            font: 13px var(--ml-font);
+          " />
+          <div id="${id}_warn" style="display:none;color:#f5b301;font-size:11px;margin-bottom:10px;">
+            ⚠️ Risco: se o texto não bater EXATAMENTE com o valor no Jira, a ISS pode ser criada sem esse campo preenchido.
+          </div>
+        `;
 
         const overlay = document.createElement('div');
         overlay.id = 'ml_iss_svc_overlay';
@@ -4237,46 +4278,22 @@
           font: 13px var(--ml-font, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
         `;
 
-        const optionsHtml = knownServices.length
-          ? knownServices.map(s => `
-            <button class="ml-svc-opt" data-svc="${s.replace(/"/g, '&quot;')}" style="
-              display:block; width:100%; text-align:left;
-              background: rgba(255,255,255,.04); color: var(--ml-text, #e6e9ef);
-              border: 1px solid var(--ml-border, #2a2f40);
-              padding: 10px 14px; border-radius: 8px; margin-bottom: 6px;
-              cursor: pointer; font: 600 13px var(--ml-font);
-              transition: background .15s, border-color .15s;
-            " onmouseover="this.style.background='rgba(79,140,255,.18)';this.style.borderColor='#4f8cff';"
-               onmouseout="this.style.background='rgba(255,255,255,.04)';this.style.borderColor='var(--ml-border, #2a2f40)';">
-              ${s}
-            </button>
-          `).join('')
-          : '<div style="color:var(--ml-text-dim);">Nenhum Service conhecido nas regras.</div>';
-
         modal.innerHTML = `
           <div style="margin-bottom:14px;">
-            <div style="font-size:15px;font-weight:700;margin-bottom:4px;">Categoria nao identificada automaticamente</div>
+            <div style="font-size:15px;font-weight:700;margin-bottom:4px;">Categoria não identificada automaticamente</div>
             <div style="color:var(--ml-text-mut,#a8aebd);font-size:12.5px;">
-              Nao consegui identificar a categoria SE do ticket <b>${sourceIssueKey}</b> baseado nas regras configuradas.
-              Qual <b>Service</b> usar na ISS?
+              Não consegui identificar a categoria SE do ticket baseado nas regras configuradas.
+              Escolha a <b>Demanda</b> e o <b>Service</b> pra usar na ISS.
             </div>
           </div>
 
-          <div style="margin-bottom:14px;">${optionsHtml}</div>
+          <label style="display:block; font-size:11px; color:var(--ml-text-mut); margin-bottom:4px; text-transform:uppercase; letter-spacing:.5px;">Demanda</label>
+          ${buildSelect('ml_svc_demanda', ISS_DEMANDA_OPTIONS, ISS_TASK_DEMANDA_VALUE)}
 
-          <div style="margin-bottom:14px;">
-            <label style="display:block; font-size:11px; color:var(--ml-text-mut); margin-bottom:4px; text-transform:uppercase; letter-spacing:.5px;">
-              Ou digite outro Service:
-            </label>
-            <input type="text" id="ml_svc_custom" placeholder="Ex: CCTV, Control Acceso, ..." style="
-              width:100%; padding:8px 12px;
-              background: rgba(255,255,255,.05); color: var(--ml-text);
-              border: 1px solid var(--ml-border, #2a2f40); border-radius:6px;
-              font: 13px var(--ml-font);
-            " />
-          </div>
+          <label style="display:block; font-size:11px; color:var(--ml-text-mut); margin-bottom:4px; text-transform:uppercase; letter-spacing:.5px;">Service</label>
+          ${buildSelect('ml_svc_service', ISS_SERVICE_OPTIONS, '')}
 
-          <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <div style="display:flex; gap:8px; justify-content:flex-end;margin-top:8px;">
             <button id="ml_svc_cancel" style="
               background: transparent; color: var(--ml-text-mut);
               border: 1px solid var(--ml-border, #2a2f40);
@@ -4288,7 +4305,7 @@
               color: #fff; border: 1px solid #2c5fc7;
               padding: 8px 14px; border-radius: 6px;
               font: 600 12px var(--ml-font); cursor: pointer;
-            ">Usar Service digitado</button>
+            ">Confirmar</button>
           </div>
         `;
 
@@ -4297,23 +4314,36 @@
 
         const cleanup = () => { modal.remove(); overlay.remove(); };
 
-        // Cliques nos botoes de sugestao = escolheu direto
-        modal.querySelectorAll('.ml-svc-opt').forEach(b => {
-          b.addEventListener('click', () => {
-            const svc = b.getAttribute('data-svc');
-            cleanup();
-            resolve(svc);
+        // Alterna pro campo de texto livre quando escolhe "Outro", com aviso de risco
+        const wireSelect = (id) => {
+          const sel = modal.querySelector(`#${id}`);
+          const custom = modal.querySelector(`#${id}_custom`);
+          const warn = modal.querySelector(`#${id}_warn`);
+          sel.addEventListener('change', () => {
+            const isOther = sel.value === OTHER;
+            custom.style.display = isOther ? '' : 'none';
+            warn.style.display = isOther ? '' : 'none';
+            if(isOther) custom.focus();
           });
-        });
+        };
+        wireSelect('ml_svc_demanda');
+        wireSelect('ml_svc_service');
+
+        const readValue = (id) => {
+          const sel = modal.querySelector(`#${id}`);
+          if(sel.value === OTHER) return String(modal.querySelector(`#${id}_custom`).value || '').trim();
+          return sel.value;
+        };
 
         modal.querySelector('#ml_svc_confirm').addEventListener('click', () => {
-          const v = String(modal.querySelector('#ml_svc_custom').value || '').trim();
-          if(!v){
-            alert('Digite o nome do Service ou clique numa das opcoes acima.');
+          const demanda = readValue('ml_svc_demanda');
+          const service = readValue('ml_svc_service');
+          if(!demanda || !service){
+            alert('Escolha (ou digite) Demanda e Service antes de confirmar.');
             return;
           }
           cleanup();
-          resolve(v);
+          resolve({ demanda, service });
         });
 
         modal.querySelector('#ml_svc_cancel').addEventListener('click', () => {
@@ -4325,9 +4355,6 @@
           cleanup();
           resolve(null);
         });
-
-        // Foco no input pra digitar direto
-        setTimeout(() => modal.querySelector('#ml_svc_custom')?.focus(), 50);
       });
     }
 
@@ -9224,8 +9251,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 </div>
                 <div>
                   <label>Demanda - valor</label>
-                  <input type="text" id="ml_s_iss_dem_val" value="${esc(cur.ISS_TASK_DEMANDA_VALUE)}" />
-                  <div class="hint">Padrao "${esc(def.ISS_TASK_DEMANDA_VALUE)}".</div>
+                  <select id="ml_s_iss_dem_val">
+                    ${(ISS_DEMANDA_OPTIONS.includes(cur.ISS_TASK_DEMANDA_VALUE) ? ISS_DEMANDA_OPTIONS : [cur.ISS_TASK_DEMANDA_VALUE, ...ISS_DEMANDA_OPTIONS])
+                      .map(o => `<option value="${esc(o)}" ${o === cur.ISS_TASK_DEMANDA_VALUE ? 'selected' : ''}>${esc(o)}</option>`).join('')}
+                  </select>
+                  <div class="hint">Padrao "${esc(def.ISS_TASK_DEMANDA_VALUE)}". Lista de valores reais aceitos pelo campo Demand no Jira — evita digitar algo que não bate exatamente.</div>
                 </div>
                 <div>
                   <label>Service - customfield ID</label>
@@ -9234,8 +9264,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 </div>
                 <div>
                   <label>Service - valor</label>
-                  <input type="text" id="ml_s_iss_svc_val" value="${esc(cur.ISS_TASK_SERVICE_VALUE)}" />
-                  <div class="hint">Padrao "${esc(def.ISS_TASK_SERVICE_VALUE)}".</div>
+                  <select id="ml_s_iss_svc_val">
+                    ${(ISS_SERVICE_OPTIONS.includes(cur.ISS_TASK_SERVICE_VALUE) ? ISS_SERVICE_OPTIONS : [cur.ISS_TASK_SERVICE_VALUE, ...ISS_SERVICE_OPTIONS])
+                      .map(o => `<option value="${esc(o)}" ${o === cur.ISS_TASK_SERVICE_VALUE ? 'selected' : ''}>${esc(o)}</option>`).join('')}
+                  </select>
+                  <div class="hint">Padrao "${esc(def.ISS_TASK_SERVICE_VALUE)}". Lista de valores reais aceitos pelo campo Service no Jira — evita digitar algo que não bate exatamente.</div>
                 </div>
                 <div>
                   <label>Resolution team da tarefa criada</label>
