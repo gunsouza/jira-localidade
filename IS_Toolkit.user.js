@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.83.0
+// @version      1.84.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -536,10 +536,18 @@
 
       // ---- Auditoria de Ticket (IA via n8n) ----
       // URL do webhook n8n que recebe os dados do ticket e retorna a analise.
-      // Fixa pra todo o time (workflow central "ist-ticket-audit" no verdi-flows) — ninguem
-      // precisa configurar isso na instalacao. Deixe vazio pra desabilitar o card de auditoria,
-      // ou troque aqui em Configuracoes -> Auditoria se o endpoint mudar de lugar.
-      AUDIT_WEBHOOK_URL: 'http://verdi-flows.melisystems.com/webhook/ist-ticket-audit',
+      // Fixa pra todo o time (workflow central "ist-ticket-audit") — ninguem precisa configurar
+      // isso na instalacao. Deixe vazio pra desabilitar o card de auditoria, ou troque aqui em
+      // Configuracoes -> Auditoria se o endpoint mudar de lugar.
+      //
+      // Trocado de http://verdi-flows.melisystems.com/... (dominio interno, direto) pra este proxy
+      // HTTPS via furycloud.io na v1.84.0: um colega testando a instalacao nunca conseguia alcancar
+      // o dominio interno (erro de rede no GM_xmlhttpRequest, confirmado tambem do lado do n8n —
+      // a requisicao dele nunca chegava a ser recebida), mesmo estando na mesma rede/VPN do resto
+      // do time. O proxy respondeu normalmente (testado via GET, que o n8n rejeita corretamente
+      // com 404 "use POST" — ou seja, alcancou e roteou certo). @connect furycloud.io ja existia
+      // no cabecalho do script antes dessa mudanca.
+      AUDIT_WEBHOOK_URL: 'https://web.furycloud.io/api/proxy/verdi_flows/webhook/ist-ticket-audit',
 
       // ---- Central do Grid (dashboard de arquivos usados pelo time) ----
       // Link fixo pra central de Grid do time. Aparece como atalho na Home do toolkit.
@@ -6859,7 +6867,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
     async function _runAuditCore(issueKey, opts){
       opts = opts || {};
       const webhookUrl = SETTINGS.AUDIT_WEBHOOK_URL;
-      if(!webhookUrl) throw new Error('Webhook de auditoria não configurado (Configurações → Avançado → Integrações).');
+      if(!webhookUrl) throw new Error('Webhook de auditoria não configurado (Configurações → Auditoria).');
 
       // Busca ticket com changelog + campos relevantes
       const _cpId = Number(SETTINGS.CF_CHANGED_PRIORITY || DEFAULTS.CF_CHANGED_PRIORITY || 0);
@@ -6912,7 +6920,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             try{ resolve(JSON.parse(r.responseText)); }
             catch{ resolve({ result: r.responseText }); }
           },
-          onerror(){ reject(new Error('Erro de rede ao chamar o webhook')); },
+          onerror(){ reject(Object.assign(new Error('Erro de rede ao chamar o webhook'), { isNetworkError: true })); },
           ontimeout(){ reject(Object.assign(new Error(`Timeout — webhook demorou mais de ${AUDIT_WEBHOOK_TIMEOUT_MS/1000}s`), { isTimeout: true })); }
         });
       });
@@ -6929,8 +6937,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           break;
         }catch(e){
           lastErr = e;
-          // Retry em erro de gateway (502/503/504) OU timeout puro; qualquer outro erro (rede, 4xx) falha na hora.
-          const retryable = e.status === 503 || e.status === 502 || e.status === 504 || e.isTimeout;
+          // Retry em erro de gateway (502/503/504), timeout puro OU erro de rede (blip transitorio de
+          // conexao); qualquer 4xx (ex: 404 de rota errada) falha na hora, pois repetir nao muda nada.
+          const retryable = e.status === 503 || e.status === 502 || e.status === 504 || e.isTimeout || e.isNetworkError;
           if(!retryable) throw e;
         }
       }
