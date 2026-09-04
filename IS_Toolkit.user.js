@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      1.96.0
+// @version      1.97.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -610,6 +610,10 @@
       CF_REQUEST_TYPE:    0,
       CF_USER_VALIDATION: 0,
       CF_SOLUTION_TYPE:   0,
+      // Campo de texto "Solution" (analise tecnica/diagnostico ao resolver — distinto do
+      // CF_SOLUTION_TYPE acima, que e a lista "Solucao aplicada"). Usado pela auditoria pra
+      // pre-preencher com um texto tecnico ao ir pra uma transicao final em "Mudar status".
+      CF_SOLUTION_TEXT:   0,
       // Flag "Changed priority" (No/Yes): quando Yes, indica que houve reclassificacao
       // de prioridade (mesmo aplicada por automacao). A auditoria cobra justificativa.
       CF_CHANGED_PRIORITY: 26266,
@@ -5255,6 +5259,15 @@
       const me = opts.me || {};
       const defaultComment = String(opts.defaultComment || '');
       const internalComment = !!opts.internalComment;
+      // Sugestoes da auditoria (v1.97.0) — cache de _loadAuditGM(issueKey), pode vir null/vazio.
+      // So sao usadas pra PRE-preencher; o analista sempre pode trocar antes de aplicar.
+      const auditSug = opts.auditSuggestions || {};
+      const _normVal = s => String(s || '').trim().toLowerCase();
+      // IDs configurados (0 = nao configurado -> nenhum campo bate por ID, so por acaso teria
+      // key "customfield_0" o que nunca acontece de verdade).
+      const _cfSolutionTextKey = `customfield_${Number(SETTINGS?.CF_SOLUTION_TEXT || 0)}`;
+      const _cfSolutionTypeKey = `customfield_${Number(SETTINGS?.CF_SOLUTION_TYPE || 0)}`;
+      const _cfUserValidationKey = `customfield_${Number(SETTINGS?.CF_USER_VALIDATION || 0)}`;
 
       return new Promise((resolve) => {
         const overlay = document.createElement('div');
@@ -5266,31 +5279,65 @@
         const fieldEntries = Object.entries(fieldsMap || {});
         const otherFields = fieldEntries.filter(([k]) => k !== 'comment');
         const needsComment = !!fieldsMap?.comment?.required;
+        const _sugBadge = `<span style="font-size:10.5px;font-weight:600;color:#60a5fa;margin-left:6px;">(sugestão da auditoria — revise antes de aplicar)</span>`;
 
         const renderField = ([key, meta]) => {
           const label = meta?.name || key;
           const type = meta?.schema?.type || 'string';
           const allowed = Array.isArray(meta?.allowedValues) ? meta.allowedValues : null;
+          // Cascading select (ex: "Validated with the user" Yes/No -> canal dependente):
+          // Jira retorna schema.type "option-with-child" e cada allowedValue tem "children".
+          const isCascading = !!(allowed && allowed.length && allowed.some(v => Array.isArray(v.children)));
 
           // Pre-preencher "responsavel" / "assignee" com o usuario logado
           const isUserField = (type === 'user' || /respons|asign|assign/i.test(label));
           const defaultUser = (isUserField && me.accountId) ? me.accountId : '';
 
-          if(allowed && allowed.length){
-            // Select com valores permitidos
-            const opts = allowed.map(v => {
-              const val = v.id || v.value || '';
-              const lbl = v.name || v.value || v.id || '';
-              return `<option value="${esc(String(val))}">${esc(String(lbl))}</option>`;
+          if(isCascading){
+            const isUserValidationField = key === _cfUserValidationKey && Number(SETTINGS?.CF_USER_VALIDATION || 0) > 0;
+            const suggestedParent = isUserValidationField ? String(auditSug.validated_with_user_suggestion || '').trim() : '';
+            const parentMatch = suggestedParent ? allowed.find(v => _normVal(v.value || v.name) === _normVal(suggestedParent)) : null;
+            const parentOptsHtml = allowed.map(v => {
+              const val = v.id || '';
+              const lbl = v.value || v.name || '';
+              const sel = parentMatch && String(parentMatch.id) === String(val) ? 'selected' : '';
+              return `<option value="${esc(String(val))}" ${sel}>${esc(String(lbl))}</option>`;
             }).join('');
             return `
               <div style="margin-bottom: 12px;">
                 <label style="display:block;font-size:12px;font-weight:600;color:var(--ml-text-mut, #c1c5d2);margin-bottom:4px;">
-                  ${esc(label)} <span style="color:#fca5a5;">*</span>
+                  ${esc(label)} <span style="color:#fca5a5;">*</span>${parentMatch ? _sugBadge : ''}
+                </label>
+                <select data-fk-parent="${esc(key)}" data-ftype="cascading-parent" style="width:100%;background:var(--ml-bg-0, #0e111c);color:var(--ml-text);border:1px solid var(--ml-line);border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:6px;">
+                  <option value="">— escolha —</option>
+                  ${parentOptsHtml}
+                </select>
+                <select data-fk-child="${esc(key)}" data-ftype="cascading-child" style="width:100%;background:var(--ml-bg-0, #0e111c);color:var(--ml-text);border:1px solid var(--ml-line);border-radius:8px;padding:8px 10px;font-size:13px;">
+                  <option value="">— (selecione a opção acima primeiro) —</option>
+                </select>
+              </div>`;
+          }
+
+          if(allowed && allowed.length){
+            const isSolutionTypeField = key === _cfSolutionTypeKey && Number(SETTINGS?.CF_SOLUTION_TYPE || 0) > 0;
+            const suggested = isSolutionTypeField ? String(auditSug.resolution_suggestion || '').trim() : '';
+            let matched = false;
+            // Select com valores permitidos
+            const selectOptsHtml = allowed.map(v => {
+              const val = v.id || v.value || '';
+              const lbl = v.name || v.value || v.id || '';
+              const isMatch = !!suggested && _normVal(lbl) === _normVal(suggested);
+              if(isMatch) matched = true;
+              return `<option value="${esc(String(val))}" ${isMatch ? 'selected' : ''}>${esc(String(lbl))}</option>`;
+            }).join('');
+            return `
+              <div style="margin-bottom: 12px;">
+                <label style="display:block;font-size:12px;font-weight:600;color:var(--ml-text-mut, #c1c5d2);margin-bottom:4px;">
+                  ${esc(label)} <span style="color:#fca5a5;">*</span>${matched ? _sugBadge : ''}
                 </label>
                 <select data-fk="${esc(key)}" data-ftype="option" style="width:100%;background:var(--ml-bg-0, #0e111c);color:var(--ml-text);border:1px solid var(--ml-line);border-radius:8px;padding:8px 10px;font-size:13px;">
                   <option value="">— escolha —</option>
-                  ${opts}
+                  ${selectOptsHtml}
                 </select>
               </div>`;
           }
@@ -5308,7 +5355,19 @@
               </div>`;
           }
 
-          // Generico: text
+          // Generico: text — vira textarea + pre-preenchido quando bate com o campo "Solution"
+          // configurado (CF_SOLUTION_TEXT), que costuma ser um texto tecnico mais longo.
+          const isSolutionTextField = key === _cfSolutionTextKey && Number(SETTINGS?.CF_SOLUTION_TEXT || 0) > 0;
+          const solutionSuggestion = isSolutionTextField ? String(auditSug.solution_text || '').trim() : '';
+          if(isSolutionTextField){
+            return `
+              <div style="margin-bottom: 12px;">
+                <label style="display:block;font-size:12px;font-weight:600;color:var(--ml-text-mut, #c1c5d2);margin-bottom:4px;">
+                  ${esc(label)} <span style="color:#fca5a5;">*</span>${solutionSuggestion ? _sugBadge : ''}
+                </label>
+                <textarea data-fk="${esc(key)}" data-ftype="string" style="width:100%;min-height:90px;background:var(--ml-bg-0, #0e111c);color:var(--ml-text);border:1px solid var(--ml-line);border-radius:8px;padding:8px 10px;font-family:inherit;font-size:13px;resize:vertical;">${esc(solutionSuggestion)}</textarea>
+              </div>`;
+          }
           return `
             <div style="margin-bottom: 12px;">
               <label style="display:block;font-size:12px;font-weight:600;color:var(--ml-text-mut, #c1c5d2);margin-bottom:4px;">
@@ -5355,6 +5414,37 @@
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
 
+        // Cascading selects (Yes/No -> canal dependente, etc.): popula o dropdown filho a
+        // partir do "children" da opcao selecionada no pai, e re-popula sempre que o pai muda.
+        // Se o pai ja veio pre-selecionado (sugestao da auditoria), tenta pre-selecionar o
+        // filho tambem com a sugestao de canal correspondente.
+        otherFields.forEach(([key, meta]) => {
+          const allowed = Array.isArray(meta?.allowedValues) ? meta.allowedValues : null;
+          const isCascading = !!(allowed && allowed.length && allowed.some(v => Array.isArray(v.children)));
+          if(!isCascading) return;
+          const parentSel = modal.querySelector(`[data-fk-parent="${CSS.escape(key)}"]`);
+          const childSel = modal.querySelector(`[data-fk-child="${CSS.escape(key)}"]`);
+          if(!parentSel || !childSel) return;
+
+          const isUserValidationField = key === _cfUserValidationKey && Number(SETTINGS?.CF_USER_VALIDATION || 0) > 0;
+          const suggestedChild = isUserValidationField ? String(auditSug.validated_with_user_channel_suggestion || '').trim() : '';
+
+          const populateChild = (preselectValue) => {
+            const parentOpt = allowed.find(v => String(v.id) === String(parentSel.value));
+            const children = Array.isArray(parentOpt?.children) ? parentOpt.children : [];
+            const preselMatch = preselectValue ? children.find(c => _normVal(c.value || c.name) === _normVal(preselectValue)) : null;
+            childSel.innerHTML = `<option value="">— escolha —</option>` + children.map(c => {
+              const val = c.id || '';
+              const lbl = c.value || c.name || '';
+              const sel = preselMatch && String(preselMatch.id) === String(val) ? 'selected' : '';
+              return `<option value="${esc(String(val))}" ${sel}>${esc(String(lbl))}</option>`;
+            }).join('');
+          };
+
+          parentSel.addEventListener('change', () => populateChild(''));
+          if(parentSel.value) populateChild(suggestedChild); // pai ja pre-selecionado por sugestao
+        });
+
         const close = (val) => { overlay.remove(); resolve(val); };
         overlay.addEventListener('click', (e) => { if(e.target === overlay) close(null); });
         modal.querySelector('#ml_ptf_cancel').onclick = () => close(null);
@@ -5364,6 +5454,19 @@
           const fields = {};
           let valid = true;
           for(const [key, meta] of otherFields){
+            const allowed = Array.isArray(meta?.allowedValues) ? meta.allowedValues : null;
+            const isCascading = !!(allowed && allowed.length && allowed.some(v => Array.isArray(v.children)));
+            if(isCascading){
+              const parentSel = modal.querySelector(`[data-fk-parent="${CSS.escape(key)}"]`);
+              const childSel = modal.querySelector(`[data-fk-child="${CSS.escape(key)}"]`);
+              const parentId = String(parentSel?.value || '').trim();
+              const childId = String(childSel?.value || '').trim();
+              if(!parentId){ valid = false; if(parentSel) parentSel.style.borderColor = '#fca5a5'; continue; }
+              if(parentSel) parentSel.style.borderColor = '';
+              fields[key] = childId ? { id: parentId, child: { id: childId } } : { id: parentId };
+              continue;
+            }
+
             const el = modal.querySelector(`[data-fk="${CSS.escape(key)}"]`);
             if(!el) continue;
             const v = String(el.value || '').trim();
@@ -5578,10 +5681,22 @@
       const commentIsRequired = !!requiredFields?.comment?.required;
 
       if(hasOtherRequired || (commentIsRequired && !defaultComment)){
+        // Sugestoes da auditoria (v1.97.0), se houver uma em cache pra este ticket — usadas so
+        // pra pre-preencher Solution/Resolucao/Validated with the user; nunca aplicadas sem o
+        // analista ver e poder trocar no proprio modal de campos obrigatorios.
+        const cachedAuditForFields = _loadAuditGM(issueKey);
+        const auditSuggestions = cachedAuditForFields ? {
+          solution_text: cachedAuditForFields.solution_text || '',
+          resolution_suggestion: cachedAuditForFields.resolution_suggestion || '',
+          validated_with_user_suggestion: cachedAuditForFields.validated_with_user_suggestion || '',
+          validated_with_user_channel_suggestion: cachedAuditForFields.validated_with_user_channel_suggestion || ''
+        } : null;
+
         const filled = await promptForTransitionFields(requiredFields, {
           me,
           defaultComment,
-          internalComment: isInternal
+          internalComment: isInternal,
+          auditSuggestions
         });
         if(!filled) throw new Error('cancelado');
         extraFields = filled.fields || {};
@@ -6654,6 +6769,12 @@
       const catUserValidation = _readCf('CF_USER_VALIDATION');
       const catSolutionType = _readCf('CF_SOLUTION_TYPE');
       const hasCategoryData = !!(catCategoria || catSubcategoria || catRequestType);
+      // IDs configurados p/ os campos de sugestao de fechamento (usados so pra decidir SE
+      // pedimos essas sugestoes no prompt — o valor atual nao importa aqui, sao campos que o
+      // ticket ainda nao tem preenchido enquanto estiver aberto).
+      const hasSolutionTextField   = Number(SETTINGS.CF_SOLUTION_TEXT   || DEFAULTS.CF_SOLUTION_TEXT   || 0) > 0;
+      const hasSolutionTypeField   = Number(SETTINGS.CF_SOLUTION_TYPE   || DEFAULTS.CF_SOLUTION_TYPE   || 0) > 0;
+      const hasUserValidationField = Number(SETTINGS.CF_USER_VALIDATION || DEFAULTS.CF_USER_VALIDATION || 0) > 0;
 
       // Ticket considerado aberto se nao estiver em status "done"
       const isClosed = statusCatKey === 'done'
@@ -7001,6 +7122,32 @@ RUBRICA DE SCORE:
   Linha final: "Atenciosamente," + nome do responsavel.
   Seja especifico com dados reais (equipamento, serial, acoes). Tom profissional e direto. Sem placeholders.`}
 
+=== SUGESTOES PARA OS CAMPOS OBRIGATORIOS DA TRANSICAO DE RESOLVER (NAO afetam o score) ===
+Estes campos existem na tela de "Resolver" do ticket (fora do JSON de items acima). Diferente do
+"closing_comment" (tom pro CLIENTE, sempre com a instrucao de reabrir o chamado), estes sao
+tecnicos/internos. NUNCA invente informacao que nao esteja no ticket — deixe "" (ou "baixa"
+confianca) sempre que a evidencia for insuficiente. E preferivel deixar em branco pro analista
+preencher manualmente do que sugerir algo errado.
+
+"solution_text": ${(!isClosed && hasSolutionTextField) ? `Escreva um texto TECNICO e DETALHADO (diferente do closing_comment) pro campo "Solution": o diagnostico (causa raiz apurada) + a acao tecnica especifica realizada pra resolver, com termos tecnicos e dados reais (equipamento, serial, comandos/passos executados, sistemas envolvidos). SEM tom voltado ao cliente, SEM a instrucao de "reabrir o chamado" (isso fica so no closing_comment). Baseie-se EXCLUSIVAMENTE no que os comentarios dos analistas ja documentaram. Se a documentacao tecnica no ticket for insuficiente pra compor algo util e especifico, deixe "".` : `Ticket ja fechado ou campo "Solution" nao configurado nas Configuracoes (CF_SOLUTION_TEXT). Deixe "".`}
+
+"resolution_suggestion": ${(!isClosed && hasSolutionTypeField) ? `Sugira UM dos valores exatos abaixo pro campo "Resolucao" (mesma logica ja usada no criterio "Solucao Efetiva" pra cruzar tipo × narrativa — aqui e o inverso: escolher o tipo certo a partir da narrativa):
+  - "Duplicado": ticket e duplicata de outro chamado ja identificado.
+  - "Canceled": solicitacao cancelada/nao e mais necessaria.
+  - "Operational User Error": a solucao foi so orientacao/instrucao ao usuario, sem nenhuma acao de sistema do analista (erro operacional do proprio usuario).
+  - "With technical intervention": exige acao tecnica REAL e documentada (reiniciar servico, instalar driver, trocar peca, configurar algo). So use se essa acao tecnica estiver de fato descrita nos comentarios.
+  - "No technical intervention": resolvido sem acao tecnica do analista (ex: resolveu sozinho, ou a resolucao efetiva veio de outro time/ticket vinculado).
+  - "Caused by planned change": causa raiz foi uma mudanca/manutencao PLANEJADA e documentada.
+  - "Caused by unplanned change": causa raiz foi uma mudanca nao planejada/nao autorizada.
+  Escolha com base SOMENTE no que os comentarios realmente descrevem. Se a narrativa for ambigua ou nao permitir escolher com seguranca entre as opcoes, deixe "" (o analista escolhe manualmente) — NUNCA chute so pra preencher.` : `Ticket ja fechado ou campo nao configurado (CF_SOLUTION_TYPE). Deixe "".`}
+
+"validated_with_user_suggestion": ${(!isClosed && hasUserValidationField) ? `"Yes" SOMENTE se ha evidencia EXPLICITA nos comentarios de que o analista confirmou a resolucao diretamente com o usuario/solicitante (ex: "confirmado com o usuario que...", "usuario validou...", resposta do proprio solicitante concordando). Na duvida, ou se so houve acao tecnica sem nenhuma confirmacao explicita do usuario, responda "No" (default conservador — assumir "Yes" errado e pior que assumir "No" errado). Se genuinamente nao der pra decidir com alguma seguranca, deixe "".` : `Ticket ja fechado ou campo nao configurado (CF_USER_VALIDATION). Deixe "".`}
+
+"validated_with_user_channel_suggestion": ${(!isClosed && hasUserValidationField) ? `SOMENTE se "validated_with_user_suggestion" for "Yes": escolha UM dos valores exatos abaixo pelo canal usado na confirmacao (segundo campo dependente, so existe quando o primeiro e "Yes"):
+  "Acesso remoto / MDM" | "Canales de comunicación Meli" | "Google Meet" | "In loco" | "Whatsapp" | "Jira"
+  (Ex: se a confirmacao foi por uma chamada Meet, use "Google Meet"; se foi por mensagem no Jira/comentario do proprio solicitante, use "Jira"; se foi WhatsApp, use "Whatsapp"; se foi visita presencial, use "In loco"; chat interno da empresa (Google Chat/Slack Meli) use "Canales de comunicación Meli".)
+  Se "validated_with_user_suggestion" for "No" ou "", deixe "".` : `Deixe "".`}
+
 "comment_reviews": Revisao INFORMATIVA dos comentarios dos analistas — NAO afeta o score nem os criterios acima. O objetivo e apenas sugerir melhorias de escrita, nao penalizar.
   Para CADA comentario dos ANALISTAS (nao do relator, nao de bots), avalie individualmente:
   - "id": indice do comentario (0, 1, 2...)
@@ -7014,7 +7161,7 @@ RUBRICA DE SCORE:
   Se nao houver comentarios de analistas, retorne array vazio [].
 
 Formato exato (todo item de "items" e o "title_review" seguem {"check","status","confidence","detail","evidence_quote","suggestion","suggested_text"}):
-{"score":0,"items":[{"check":"Evidencias","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Descricao","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Categoria","status":"skip","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Status Comentado","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Escrita","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Solucao Documentada","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Solucao Efetiva","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Validacao Usuario","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Reclassificacao","status":"skip","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Qualidade Geral","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""}],"summary":"resumo de 1-2 frases do estado geral","closing_comment":"texto","title_review":{"status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},"comment_reviews":[{"id":0,"author":"nome","date":"2026-01-01 10:00","excerpt":"primeiros 80 chars...","status":"warn","issue":"o que esta impreciso","improved":"versao reescrita completa"}]}`;
+{"score":0,"items":[{"check":"Evidencias","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Descricao","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Categoria","status":"skip","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Status Comentado","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Escrita","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Solucao Documentada","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Solucao Efetiva","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Validacao Usuario","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Reclassificacao","status":"skip","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Qualidade Geral","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""}],"summary":"resumo de 1-2 frases do estado geral","closing_comment":"texto","solution_text":"texto","resolution_suggestion":"","validated_with_user_suggestion":"","validated_with_user_channel_suggestion":"","title_review":{"status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},"comment_reviews":[{"id":0,"author":"nome","date":"2026-01-01 10:00","excerpt":"primeiros 80 chars...","status":"warn","issue":"o que esta impreciso","improved":"versao reescrita completa"}]}`;
     }
 
     // Abre o campo de comentario do Jira e preenche com o texto fornecido.
@@ -7111,9 +7258,21 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       if(!webhookUrl) throw new Error('Webhook de auditoria não configurado (Configurações → Auditoria).');
 
       // Busca ticket com changelog + campos relevantes
+      // BUG CORRIGIDO (v1.97.0): so o CF_CHANGED_PRIORITY entrava nesse fetch — os outros
+      // customfields configuraveis (CF_CATEGORY/CF_SUBCATEGORY/CF_REQUEST_TYPE/
+      // CF_USER_VALIDATION/CF_SOLUTION_TYPE/CF_SOLUTION_TEXT) nunca eram baixados aqui, entao
+      // "_readCf" sempre lia undefined pra eles — os criterios "Categoria"/"Validacao Usuario"
+      // e a checagem de consistencia em "Solucao Efetiva" rodavam como se nada estivesse
+      // configurado, mesmo com os IDs certos salvos nas Configuracoes. Agora todo CF_* de
+      // categorizacao com ID > 0 entra dinamicamente na lista de campos buscados.
       const _cpId = Number(SETTINGS.CF_CHANGED_PRIORITY || DEFAULTS.CF_CHANGED_PRIORITY || 0);
+      const _categCfKeys = ['CF_CATEGORY','CF_SUBCATEGORY','CF_REQUEST_TYPE','CF_USER_VALIDATION','CF_SOLUTION_TYPE','CF_SOLUTION_TEXT'];
+      const _categCfIds = _categCfKeys
+        .map(k => Number(SETTINGS[k] || DEFAULTS[k] || 0))
+        .filter(id => id > 0);
+      const _extraCfIds = [...new Set([...(_cpId ? [_cpId] : []), ..._categCfIds])];
       const fields = 'summary,description,priority,status,attachment,comment,issuetype,labels,assignee,reporter'
-        + (_cpId ? `,customfield_${_cpId}` : '');
+        + _extraCfIds.map(id => `,customfield_${id}`).join('');
       const resp = await fetch(
         `${location.origin}/rest/api/3/issue/${encodeURIComponent(issueKey)}?expand=changelog&fields=${fields}`,
         { credentials: 'same-origin', headers: { 'Accept': 'application/json' } }
@@ -9027,6 +9186,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         { key: 'CF_REQUEST_TYPE',    label: 'Tipo de solicitação' },
         { key: 'CF_USER_VALIDATION', label: 'Validação do usuário' },
         { key: 'CF_SOLUTION_TYPE',   label: 'Solução aplicada' },
+        { key: 'CF_SOLUTION_TEXT',   label: 'Solution (texto técnico, distinto de "Solução aplicada")' },
         { key: 'CF_USAGE_MARK',      label: 'Categorias (marcação de uso — texto livre)' },
         { key: 'SLA_FIELD_ID',       label: 'Campo de SLA (ex: "Time to resolution") — Painel do analista' },
       ];
@@ -9099,6 +9259,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             CF_REQUEST_TYPE:    'ml_s_cf_request_type',
             CF_USER_VALIDATION: 'ml_s_cf_user_validation',
             CF_SOLUTION_TYPE:   'ml_s_cf_solution_type',
+            CF_SOLUTION_TEXT:   'ml_s_cf_solution_text',
             CF_USAGE_MARK:      'ml_s_cf_usage_mark',
             SLA_FIELD_ID:       'ml_s_sla_field_id',
           }[role];
@@ -9741,10 +9902,17 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 <div>
                   <label>Valida&ccedil;&atilde;o do usu&aacute;rio (CF ID)</label>
                   <input type="number" id="ml_s_cf_user_validation" value="${Number(cur.CF_USER_VALIDATION)||0}" min="0" />
+                  <div class="hint">Se for um campo em cascata (Yes/No + canal), a auditoria detecta automaticamente e sugere os dois n&iacute;veis ao resolver (v1.97.0).</div>
                 </div>
                 <div>
                   <label>Solu&ccedil;&atilde;o aplicada (CF ID)</label>
                   <input type="number" id="ml_s_cf_solution_type" value="${Number(cur.CF_SOLUTION_TYPE)||0}" min="0" />
+                  <div class="hint">Campo de sele&ccedil;&atilde;o (ex: "With technical intervention"). A auditoria SUGERE um valor ao ir pra uma transi&ccedil;&atilde;o final em "Mudar status" (v1.97.0) — o analista revisa e pode trocar.</div>
+                </div>
+                <div>
+                  <label>Solution &mdash; texto t&eacute;cnico (CF ID)</label>
+                  <input type="number" id="ml_s_cf_solution_text" value="${Number(cur.CF_SOLUTION_TEXT)||0}" min="0" />
+                  <div class="hint">Campo de texto livre "Solution" (diagn&oacute;stico + a&ccedil;&atilde;o t&eacute;cnica), diferente do coment&aacute;rio p&uacute;blico. A auditoria pr&eacute;-preenche com um texto mais t&eacute;cnico ao resolver o ticket.</div>
                 </div>
                 <div>
                   <label>Flag "Changed priority" (CF ID)</label>
@@ -10453,6 +10621,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             CF_REQUEST_TYPE:    Math.max(0, Number(modal.querySelector('#ml_s_cf_request_type')?.value)   || 0),
             CF_USER_VALIDATION: Math.max(0, Number(modal.querySelector('#ml_s_cf_user_validation')?.value)|| 0),
             CF_SOLUTION_TYPE:   Math.max(0, Number(modal.querySelector('#ml_s_cf_solution_type')?.value)  || 0),
+            CF_SOLUTION_TEXT:   Math.max(0, Number(modal.querySelector('#ml_s_cf_solution_text')?.value)  || 0),
             CF_CHANGED_PRIORITY: Math.max(0, Number(modal.querySelector('#ml_s_cf_changed_priority')?.value) || 0),
             CF_CONTACT_PHONE: Math.max(0, Number(modal.querySelector('#ml_s_cf_contact_phone')?.value) || 0),
             WHATSAPP_COUNTRY_CODE: String(modal.querySelector('#ml_s_wa_cc')?.value || '').replace(/\D/g,'') || DEFAULTS.WHATSAPP_COUNTRY_CODE,
