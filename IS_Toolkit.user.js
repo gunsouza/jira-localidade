@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.2
+// @version      2.5.3
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -5463,6 +5463,18 @@
       const _cfSolutionTextKey = `customfield_${Number(SETTINGS?.CF_SOLUTION_TEXT || 0)}`;
       const _cfSolutionTypeKey = `customfield_${Number(SETTINGS?.CF_SOLUTION_TYPE || 0)}`;
       const _cfUserValidationKey = `customfield_${Number(SETTINGS?.CF_USER_VALIDATION || 0)}`;
+      // Listas de valores validos ja conhecidas (v2.0.0) pros 4 campos de categoria/tipo do
+      // Assets/CMDB. Usadas aqui (v2.5.3) como FALLBACK quando um desses campos aparece como
+      // obrigatorio (tipicamente via recovery de um erro 400 — ver runStatusAction) mas a API
+      // nao devolve allowedValues pra ele (comum em campos ligados ao Assets/Insight) — sem
+      // isso o analista cai numa caixa de texto livre sem nenhuma pista do que digitar (achado
+      // no uso real: ticket com "Incident Type" obrigatorio e vazio, formulario so mostrava
+      // um campo de texto em branco).
+      const _knownCategoryOptionsByKey = {};
+      if(Number(SETTINGS?.CF_CATEGORY_INCIDENT || 0))    _knownCategoryOptionsByKey[`customfield_${Number(SETTINGS.CF_CATEGORY_INCIDENT)}`]    = CATEGORY_HARDWARE_INCIDENT_OPTIONS;
+      if(Number(SETTINGS?.CF_CATEGORY_SERVICE || 0))     _knownCategoryOptionsByKey[`customfield_${Number(SETTINGS.CF_CATEGORY_SERVICE)}`]     = CATEGORY_HARDWARE_SERVICE_OPTIONS;
+      if(Number(SETTINGS?.CF_SUBCATEGORY_INCIDENT || 0)) _knownCategoryOptionsByKey[`customfield_${Number(SETTINGS.CF_SUBCATEGORY_INCIDENT)}`] = CATEGORY_TYPE_INCIDENT_OPTIONS;
+      if(Number(SETTINGS?.CF_SUBCATEGORY_SERVICE || 0))  _knownCategoryOptionsByKey[`customfield_${Number(SETTINGS.CF_SUBCATEGORY_SERVICE)}`]  = CATEGORY_TYPE_SERVICE_OPTIONS;
 
       return new Promise((resolve) => {
         const overlay = document.createElement('div');
@@ -5479,7 +5491,14 @@
         const renderField = ([key, meta]) => {
           const label = meta?.name || key;
           const type = meta?.schema?.type || 'string';
-          const allowed = Array.isArray(meta?.allowedValues) ? meta.allowedValues : null;
+          let allowed = Array.isArray(meta?.allowedValues) ? meta.allowedValues : null;
+          // Fallback (v2.5.3): campo de categoria conhecido (Incident/Service Type/Hardware)
+          // sem allowedValues no editmeta -> usa a lista de valores validos ja documentada no
+          // script, em vez de deixar como texto livre (ver _knownCategoryOptionsByKey acima).
+          const isSyntheticCategoryField = (!allowed || !allowed.length) && Array.isArray(_knownCategoryOptionsByKey[key]);
+          if(isSyntheticCategoryField){
+            allowed = _knownCategoryOptionsByKey[key].map(opt => ({ value: opt, name: opt }));
+          }
           // Cascading select (ex: "Validated with the user" Yes/No -> canal dependente):
           // Jira retorna schema.type "option-with-child" e cada allowedValue tem "children".
           const isCascading = !!(allowed && allowed.length && allowed.some(v => Array.isArray(v.children)));
@@ -5522,7 +5541,12 @@
               || (key === _cfSolutionTypeKey && Number(SETTINGS?.CF_SOLUTION_TYPE || 0) > 0);
             const suggested = isSolutionTypeField ? String(auditSug.resolution_suggestion || '').trim() : '';
             let matched = false;
-            // Select com valores permitidos
+            // Select com valores permitidos. Shape do payload (v2.5.3): campos "de verdade" do
+            // Jira quase sempre tem allowedValues com .id (ex: resolution) -> manda {id:...};
+            // campos sinteticos (fallback de categoria acima, sem .id nenhum) -> manda
+            // {value:...}, que e o formato aceito pelos "Select List" do Jira quando so se tem
+            // o texto da opcao, sem o ID numerico real.
+            const usesValueShape = isSyntheticCategoryField || allowed.every(v => v?.id == null);
             const selectOptsHtml = allowed.map(v => {
               const val = v.id || v.value || '';
               const lbl = v.name || v.value || v.id || '';
@@ -5533,9 +5557,9 @@
             return `
               <div style="margin-bottom: 12px;">
                 <label style="display:block;font-size:12px;font-weight:600;color:var(--ml-text-mut, #c1c5d2);margin-bottom:4px;">
-                  ${esc(label)} <span style="color:#fca5a5;">*</span>${matched ? _sugBadge : ''}
+                  ${esc(label)} <span style="color:#fca5a5;">*</span>${matched ? _sugBadge : ''}${isSyntheticCategoryField ? '<span style="font-size:10.5px;font-weight:600;color:#fbbf24;margin-left:6px;">(lista conhecida do script — confira se ainda bate com o Jira)</span>' : ''}
                 </label>
-                <select data-fk="${esc(key)}" data-ftype="option" style="width:100%;background:var(--ml-bg-0, #0e111c);color:var(--ml-text);border:1px solid var(--ml-line);border-radius:8px;padding:8px 10px;font-size:13px;">
+                <select data-fk="${esc(key)}" data-ftype="option" data-shape="${usesValueShape ? 'value' : 'id'}" style="width:100%;background:var(--ml-bg-0, #0e111c);color:var(--ml-text);border:1px solid var(--ml-line);border-radius:8px;padding:8px 10px;font-size:13px;">
                   <option value="">— escolha —</option>
                   ${selectOptsHtml}
                 </select>
@@ -5684,8 +5708,10 @@
 
             const ftype = el.getAttribute('data-ftype');
             if(ftype === 'option'){
-              // Determina se a transicao espera id (mais comum) ou value
-              fields[key] = { id: v };
+              // v2.5.3: usa o shape marcado no render (id = padrao/campos reais do Jira,
+              // value = fallback sintetico de categoria, que so tem o texto da opcao).
+              const shape = el.getAttribute('data-shape') || 'id';
+              fields[key] = shape === 'value' ? { value: v } : { id: v };
             } else if(ftype === 'user'){
               fields[key] = { accountId: v };
             } else {
@@ -6769,6 +6795,18 @@
     // meta } (de /editmeta ou de transitions.fields), comparando por nome normalizado (sem
     // acento, minusculo). Retorna { matched: { fieldKey: meta com required forcado pra true },
     // unresolved: [nomes que nao bateram em nenhum campo conhecido] }.
+    // Apelidos (en/es/pt) de alguns campos de SISTEMA cujo "name" no editmeta vem TRADUZIDO
+    // pro idioma da conta logada (ex: "Assignee" -> "Persona asignada"/"Asignatario" em
+    // contas espanholas) — mas a KEY continua sempre a mesma e universal. Sem isso, o erro
+    // 400 cita o nome em ingles ("Assignee") e a busca por nome nunca bate contra o editmeta
+    // (que devolveu o nome traduzido), entao o campo nunca era recuperado (v2.5.2, achado no
+    // uso real: "Assignee" ficava sempre em "unresolved" mesmo estando presente no editmeta).
+    const _systemFieldAliases = {
+      assignee:   ['assignee', 'asignatario', 'persona asignada', 'asignado a', 'responsavel', 'responsável'],
+      reporter:   ['reporter', 'informador', 'relator'],
+      resolution: ['resolution', 'resolucion', 'resolución', 'resolução'],
+      priority:   ['priority', 'prioridad', 'prioridade'],
+    };
     function _matchFieldsByName(namesList, fieldsMetaObj){
       const norm = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
       const entries = Object.entries(fieldsMetaObj || {});
@@ -6776,6 +6814,17 @@
       const unresolved = [];
       for(const rawName of namesList){
         const target = norm(rawName);
+        // 1) Alias de campo de sistema (bypassa nome traduzido) — so entra em jogo se a key
+        // realmente existir no editmeta deste ticket.
+        const aliasKey = Object.keys(_systemFieldAliases).find(k =>
+          _systemFieldAliases[k].some(a => norm(a) === target) && fieldsMetaObj?.[k]
+        );
+        if(aliasKey){
+          matched[aliasKey] = { ...fieldsMetaObj[aliasKey], required: true };
+          continue;
+        }
+        // 2) Fallback: bate pelo nome exibido — funciona bem pra customfields, cujo nome e
+        // configurado pelo admin e nao muda com o idioma da conta.
         const hit = entries.find(([, meta]) => norm(meta?.name) === target);
         if(hit) matched[hit[0]] = { ...hit[1], required: true };
         else unresolved.push(rawName);
