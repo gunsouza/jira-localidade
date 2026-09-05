@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.21
+// @version      2.5.22
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -13237,10 +13237,25 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           phone = (v && typeof v === 'object') ? (v.value || v.name || '') : (v || '');
         }
         if(!locationKey){
+          // v2.5.22: o GET simples de customfield_${CF_ASSET} (via getIssueFields) devolve so
+          // {workspaceId, id, objectId} pro campo CMDB "IS Ubicacion" - SEM objectKey/label/name
+          // (confirmado via API real: mesmo shape "pelado" ja visto nos bugs de CMDB da v2.5.8/
+          // v2.5.11). Sem esse fallback, objKey nunca era achado aqui, locationKey ficava vazio,
+          // e o WhatsApp caia sempre no WHATSAPP_COUNTRY_CODE fixo (default '55'/Brasil) mesmo
+          // pra localidades de outros paises (achado num ticket real do Mexico: numero saia com
+          // +55 em vez de +52). O renderLocationCard (card de localidade do Home) ja tinha esse
+          // MESMO fallback certo (getAssetName, que consulta a API de Assets/Insight de verdade
+          // e devolve o nome legivel) - só nunca tinha sido replicado aqui.
           const assetRaw = issue?.fields?.[`customfield_${CF_ASSET}`];
           const assetArr = Array.isArray(assetRaw) ? assetRaw : (assetRaw ? [assetRaw] : []);
-          const objKey = assetArr.map(a => a?.objectKey || a?.label || a?.name).filter(Boolean)[0];
-          if(objKey) locationKey = String(objKey);
+          let objKey = assetArr.map(a => a?.objectKey || a?.label || a?.name).filter(Boolean)[0];
+          if(!objKey && assetArr.length){
+            try{ objKey = await getAssetName(assetArr[0]?.workspaceId, assetArr[0]?.objectId); }catch(_){}
+          }
+          if(objKey){
+            locationKey = String(objKey);
+            try{ sessionStorage.setItem('ml_loc_key_' + issueKey, locationKey); }catch(_){}
+          }
         }
       }catch(e){
         // Antes isso era engolido em silencio — se os campos (reporter/summary/description)
