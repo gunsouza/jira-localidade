@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.3
+// @version      2.6.4
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -683,6 +683,15 @@
       // auditoria automaticamente se nao houver uma valida em cache — e usa o "closing_comment"
       // sugerido pela IA pra pre-preencher o comentario. Nunca bloqueia o Aplicar (so informa).
       AUDIT_AUTO_ON_RESOLVE: true,
+      // v2.6.4: usuario reportou que a auditoria demora demais (ja vinha lenta antes da v2.6.3,
+      // entao nao e o prompt maior da Fase 1 — o gargalo real e o tempo de GERACAO do LLM no
+      // workflow externo, fora do nosso controle). "comment_reviews" (reescrever CADA
+      // comentario do analista que levar "warn") e o item do JSON que mais gera texto de saida
+      // por auditoria (potencialmente varios comentarios reescritos por completo) e e so
+      // informativo — nao afeta o score nem os criterios. Default TRUE (pula por padrao,
+      // prioriza velocidade); desligue aqui se quiser as sugestoes de reescrita de comentario
+      // de volta, aceitando que fica mais lento.
+      AUDIT_SKIP_COMMENT_REVIEWS: true,
 
       // ---- Central do Grid (dashboard de arquivos usados pelo time) ----
       // Link fixo pra central de Grid do time. Aparece como atalho na Home do toolkit.
@@ -7768,7 +7777,7 @@
     // oficiais (SLA 15 + Tipificacao 40 + Qualidade 45 = 100), o que exige buscar campos de SLA
     // que hoje a auditoria NAO le (Time to First Response/Resolution — ver SLA_FIELD_ID, hoje so
     // usado pro card "Risco de SLA" do Painel do analista, nunca chega no _buildAuditPrompt).
-    const AUDIT_PROMPT_VERSION = '1.55.0';
+    const AUDIT_PROMPT_VERSION = '1.55.1';
 
     // Monta o prompt que sera enviado para a IA via webhook
     function _buildAuditPrompt(data, alreadyFixed){
@@ -7831,6 +7840,10 @@
       // nenhum customfield configurado (v1.99.0).
       const hasSolutionTypeField   = true;
       const hasUserValidationField = Number(SETTINGS.CF_USER_VALIDATION || DEFAULTS.CF_USER_VALIDATION || 0) > 0;
+      // v2.6.4: ver comentario em DEFAULTS.AUDIT_SKIP_COMMENT_REVIEWS — desligado por padrao
+      // pra reduzir o tempo de geracao do LLM (reescrever cada comentario com "warn" e o item
+      // que mais gera texto de saida, e e so informativo).
+      const skipCommentReviews = SETTINGS.AUDIT_SKIP_COMMENT_REVIEWS !== false;
 
       // Ticket considerado aberto se nao estiver em status "done"
       const isClosed = statusCatKey === 'done'
@@ -8231,7 +8244,9 @@ ${hasCategoryData ? `Com base na causa raiz REAL discutida nos comentarios (nao 
   "subcategory_suggestion": UM valor EXATO da lista de subcategorias validas acima (${subcategoryOptions.slice(0,3).join(', ')}, ...) — o tipo de problema real, conforme apurado.
   Preencha os dois SOMENTE se a categoria/subcategoria atual do ticket estiver incoerente com o que foi apurado (mesmo criterio de warn/error do item 3 acima) E houver evidencia real suficiente nos comentarios pra escolher com seguranca um valor exato da lista. Se a categoria atual ja estiver coerente (ok), ou se nao houver evidencia suficiente pra escolher com seguranca, deixe AMBOS "" — nunca force uma sugestao so pra preencher, e NUNCA escolha um valor fora das listas informadas.` : `Campos de categoria nao configurados. Deixe ambos "".`}
 
-"comment_reviews": Revisao INFORMATIVA dos comentarios dos analistas — NAO afeta o score nem os criterios acima. O objetivo e apenas sugerir melhorias de escrita, nao penalizar.
+"comment_reviews": ${skipCommentReviews
+  ? `Recurso DESLIGADO nesta auditoria (SETTINGS.AUDIT_SKIP_COMMENT_REVIEWS, prioriza velocidade — e so informativo, nao afeta score). NAO gere review de nenhum comentario. Retorne sempre array vazio [].`
+  : `Revisao INFORMATIVA dos comentarios dos analistas — NAO afeta o score nem os criterios acima. O objetivo e apenas sugerir melhorias de escrita, nao penalizar.
   Para CADA comentario dos ANALISTAS (nao do relator, nao de bots), avalie individualmente:
   - "id": indice do comentario (0, 1, 2...)
   - "author": nome do autor
@@ -8241,7 +8256,7 @@ ${hasCategoryData ? `Com base na causa raiz REAL discutida nos comentarios (nao 
   - "issue": se "warn", descreva em 1 frase o que poderia ser melhorado (clareza, precisao, tom, completude). Se "ok", deixe "".
   - "improved": se "warn", reescreva o comentario de forma mais clara, precisa e profissional — mantendo o conteudo original mas melhorando a forma. Se "ok", deixe "".
   Inclua apenas comentarios com "warn" (que tem sugestao de melhoria). Se todos estiverem bons, retorne array vazio [].
-  Se nao houver comentarios de analistas, retorne array vazio [].
+  Se nao houver comentarios de analistas, retorne array vazio [].`}
 
 Formato exato (todo item de "items" e o "title_review" seguem {"check","status","confidence","detail","evidence_quote","suggestion","suggested_text"}):
 {"score":0,"items":[{"check":"Evidencias","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Descricao","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Categoria","status":"skip","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Status Comentado","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Escrita","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Solucao Documentada","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Solucao Efetiva","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Validacao Usuario","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Reclassificacao","status":"skip","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},{"check":"Qualidade Geral","status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""}],"summary":"resumo de 1-2 frases do estado geral","closing_comment":"texto","solution_text":"texto","resolution_suggestion":"","validated_with_user_suggestion":"","validated_with_user_channel_suggestion":"","category_suggestion":"","subcategory_suggestion":"","title_review":{"status":"ok","confidence":"alta","detail":"texto","evidence_quote":"","suggestion":"","suggested_text":""},"comment_reviews":[{"id":0,"author":"nome","date":"2026-01-01 10:00","excerpt":"primeiros 80 chars...","status":"warn","issue":"o que esta impreciso","improved":"versao reescrita completa"}]}`;
@@ -8374,24 +8389,28 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const fixedChecks = _auditFixedChecks.get(issueKey);
       const prompt = _buildAuditPrompt(data, fixedChecks ? [...fixedChecks] : []);
 
-      // Busca ate 3 anexos de imagem e codifica como base64
+      // Busca ate 3 anexos de imagem e codifica como base64.
+      // v2.6.4: paralelizado (Promise.all) — antes era um for..of sequencial, cada imagem
+      // esperando a anterior terminar (fetch + blob + FileReader) antes de comecar a proxima.
+      // Nao resolve a demora principal (essa e do lado do webhook/LLM), mas tira uns segundos
+      // desnecessarios do caminho critico quando o ticket tem 2-3 imagens.
       const imgAttachments = (data.fields?.attachment || [])
         .filter(a => /\.(jpg|jpeg|png|gif|webp)$/i.test(a.filename))
         .slice(0, 3);
-      const images = [];
-      for(const att of imgAttachments){
+      const imageResults = await Promise.all(imgAttachments.map(async att => {
         try{
           const ir = await fetch(att.content, { credentials: 'same-origin' });
-          if(!ir.ok) continue;
+          if(!ir.ok) return null;
           const blob = await ir.blob();
           const base64 = await new Promise(res => {
             const reader = new FileReader();
             reader.onloadend = () => res(reader.result.split(',')[1]);
             reader.readAsDataURL(blob);
           });
-          images.push({ filename: att.filename, base64, mimeType: blob.type || 'image/jpeg' });
-        }catch(e){}
-      }
+          return { filename: att.filename, base64, mimeType: blob.type || 'image/jpeg' };
+        }catch(e){ return null; }
+      }));
+      const images = imageResults.filter(Boolean);
 
       // Envia para o webhook n8n via GM_xmlhttpRequest (bypassa CORS) com retry em 503/502/504
       // e tambem em timeout puro (cold start do n8n, rede lenta etc. — antes so tentava de novo
@@ -10949,6 +10968,10 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <label class="checkbox"><input type="checkbox" id="ml_s_audit_auto_resolve" ${cur.AUDIT_AUTO_ON_RESOLVE !== false ? 'checked' : ''} /> Auditar automaticamente ao ir para uma transi&ccedil;&atilde;o final (Resolve/Close/etc.)</label>
                   <div class="hint">Em "Mudar status", ao selecionar uma transi&ccedil;&atilde;o de encerramento sem auditoria em cache (ou desatualizada), roda a auditoria sozinha e usa a sugest&atilde;o de fechamento da IA pra pr&eacute;-preencher o coment&aacute;rio. Nunca impede de aplicar a transi&ccedil;&atilde;o, mesmo com pend&ecirc;ncias.</div>
                 </div>
+                <div class="full">
+                  <label class="checkbox"><input type="checkbox" id="ml_s_audit_skip_comment_reviews" ${cur.AUDIT_SKIP_COMMENT_REVIEWS !== false ? 'checked' : ''} /> Pular sugest&otilde;es de reescrita de coment&aacute;rio (mais r&aacute;pido)</label>
+                  <div class="hint">"Coment&aacute;rios revisados" reescreve cada coment&aacute;rio do analista que a IA achar melhor&aacute;vel — &eacute; s&oacute; informativo (n&atilde;o afeta a pontua&ccedil;&atilde;o) e costuma ser a parte que mais gera texto na resposta da IA, ou seja, a que mais pesa no tempo de espera. Marcado (padr&atilde;o): pula essa parte, auditoria roda mais r&aacute;pido. Desmarque se preferir ter essas sugest&otilde;es de volta, mesmo demorando mais.</div>
+                </div>
               </div>
             </div>
 
@@ -11837,6 +11860,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             // Integracoes
             AUDIT_WEBHOOK_URL: String(modal.querySelector('#ml_s_audit_webhook')?.value || '').trim(),
             AUDIT_AUTO_ON_RESOLVE: !!modal.querySelector('#ml_s_audit_auto_resolve')?.checked,
+            AUDIT_SKIP_COMMENT_REVIEWS: !!modal.querySelector('#ml_s_audit_skip_comment_reviews')?.checked,
             GRID_CENTRAL_URL: String(modal.querySelector('#ml_s_grid_url')?.value || '').trim(),
             AUDIT_PENDING_JQL: String(modal.querySelector('#ml_s_audit_pending_jql')?.value || '').replace(/\r\n/g,'\n').trim(),
             SLA_FIELD_ID:      Math.max(0, Number(modal.querySelector('#ml_s_sla_field_id')?.value) || 0),
