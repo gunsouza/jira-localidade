@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.16
+// @version      2.6.17
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -35,6 +35,45 @@
     // separada, senao vira mais uma coisa pra lembrar de atualizar a cada bump (like o resto do
     // fluxo de versionamento do projeto ja exige).
     const APP_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '?';
+
+    // =========================
+    // "O QUE HA DE NOVO" (v2.6.17)
+    // Toast leve, mostrado uma UNICA vez por versao nova instalada (o auto-update via
+    // jsDelivr troca o codigo sozinho, sem o analista pedir) — sem isso, funcionalidades
+    // novas (ex: os tokens {reporter}/{firstname} liberados em mais templates na v2.6.14)
+    // ficavam invisiveis pro resto do time, que so ficava sabendo se perguntasse. Mapa
+    // curado manualmente a cada release (bullets curtos, foco no que muda o dia a dia —
+    // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
+    // =========================
+    const WHATS_NEW = {
+      '2.6.17': [
+        'Painel administrativo: corrigido nome de analista aparecendo como accountId cru na tabela por pessoa.',
+        'Tradução automática mais resiliente: cache local (menos dependência do tradutor a cada uso) + aviso na tela quando a tradução do WhatsApp falha.'
+      ],
+      '2.6.16': [
+        'Duplicados, Derivar e Gerenciador de fila agora também traduzem pro idioma da conta (antes só a Home traduzia).'
+      ],
+      '2.6.14': [
+        'Tokens {reporter}/{firstname}/{summary}/{description} liberados também em "Assumir ticket", Mudar Status e Derivar (antes só no WhatsApp) — com legenda explicando cada um em Configurações.'
+      ]
+    };
+    const _WHATS_NEW_SEEN_KEY = 'ml_whats_new_seen_version';
+    function _maybeShowWhatsNew(){
+      try{
+        const seen = _gmGet(_WHATS_NEW_SEEN_KEY);
+        if(seen === APP_VERSION) return; // ja mostrou pra essa versao
+        _gmSet(_WHATS_NEW_SEEN_KEY, APP_VERSION);
+        if(seen === null || seen === undefined) return; // instalacao nova — sem "novidade" pra mostrar
+        const versions = Object.keys(WHATS_NEW); // mais recente primeiro (ordem de insercao)
+        const idxSeen = versions.indexOf(String(seen));
+        const relevant = idxSeen === -1 ? versions.slice(0, 1) : versions.slice(0, idxSeen);
+        const bullets = relevant.flatMap(v => WHATS_NEW[v] || []);
+        if(!bullets.length) return;
+        const msg = `<b>IS Toolkit atualizado para v${esc(APP_VERSION)}</b> — novidades:<br>` +
+          bullets.map(b => `&bull; ${esc(b)}`).join('<br>');
+        showToast(msg, 'info', 0); // duration 0 = fica ate o analista fechar (ler com calma)
+      }catch(e){ console.warn('[IS Toolkit][whats-new] falha ao verificar novidades:', e); }
+    }
 
     // =========================
     // MODO WHATSAPP WEB
@@ -2761,8 +2800,16 @@
 
       const isAccountId = s => /^[0-9a-f]{24}$/i.test(s) || s.includes(':');
       const members = [];
+      // v2.6.17: bug real reportado pelo usuario — a tabela "por pessoa" do Painel
+      // administrativo mostrava o proprio accountId (ex: "712020:34841585-ccf0-...") em vez
+      // do nome da pessoa. Causa: quando a entrada de RANKING_INCLUDE ja vinha como accountId
+      // (o caso normal, desde que a lista foi hardcodada na v2.6.12), o codigo abaixo usava o
+      // ACCOUNTID CRU como "displayName" (`{ accountId: entry, displayName: entry }`), sem
+      // nunca resolver o nome de verdade via API. So passava batido antes porque
+      // RANKING_INCLUDE ficou vazio ate a v2.6.12 — esse caminho quase nunca rodava.
+      const accountIdEntries = [];
       for(const entry of list){
-        if(isAccountId(entry)){ members.push({ accountId: entry, displayName: entry }); continue; }
+        if(isAccountId(entry)){ accountIdEntries.push(entry); continue; }
         try{
           const url = `${location.origin}/rest/api/3/user/search?query=${encodeURIComponent(entry)}&maxResults=1`;
           const r = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
@@ -2772,6 +2819,32 @@
         }catch(e){
           console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: falha resolvendo "${entry}":`, e);
         }
+      }
+      // Resolve o displayName real de cada accountId via GET /rest/api/3/user?accountId=...,
+      // em paralelo (pool pequeno pra nao martelar a API com ~27 requests de uma vez).
+      if(accountIdEntries.length){
+        const CONCURRENCY = 6;
+        let idx = 0;
+        async function worker(){
+          while(idx < accountIdEntries.length){
+            const accountId = accountIdEntries[idx++];
+            let displayName = accountId; // fallback: se a API falhar, ao menos nao quebra a tela
+            try{
+              const url = `${location.origin}/rest/api/3/user?accountId=${encodeURIComponent(accountId)}`;
+              const r = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+              if(r.ok){
+                const d = await r.json();
+                displayName = d?.displayName || accountId;
+              } else {
+                console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: HTTP ${r.status} ao resolver nome de "${accountId}" — mostrando accountId cru.`);
+              }
+            }catch(e){
+              console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: erro ao resolver nome de "${accountId}":`, e);
+            }
+            members.push({ accountId, displayName });
+          }
+        }
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, accountIdEntries.length) }, worker));
       }
       _rankingIncludeCache = { key: cacheKey, ts: Date.now(), members };
       return members;
@@ -14212,12 +14285,54 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       return out;
     }
 
+    // v2.6.17: cache local de traducoes bem-sucedidas (chave = idioma + texto ORIGINAL, antes
+    // de proteger placeholders) — resiliencia em duas frentes contra o endpoint nao-oficial
+    // do Google Translate (sem SLA, ja causou 3 bugs reais nesta sessao: v2.6.11/13/15):
+    // (1) texto identico traduzido antes nao precisa de request novo (templates/snippets
+    // fixos repetem MUITO); (2) se a chamada ao vivo falhar bem na hora, um texto que ja foi
+    // traduzido com sucesso alguma vez ainda funciona como fallback, mesmo com o cache "velho"
+    // (ver uso mais abaixo). Persistido via GM storage (mesmo mecanismo de Configuracoes).
+    const _TRANSLATE_CACHE_KEY = 'ml_translate_cache_v1';
+    const _TRANSLATE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias — templates mudam pouco
+    const _TRANSLATE_CACHE_MAX_ENTRIES = 300; // poda as mais antigas alem disso, pra nao crescer sem parar
+    function _translateCacheKey(text, lang){ return `${lang}::${text}`; }
+    function _translateCacheRead(){
+      try{ const raw = _gmGet(_TRANSLATE_CACHE_KEY); return raw ? JSON.parse(raw) : {}; }catch(_){ return {}; }
+    }
+    function _translateCacheGet(text, lang, opts){
+      try{
+        const cache = _translateCacheRead();
+        const entry = cache[_translateCacheKey(text, lang)];
+        if(!entry) return null;
+        if(opts?.ignoreTtl) return entry.translated;
+        if((Date.now() - entry.ts) < _TRANSLATE_CACHE_TTL_MS) return entry.translated;
+      }catch(_){}
+      return null;
+    }
+    function _translateCacheSet(text, lang, translated){
+      try{
+        const cache = _translateCacheRead();
+        cache[_translateCacheKey(text, lang)] = { translated, ts: Date.now() };
+        const keys = Object.keys(cache);
+        if(keys.length > _TRANSLATE_CACHE_MAX_ENTRIES){
+          keys.sort((a, b) => (cache[a]?.ts || 0) - (cache[b]?.ts || 0));
+          for(const k of keys.slice(0, keys.length - _TRANSLATE_CACHE_MAX_ENTRIES)) delete cache[k];
+        }
+        _gmSet(_TRANSLATE_CACHE_KEY, JSON.stringify(cache));
+      }catch(_){}
+    }
+
     async function _autoTranslateForTicket(text, opts){
       const clean = String(text || '');
       if(!clean.trim()) return { text: clean, translated: false, lang: '' };
+      const lang = _langForTranslation(opts);
       try{
-        const lang = _langForTranslation(opts);
         if(lang && lang !== SNIPPETS_AUTHOR_LANG){
+          // Cache primeiro — texto identico + mesmo idioma ja traduzido antes nao precisa de
+          // um novo request (a maioria dos templates/snippets sao fixos e se repetem muito).
+          const cached = _translateCacheGet(clean, lang);
+          if(cached) return { text: cached, translated: true, lang };
+
           const { protectedText, map } = _protectPlaceholders(clean);
           let translated = await translateText(protectedText, lang);
           if(!translated){
@@ -14232,13 +14347,30 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             await new Promise(r => setTimeout(r, 700));
             translated = await translateText(protectedText, lang);
           }
-          if(translated) return { text: _restorePlaceholders(translated, map), translated: true, lang };
+          if(translated){
+            const restored = _restorePlaceholders(translated, map);
+            _translateCacheSet(clean, lang, restored);
+            return { text: restored, translated: true, lang };
+          }
           console.warn(`[IS Toolkit][translate] nao foi possivel traduzir pro idioma "${lang}" depois de 2 tentativas — usando texto original sem traduzir.`);
+          // v2.6.17: ultimo recurso antes de desistir — se esse MESMO texto ja foi traduzido
+          // com sucesso alguma vez (mesmo que o cache tenha "vencido", 30 dias e' bastante
+          // tempo mas aceitamos aqui como fallback de emergencia), usa a traducao antiga em
+          // vez de mandar o texto original (idioma errado) pro cliente.
+          const stale = _translateCacheGet(clean, lang, { ignoreTtl: true });
+          if(stale){
+            console.warn(`[IS Toolkit][translate] usando traducao em cache (pode estar desatualizada) como fallback de emergencia pro idioma "${lang}".`);
+            return { text: stale, translated: true, lang };
+          }
         }
       }catch(e){
         console.warn('[IS Toolkit][translate] erro inesperado em _autoTranslateForTicket:', e);
       }
-      return { text: clean, translated: false, lang: '' };
+      // v2.6.17: antes retornava lang:'' aqui mesmo quando um idioma FOI detectado (so' a
+      // traducao em si que falhou) — isso impedia o chamador (_waOpen) de diferenciar "nenhum
+      // idioma detectado" de "detectou mas nao traduziu", pra poder avisar o analista soh no
+      // segundo caso. Agora devolve o `lang` detectado mesmo na falha.
+      return { text: clean, translated: false, lang };
     }
 
     // Preenche `ta` com `text` IMEDIATAMENTE (sem atraso perceptivel — a traducao e' assincrona
@@ -14361,10 +14493,15 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         // (locationKey sem prefixo de pais reconhecido) ou se foi detectado certo mas a chamada
         // de traducao falhou (ver logs "[IS Toolkit][translate]" acima, no translateText).
         console.log(`[IS Toolkit][wa] locationKey="${locationKey}" -> traduziu=${didTranslateWa} idioma=${waLang || '(nenhum detectado)'}`);
+        const langNames = { es: 'espanhol', en: 'inglês', pt: 'português' };
         if(didTranslateWa){
           tmplRaw = translatedTmpl;
-          const langNames = { es: 'espanhol', en: 'inglês', pt: 'português' };
           showToast(`Mensagem de WhatsApp traduzida automaticamente para ${langNames[waLang] || waLang} — revise antes de enviar.`, 'info', 5000);
+        } else if(waLang && waLang !== SNIPPETS_AUTHOR_LANG){
+          // v2.6.17: antes essa falha so' aparecia no console (F12) — o analista podia mandar
+          // a mensagem em portugues pro cliente de outro pais sem nem saber que a traducao
+          // automatica tinha falhado. Agora avisa na tela tambem.
+          showToast(`Não foi possível traduzir automaticamente para ${langNames[waLang] || waLang} — mensagem seguirá em português, revise antes de enviar.`, 'warn', 6000);
         }
       }catch(_){}
       const tmpl = _applyMyNamePlaceholder(tmplRaw, me);
@@ -14435,8 +14572,13 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
     }
 
     let _setupWizardShown = false;
+    // v2.6.17: guarda em memoria (uma vez por carregamento de pagina) pra nao repetir a
+    // checagem a cada tick — a checagem em si (GM storage) ja e' idempotente por versao, mas
+    // nao ha motivo pra rodar toda hora enquanto a mesma pagina fica aberta.
+    let _whatsNewChecked = false;
 
     const _tick = () => {
+      if(!_whatsNewChecked){ _whatsNewChecked = true; try{ _maybeShowWhatsNew(); }catch(_){} }
       try{ if(typeof _arEnsureButton === 'function') _arEnsureButton(); }catch(_){}
       try{ if(typeof _aiEnsureToggle === 'function') _aiEnsureToggle(); }catch(_){}
       // Modal minimizado em pagina/ticket diferente de onde foi minimizado (navegacao via SPA
