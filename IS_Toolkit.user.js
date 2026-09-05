@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.10
+// @version      2.6.11
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -13762,15 +13762,28 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             timeout: 8000,
             onload(resp){
               try{
+                // v2.6.11: antes so' tentava parsear e engolia QUALQUER problema em silencio —
+                // sem log nem do status HTTP. O endpoint publico do Google Translate (sem chave)
+                // pode responder com status != 200 (rate limit/bloqueio) e o catch(_) escondia
+                // isso completamente, tornando impossivel diagnosticar por que uma traducao
+                // especifica nao saiu (bug real reportado: WhatsApp de ticket do Mexico saiu em
+                // pt-BR). Agora loga status+trecho da resposta quando algo foge do esperado.
+                if(resp.status < 200 || resp.status >= 300){
+                  console.warn(`[IS Toolkit][translate] HTTP ${resp.status} da API de traducao — resposta: ${String(resp.responseText || '').slice(0,200)}`);
+                  resolve(null); return;
+                }
                 const data = JSON.parse(resp.responseText);
                 const translated = (data?.[0] || []).map(seg => seg?.[0] || '').join('');
                 resolve(translated || null);
-              }catch(_){ resolve(null); }
+              }catch(e){
+                console.warn('[IS Toolkit][translate] resposta inesperada/nao-JSON da API de traducao:', e, String(resp?.responseText || '').slice(0,200));
+                resolve(null);
+              }
             },
-            onerror(){ resolve(null); },
-            ontimeout(){ resolve(null); }
+            onerror(e){ console.warn('[IS Toolkit][translate] falha de rede na chamada de traducao:', e); resolve(null); },
+            ontimeout(){ console.warn('[IS Toolkit][translate] timeout (8s) na chamada de traducao.'); resolve(null); }
           });
-        }catch(_){ resolve(null); }
+        }catch(e){ console.warn('[IS Toolkit][translate] excecao ao montar a chamada de traducao:', e); resolve(null); }
       });
     }
 
@@ -13805,10 +13818,25 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       try{
         const lang = _langForTranslation(opts);
         if(lang && lang !== SNIPPETS_AUTHOR_LANG){
-          const translated = await translateText(clean, lang);
+          let translated = await translateText(clean, lang);
+          if(!translated){
+            // v2.6.11: bug real reportado pelo usuario — mensagem do WhatsApp saiu em pt-BR
+            // pra um ticket do Mexico mesmo com o DDI (+52) certo, ou seja, o idioma FOI
+            // detectado certo (mesmo mapa de prefixo usado pro DDI), mas a traducao em si nao
+            // saiu. O endpoint publico do Google Translate usado aqui (sem chave, nao-oficial)
+            // nao tem SLA e falha/demora as vezes sem motivo aparente — antes isso caia pro
+            // texto original em silencio total (nem log). Fix: 1 retry curto (cobre a maioria
+            // das falhas transitorias) + log no console pra dar pra diagnosticar se acontecer
+            // de novo (F12 -> Console, procurar "[IS Toolkit][translate]").
+            await new Promise(r => setTimeout(r, 700));
+            translated = await translateText(clean, lang);
+          }
           if(translated) return { text: translated, translated: true, lang };
+          console.warn(`[IS Toolkit][translate] nao foi possivel traduzir pro idioma "${lang}" depois de 2 tentativas — usando texto original sem traduzir.`);
         }
-      }catch(_){}
+      }catch(e){
+        console.warn('[IS Toolkit][translate] erro inesperado em _autoTranslateForTicket:', e);
+      }
       return { text: clean, translated: false, lang: '' };
     }
 
@@ -13927,6 +13955,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       try{
         const { text: translatedTmpl, translated: didTranslateWa, lang: waLang } =
           await _autoTranslateForTicket(tmplRaw, { locationKey });
+        // v2.6.11: log leve (sempre, sucesso ou nao) pra diagnosticar caso a traducao nao saia —
+        // sem isso era impossivel saber, so' pelo resultado final, se o idioma nem foi detectado
+        // (locationKey sem prefixo de pais reconhecido) ou se foi detectado certo mas a chamada
+        // de traducao falhou (ver logs "[IS Toolkit][translate]" acima, no translateText).
+        console.log(`[IS Toolkit][wa] locationKey="${locationKey}" -> traduziu=${didTranslateWa} idioma=${waLang || '(nenhum detectado)'}`);
         if(didTranslateWa){
           tmplRaw = translatedTmpl;
           const langNames = { es: 'espanhol', en: 'inglês', pt: 'português' };
