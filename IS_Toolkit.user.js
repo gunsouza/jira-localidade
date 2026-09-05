@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.18
+// @version      2.5.19
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -6149,15 +6149,39 @@
               }
               return v;
             };
+            // v2.5.19: customfield_11100 ("Request Type" do JSM) nunca apareceu na tela nativa
+            // "Resolve" em NENHUM dos varios testes reais feitos ao longo dessa investigacao (so
+            // apareceram Incident type, IS Ubicacion, Responsavel, Resolucao, Validated with the
+            // user, Provider, Solution) — ele so e' citado no texto ESTATICO do erro 400, que
+            // sempre lista os mesmos 6 nomes independente do que realmente falta (fato
+            // documentado desde a v2.5.11). Alem disso, seu shape de GET e' de um campo de
+            // sistema do JSM (schema "sd-customerrequesttype": {requestType:{id, serviceDeskId,
+            // ...}, currentStatus:{...}, _links:{...}}), tipicamente IMUTAVEL apos a criacao do
+            // ticket via essa API. Ja tentamos 2 formatos de escrita as cegas — v2.5.17 (achatar
+            // por schema.type==='string') e v2.5.18 ("serviceDeskId/requestTypeId") — e os dois
+            // deram o MESMO erro de novo, byte a byte. Em vez de adivinhar um 3o formato, paramos
+            // de tentar ESCREVER esse campo: se ele nao aparecer nos campos REAIS da propria tela
+            // dessa transicao (_allTransitionFields, mesma fonte usada pro "Validated with the
+            // user"), tratamos como campo que nunca precisou ser tocado — fica de fora do
+            // payload (nem autoFilled, nem stillMissing). Hipotese: a API so reclama dele porque
+            // ele estava presente no payload (por termos tentado reenvia-lo), nao porque falta de
+            // verdade.
+            const _isRequestTypeShapedField = (v) => !!(v && typeof v === 'object' && v.requestType && v.requestType.id);
             const autoFilled = {};
             const stillMissing = {};
             const needsManualEdit = [];
+            const skippedRequestType = [];
             const cmdbSetOk = []; // v2.5.11: nomes dos campos CMDB setados com sucesso via PUT dedicado (fora do payload da transicao)
             for(const [k, meta] of Object.entries(newlyMatched)){
               if(k === _cfUserValidationKeyRS){
                 const cur = currentValues[k];
                 if(_hasValue(cur) && !_looksLikeNoneValidation(cur)){ autoFilled[k] = cur; continue; }
                 stillMissing[k] = meta;
+                continue;
+              }
+              if(_isRequestTypeShapedField(currentValues[k]) && !_allTransitionFields?.[k]){
+                skippedRequestType.push(meta?.name || k);
+                log(`recovery: pulando "${meta?.name || k}" — parece o campo de sistema "Request Type" do JSM, nunca apareceu na tela nativa dessa transicao, e 2 formatos de escrita ja falharam (v2.5.17/v2.5.18). Deixando de fora do payload.`);
                 continue;
               }
               if(_isCmdbObjectField(k)){
@@ -6188,6 +6212,9 @@
             }
             if(Object.keys(autoFilled).length){
               log(`recovery: ${Object.keys(autoFilled).length} campo(s) ja tinham valor no ticket (${Object.keys(autoFilled).join(', ')}) — reenviando sem perguntar`);
+            }
+            if(skippedRequestType.length){
+              log(`recovery: ${skippedRequestType.length} campo(s) tipo "Request Type" (JSM) deixados de fora do payload (${skippedRequestType.join(', ')}) — nao deveriam ser bloqueio real`);
             }
 
             if(needsManualEdit.length){
