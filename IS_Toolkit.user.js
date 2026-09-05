@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.14
+// @version      2.5.15
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -6038,6 +6038,24 @@
             log(`recovery: nao encontrei automaticamente no editmeta: ${unresolved.join(', ')}`);
           }
 
+          // v2.5.15: "Validated with the user" (CF_USER_VALIDATION) e um campo que essa tela
+          // exige de verdade (confirmado num teste real: aparecia obrigatorio e vazio na tela
+          // nativa do Jira) mas o Jira NUNCA cita pelo nome no texto do erro 400 (a lista fixa
+          // de campos citados so tem Incident Type/Assignee/Resolution/Solution/IS Ubicacion/
+          // Request Type) — por isso o mecanismo de recovery, que so descobre campos citados no
+          // erro, nunca tentava preenche-lo, mesmo ja tendo suporte pronto (cascading select com
+          // sugestao da auditoria, ver isUserValidationField em promptForTransitionFields).
+          // Inclui ele aqui de forma proativa, independente do texto do erro, sempre que
+          // configurado e presente no editmeta deste ticket.
+          const _cfUserValidationKeyRS = `customfield_${Number(SETTINGS?.CF_USER_VALIDATION || 0)}`;
+          if(Number(SETTINGS?.CF_USER_VALIDATION || 0) > 0
+             && editMetaFields?.[_cfUserValidationKeyRS]
+             && !(_cfUserValidationKeyRS in extraFields)
+             && !newlyMatched[_cfUserValidationKeyRS]){
+            newlyMatched[_cfUserValidationKeyRS] = { ...editMetaFields[_cfUserValidationKeyRS], required: true };
+            log('recovery: incluindo "Validated with the user" de forma proativa (nunca citado no erro, mas exigido pela tela)');
+          }
+
           if(Object.keys(newlyMatched).length){
             log(`recovery: achou ${Object.keys(newlyMatched).length} campo(s) extra(s) via editmeta (${Object.keys(newlyMatched).join(', ')})`);
 
@@ -6056,11 +6074,27 @@
               console.warn('[IS Toolkit][recovery] falha ao ler valores atuais dos campos extras:', valErr);
             }
             const _hasValue = (v) => Array.isArray(v) ? v.length > 0 : (v != null && v !== '' && !(typeof v === 'object' && !Object.keys(v).length));
+            // v2.5.15: "Validated with the user" as vezes JA tem um valor selecionado ("Nenhum"/
+            // "None"/"Ninguno") que TECNICAMENTE conta como "tem valor" pro GET — mas o validador
+            // do workflow nao aceita isso como resposta valida (precisa validar de verdade, com
+            // canal). Sem esse tratamento especial, o round-trip generico reenviaria "Nenhum" de
+            // volta sem perguntar (like ja tinha valor), e a transicao continuaria falhando sem
+            // nenhum sinal de que esse era o campo real ainda faltando.
+            const _looksLikeNoneValidation = (v) => {
+              const label = String(v?.value || v?.name || '').trim().toLowerCase();
+              return !label || label === 'nenhum' || label === 'none' || label === 'ninguno';
+            };
             const autoFilled = {};
             const stillMissing = {};
             const needsManualEdit = [];
             const cmdbSetOk = []; // v2.5.11: nomes dos campos CMDB setados com sucesso via PUT dedicado (fora do payload da transicao)
             for(const [k, meta] of Object.entries(newlyMatched)){
+              if(k === _cfUserValidationKeyRS){
+                const cur = currentValues[k];
+                if(_hasValue(cur) && !_looksLikeNoneValidation(cur)){ autoFilled[k] = cur; continue; }
+                stillMissing[k] = meta;
+                continue;
+              }
               if(_isCmdbObjectField(k)){
                 // v2.5.11: tenta a forma documentada oficialmente pela Atlassian (PUT dedicado
                 // em /issue/{key}, fora de /transitions — ver _cmdbFieldToUpdateSetShape) ANTES
