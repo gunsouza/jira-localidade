@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.15
+// @version      2.5.16
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -5791,6 +5791,20 @@
       return out;
     }
 
+    // v2.5.16: variante de getRequiredFieldsOfTransition que devolve TODOS os campos da tela
+    // dessa transicao (?expand=transitions.fields), nao so os marcados "required" pelo schema —
+    // usada quando um campo e exigido pelo VALIDADOR do workflow (nao pelo schema em si, entao
+    // nunca aparece com required:true aqui) mas mesmo assim esta presente na tela, com
+    // allowedValues reais. Isso cobre campos "screen-scoped" que tambem nao aparecem no
+    // /editmeta geral do ticket (mesma lacuna ja vista em "Solution" e nos campos do Assets/
+    // CMDB) — MAS que, por estarem na propria tela desta transicao, ainda dao pra achar aqui,
+    // sem precisar sintetizar allowedValues (que seria arriscado pra campos do tipo select).
+    function getAllFieldsOfTransition(trData, transitionId){
+      const list = trData?.transitions || [];
+      const t = list.find(x => String(x.id) === String(transitionId));
+      return t?.fields || {};
+    }
+
     // Modal pra escolher transicao quando a configurada nao existe naquele ticket.
     // Aparece como FALLBACK do menu "Mudar status" (acao com transicao invalida).
     // Retorna Promise<{ id, name } | null>. null = usuario cancelou.
@@ -6038,22 +6052,33 @@
             log(`recovery: nao encontrei automaticamente no editmeta: ${unresolved.join(', ')}`);
           }
 
-          // v2.5.15: "Validated with the user" (CF_USER_VALIDATION) e um campo que essa tela
+          // v2.5.15/16: "Validated with the user" (CF_USER_VALIDATION) e um campo que essa tela
           // exige de verdade (confirmado num teste real: aparecia obrigatorio e vazio na tela
           // nativa do Jira) mas o Jira NUNCA cita pelo nome no texto do erro 400 (a lista fixa
           // de campos citados so tem Incident Type/Assignee/Resolution/Solution/IS Ubicacion/
           // Request Type) — por isso o mecanismo de recovery, que so descobre campos citados no
           // erro, nunca tentava preenche-lo, mesmo ja tendo suporte pronto (cascading select com
           // sugestao da auditoria, ver isUserValidationField em promptForTransitionFields).
-          // Inclui ele aqui de forma proativa, independente do texto do erro, sempre que
-          // configurado e presente no editmeta deste ticket.
+          // Inclui ele aqui de forma proativa, independente do texto do erro.
+          //
+          // v2.5.16: a v2.5.15 buscava esse campo no /editmeta GERAL do ticket
+          // (getIssueEditMeta) — testado num ticket real e continuou sem efeito nenhum, porque
+          // esse campo (assim como "Solution" antes dele) e SCREEN-SCOPED: so aparece nos campos
+          // da PROPRIA tela dessa transicao (?expand=transitions.fields), nao no editmeta geral.
+          // Trocado pra buscar em getAllFieldsOfTransition(trData, chosenTransition.id) — os
+          // mesmos dados brutos ja carregados no inicio da funcao, sem precisar sintetizar
+          // allowedValues (arriscado pra um campo do tipo select/cascading).
           const _cfUserValidationKeyRS = `customfield_${Number(SETTINGS?.CF_USER_VALIDATION || 0)}`;
+          const _allTransitionFields = getAllFieldsOfTransition(trData, chosenTransition.id);
+          const _userValidationMeta = _allTransitionFields?.[_cfUserValidationKeyRS] || editMetaFields?.[_cfUserValidationKeyRS];
           if(Number(SETTINGS?.CF_USER_VALIDATION || 0) > 0
-             && editMetaFields?.[_cfUserValidationKeyRS]
+             && _userValidationMeta
              && !(_cfUserValidationKeyRS in extraFields)
              && !newlyMatched[_cfUserValidationKeyRS]){
-            newlyMatched[_cfUserValidationKeyRS] = { ...editMetaFields[_cfUserValidationKeyRS], required: true };
+            newlyMatched[_cfUserValidationKeyRS] = { ..._userValidationMeta, required: true };
             log('recovery: incluindo "Validated with the user" de forma proativa (nunca citado no erro, mas exigido pela tela)');
+          } else if(Number(SETTINGS?.CF_USER_VALIDATION || 0) > 0 && !_userValidationMeta){
+            log('recovery: "Validated with the user" configurado mas nao achado nem nos campos da transicao nem no editmeta — nao vou conseguir montar o dropdown com opcoes reais.');
           }
 
           if(Object.keys(newlyMatched).length){
