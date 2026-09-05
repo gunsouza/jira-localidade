@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.15
+// @version      2.6.16
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -165,7 +165,83 @@
         home_audit_webhook_missing_btn: 'Webhook não configurado',
         home_audit_btn_reanalyze: 'Reanalisar',
         home_audit_btn_analyze: 'Auditar',
-        grid_central: 'Central Natis'
+        grid_central: 'Central Natis',
+        // --- Derivar (modal) ---
+        derive_title: 'Derivar para outro time',
+        derive_subtitle: 'Selecione o time e confirme.',
+        derive_close: 'Fechar',
+        derive_teams_label: 'Times',
+        derive_comment_label: 'Comentário (observação interna)',
+        derive_placeholders_label: 'Placeholders:',
+        derive_iss_checkbox: 'Também criar tarefa de troubleshooting (ISS)',
+        derive_iss_hint: 'Cria uma Tarefa no projeto {project} com você como responsável, copia a descrição e a localidade, e a vincula a este ticket.',
+        derive_cancel: 'Cancelar',
+        derive_submit: 'Derivar',
+        derive_suggested_suffix: '  (sugerido)',
+        derive_select_team_warn: 'Selecione um time antes de derivar.',
+        derive_deriving: 'Derivando...',
+        derive_deriving_iss: 'Derivando + criando ISS...',
+        derive_error_prefix: 'Erro ao derivar: ',
+        // --- Duplicados (modal) ---
+        dup_count_total: 'Total',
+        dup_count_withmatch: 'Com match',
+        dup_count_strong: 'Match forte',
+        dup_count_iponly: 'Só IP',
+        dup_count_cache: 'Cache: on',
+        dup_back: 'Voltar',
+        dup_open_search: 'Abrir busca no Jira',
+        dup_hint: 'Clique em um ID para filtrar. Clique no card para selecionar. Use "Detalhes" para ver a descrição completa, a localidade e mudar a prioridade (individual ou em "Prioridade selecionados"). IDs marcados com ✎ foram digitados manualmente.',
+        dup_current_desc_title: 'Descrição do ticket atual ({key})',
+        dup_no_desc: '(sem descrição)',
+        dup_no_desc_card: 'sem descrição',
+        dup_manual_input_placeholder: 'ID não detectado? Digite serial/MAC/IP aqui',
+        dup_manual_add: '+ Adicionar ID',
+        dup_manual_clear: 'Limpar manuais',
+        dup_manual_remove_title: 'Remover',
+        dup_no_ids_detected: 'Nenhum ID detectado no ticket atual.',
+        dup_manual_tag: 'Digitado manualmente',
+        dup_auto_tag: 'Detectado automaticamente',
+        dup_no_tickets_found: 'Nenhum ticket ({projects}) encontrado nos vinculados para este asset.',
+        dup_btn_comment: 'Obs interna',
+        dup_btn_link: 'Vincular duplicado',
+        dup_btn_linkclose: 'Vincular + Fechar',
+        dup_btn_prio: 'Prioridade selecionados',
+        dup_btn_batch: 'Derivar selecionados',
+        dup_details_btn: 'Detalhes',
+        dup_no_common_ids: 'sem IDs em comum',
+        dup_strong_badge: 'forte',
+        // --- Gerenciador de fila (modal) ---
+        batch_title: 'Gerenciador de fila',
+        batch_settings_title: 'Configurações',
+        batch_close: 'Fechar',
+        batch_how_it_works: 'Como funciona',
+        batch_step1: '{source}: <b>{count}</b> chamado(s) (todos <b>desmarcados</b> por segurança).',
+        batch_step2: 'Use o filtro pra achar e <b>marque</b> os chamados que quer processar (ou "Marcar todos").',
+        batch_step3: 'Escolha a ação (Derivar para time X / com ISS) e clique "Executar".',
+        batch_step4: 'Ou clique "Auditar selecionados" pra rodar a auditoria por IA nos marcados sem derivar nada (precisa do Webhook de auditoria configurado).',
+        batch_step5: 'Clique "Detalhes" num chamado pra ver a descrição completa e mudar a prioridade individualmente, ou marque vários e use "Prioridade selecionados" pra aplicar a mesma prioridade em todos de uma vez.',
+        batch_redetect_title: 'Re-detectar da página',
+        batch_clear_title: 'Limpar lista',
+        batch_count_suffix: 'chamado(s)',
+        batch_loading: 'carregando...',
+        batch_filter_placeholder: 'Filtrar…',
+        batch_check_all: 'Marcar todos',
+        batch_uncheck_all: 'Desmarcar',
+        batch_teams_label: 'Derivar para',
+        batch_teams_loading: 'Carregando times...',
+        batch_teams_override_hint: 'Time global desativado — você definiu times por ticket na coluna <b>"Derivar para"</b>. Limpe os overrides (↩ usar time global) para reativar.',
+        batch_comment_label: 'Comentário (observação interna)',
+        batch_placeholders_hint: 'O mesmo texto vale pra todos os tickets selecionados — os placeholders são resolvidos por ticket: <code>{key}</code>, <code>{reporter}</code>, <code>{firstname}</code>, <code>{summary}</code>, <code>{description}</code>, <code>{meu_nome}</code>.',
+        batch_iss_checkbox: 'Também criar tarefa ISS para cada chamado',
+        batch_iss_hint_title: 'Só ativa quando o time selecionado está em ISS_TASK_TRIGGER_TEAMS (Configurações). Cada chamado vira 1 ISS.',
+        batch_cancel: 'Cancelar',
+        batch_prio_run: 'Prioridade selecionados',
+        batch_prio_run_title: 'Aplica uma prioridade escolhida a todos os chamados marcados (campo Prioridade direto, sem transição).',
+        batch_audit_run: 'Auditar selecionados',
+        batch_audit_run_title: 'Roda a auditoria por IA em cada chamado marcado — não deriva, só analisa e salva o resultado.',
+        batch_run: 'Executar',
+        batch_source_context: 'Recebido do contexto anterior',
+        batch_source_auto: 'Detectado automaticamente da página'
       },
       es: {
         home_search_toggle: 'Buscar otro ticket',
@@ -188,7 +264,83 @@
         home_audit_webhook_missing_btn: 'Webhook no configurado',
         home_audit_btn_reanalyze: 'Reanalizar',
         home_audit_btn_analyze: 'Auditar',
-        grid_central: 'Central Natis'
+        grid_central: 'Central Natis',
+        // --- Derivar (modal) ---
+        derive_title: 'Derivar a otro equipo',
+        derive_subtitle: 'Seleccione el equipo y confirme.',
+        derive_close: 'Cerrar',
+        derive_teams_label: 'Equipos',
+        derive_comment_label: 'Comentario (observación interna)',
+        derive_placeholders_label: 'Placeholders:',
+        derive_iss_checkbox: 'También crear tarea de troubleshooting (ISS)',
+        derive_iss_hint: 'Crea una Tarea en el proyecto {project} con usted como responsable, copia la descripción y la localidad, y la vincula a este ticket.',
+        derive_cancel: 'Cancelar',
+        derive_submit: 'Derivar',
+        derive_suggested_suffix: '  (sugerido)',
+        derive_select_team_warn: 'Seleccione un equipo antes de derivar.',
+        derive_deriving: 'Derivando...',
+        derive_deriving_iss: 'Derivando + creando ISS...',
+        derive_error_prefix: 'Error al derivar: ',
+        // --- Duplicados (modal) ---
+        dup_count_total: 'Total',
+        dup_count_withmatch: 'Con coincidencia',
+        dup_count_strong: 'Coincidencia fuerte',
+        dup_count_iponly: 'Solo IP',
+        dup_count_cache: 'Cache: on',
+        dup_back: 'Volver',
+        dup_open_search: 'Abrir búsqueda en Jira',
+        dup_hint: 'Haga clic en un ID para filtrar. Haga clic en la tarjeta para seleccionar. Use "Detalles" para ver la descripción completa, la localidad y cambiar la prioridad (individual o en "Prioridad seleccionados"). Los IDs marcados con ✎ fueron ingresados manualmente.',
+        dup_current_desc_title: 'Descripción del ticket actual ({key})',
+        dup_no_desc: '(sin descripción)',
+        dup_no_desc_card: 'sin descripción',
+        dup_manual_input_placeholder: '¿ID no detectado? Escriba serial/MAC/IP aquí',
+        dup_manual_add: '+ Agregar ID',
+        dup_manual_clear: 'Limpiar manuales',
+        dup_manual_remove_title: 'Eliminar',
+        dup_no_ids_detected: 'Ningún ID detectado en el ticket actual.',
+        dup_manual_tag: 'Ingresado manualmente',
+        dup_auto_tag: 'Detectado automáticamente',
+        dup_no_tickets_found: 'Ningún ticket ({projects}) encontrado en los vinculados para este asset.',
+        dup_btn_comment: 'Obs. interna',
+        dup_btn_link: 'Vincular duplicado',
+        dup_btn_linkclose: 'Vincular + Cerrar',
+        dup_btn_prio: 'Prioridad seleccionados',
+        dup_btn_batch: 'Derivar seleccionados',
+        dup_details_btn: 'Detalles',
+        dup_no_common_ids: 'sin IDs en común',
+        dup_strong_badge: 'fuerte',
+        // --- Gerenciador de fila (modal) ---
+        batch_title: 'Gestor de cola',
+        batch_settings_title: 'Configuración',
+        batch_close: 'Cerrar',
+        batch_how_it_works: 'Cómo funciona',
+        batch_step1: '{source}: <b>{count}</b> ticket(s) (todos <b>desmarcados</b> por seguridad).',
+        batch_step2: 'Use el filtro para encontrar y <b>marque</b> los tickets que quiere procesar (o "Marcar todos").',
+        batch_step3: 'Elija la acción (Derivar al equipo X / con ISS) y haga clic en "Ejecutar".',
+        batch_step4: 'O haga clic en "Auditar seleccionados" para correr la auditoría por IA en los marcados sin derivar nada (necesita el Webhook de auditoría configurado).',
+        batch_step5: 'Haga clic en "Detalles" en un ticket para ver la descripción completa y cambiar la prioridad individualmente, o marque varios y use "Prioridad seleccionados" para aplicar la misma prioridad a todos de una vez.',
+        batch_redetect_title: 'Volver a detectar desde la página',
+        batch_clear_title: 'Limpiar lista',
+        batch_count_suffix: 'ticket(s)',
+        batch_loading: 'cargando...',
+        batch_filter_placeholder: 'Filtrar…',
+        batch_check_all: 'Marcar todos',
+        batch_uncheck_all: 'Desmarcar',
+        batch_teams_label: 'Derivar a',
+        batch_teams_loading: 'Cargando equipos...',
+        batch_teams_override_hint: 'Equipo global desactivado — usted definió equipos por ticket en la columna <b>"Derivar a"</b>. Limpie los overrides (↩ usar equipo global) para reactivar.',
+        batch_comment_label: 'Comentario (observación interna)',
+        batch_placeholders_hint: 'El mismo texto vale para todos los tickets seleccionados — los placeholders se resuelven por ticket: <code>{key}</code>, <code>{reporter}</code>, <code>{firstname}</code>, <code>{summary}</code>, <code>{description}</code>, <code>{meu_nome}</code>.',
+        batch_iss_checkbox: 'También crear tarea ISS para cada ticket',
+        batch_iss_hint_title: 'Solo se activa cuando el equipo seleccionado está en ISS_TASK_TRIGGER_TEAMS (Configuración). Cada ticket se convierte en 1 ISS.',
+        batch_cancel: 'Cancelar',
+        batch_prio_run: 'Prioridad seleccionados',
+        batch_prio_run_title: 'Aplica una prioridad elegida a todos los tickets marcados (campo Prioridad directo, sin transición).',
+        batch_audit_run: 'Auditar seleccionados',
+        batch_audit_run_title: 'Corre la auditoría por IA en cada ticket marcado — no deriva, solo analiza y guarda el resultado.',
+        batch_run: 'Ejecutar',
+        batch_source_context: 'Recibido del contexto anterior',
+        batch_source_auto: 'Detectado automáticamente de la página'
       },
       en: {
         home_search_toggle: 'Search another ticket',
@@ -211,7 +363,83 @@
         home_audit_webhook_missing_btn: 'Webhook not configured',
         home_audit_btn_reanalyze: 'Re-analyze',
         home_audit_btn_analyze: 'Audit',
-        grid_central: 'Central Natis'
+        grid_central: 'Central Natis',
+        // --- Derive (modal) ---
+        derive_title: 'Derive to another team',
+        derive_subtitle: 'Select the team and confirm.',
+        derive_close: 'Close',
+        derive_teams_label: 'Teams',
+        derive_comment_label: 'Comment (internal note)',
+        derive_placeholders_label: 'Placeholders:',
+        derive_iss_checkbox: 'Also create a troubleshooting task (ISS)',
+        derive_iss_hint: 'Creates a Task in project {project} with you as assignee, copies the description and location, and links it to this ticket.',
+        derive_cancel: 'Cancel',
+        derive_submit: 'Derive',
+        derive_suggested_suffix: '  (suggested)',
+        derive_select_team_warn: 'Select a team before deriving.',
+        derive_deriving: 'Deriving...',
+        derive_deriving_iss: 'Deriving + creating ISS...',
+        derive_error_prefix: 'Error deriving: ',
+        // --- Duplicates (modal) ---
+        dup_count_total: 'Total',
+        dup_count_withmatch: 'With match',
+        dup_count_strong: 'Strong match',
+        dup_count_iponly: 'IP only',
+        dup_count_cache: 'Cache: on',
+        dup_back: 'Back',
+        dup_open_search: 'Open search in Jira',
+        dup_hint: 'Click an ID to filter. Click the card to select it. Use "Details" to see the full description, the location, and change the priority (individually or via "Selected priority"). IDs marked with ✎ were typed manually.',
+        dup_current_desc_title: 'Current ticket description ({key})',
+        dup_no_desc: '(no description)',
+        dup_no_desc_card: 'no description',
+        dup_manual_input_placeholder: "ID not detected? Type serial/MAC/IP here",
+        dup_manual_add: '+ Add ID',
+        dup_manual_clear: 'Clear manual',
+        dup_manual_remove_title: 'Remove',
+        dup_no_ids_detected: 'No ID detected in the current ticket.',
+        dup_manual_tag: 'Manually entered',
+        dup_auto_tag: 'Automatically detected',
+        dup_no_tickets_found: 'No ticket ({projects}) found among the linked ones for this asset.',
+        dup_btn_comment: 'Internal note',
+        dup_btn_link: 'Link duplicate',
+        dup_btn_linkclose: 'Link + Close',
+        dup_btn_prio: 'Selected priority',
+        dup_btn_batch: 'Derive selected',
+        dup_details_btn: 'Details',
+        dup_no_common_ids: 'no common IDs',
+        dup_strong_badge: 'strong',
+        // --- Queue manager (modal) ---
+        batch_title: 'Queue manager',
+        batch_settings_title: 'Settings',
+        batch_close: 'Close',
+        batch_how_it_works: 'How it works',
+        batch_step1: '{source}: <b>{count}</b> ticket(s) (all <b>unchecked</b> by default).',
+        batch_step2: 'Use the filter to find and <b>check</b> the tickets you want to process (or "Check all").',
+        batch_step3: 'Choose the action (Derive to team X / with ISS) and click "Run".',
+        batch_step4: 'Or click "Audit selected" to run the AI audit on the checked tickets without deriving anything (needs the audit Webhook configured).',
+        batch_step5: 'Click "Details" on a ticket to see the full description and change the priority individually, or check several and use "Selected priority" to apply the same priority to all at once.',
+        batch_redetect_title: 'Re-detect from the page',
+        batch_clear_title: 'Clear list',
+        batch_count_suffix: 'ticket(s)',
+        batch_loading: 'loading...',
+        batch_filter_placeholder: 'Filter…',
+        batch_check_all: 'Check all',
+        batch_uncheck_all: 'Uncheck',
+        batch_teams_label: 'Derive to',
+        batch_teams_loading: 'Loading teams...',
+        batch_teams_override_hint: 'Global team disabled — you set teams per ticket in the <b>"Derive to"</b> column. Clear the overrides (↩ use global team) to re-enable.',
+        batch_comment_label: 'Comment (internal note)',
+        batch_placeholders_hint: 'The same text applies to all selected tickets — placeholders are resolved per ticket: <code>{key}</code>, <code>{reporter}</code>, <code>{firstname}</code>, <code>{summary}</code>, <code>{description}</code>, <code>{meu_nome}</code>.',
+        batch_iss_checkbox: 'Also create an ISS task for each ticket',
+        batch_iss_hint_title: 'Only enabled when the selected team is in ISS_TASK_TRIGGER_TEAMS (Settings). Each ticket becomes 1 ISS.',
+        batch_cancel: 'Cancel',
+        batch_prio_run: 'Selected priority',
+        batch_prio_run_title: 'Applies a chosen priority to all checked tickets (direct Priority field, no transition).',
+        batch_audit_run: 'Audit selected',
+        batch_audit_run_title: 'Runs the AI audit on each checked ticket — does not derive, only analyzes and saves the result.',
+        batch_run: 'Run',
+        batch_source_context: 'Received from previous context',
+        batch_source_auto: 'Automatically detected from the page'
       }
     };
 
@@ -3268,38 +3496,38 @@
       modal.innerHTML = `
         <div class="dh">
           <div>
-            <div class="title">Derivar para outro time</div>
-            <div class="meta">Selecione o time e confirme.</div>
+            <div class="title">${t('derive_title')}</div>
+            <div class="meta">${t('derive_subtitle')}</div>
           </div>
           <div style="display:flex;gap:8px">
-            <button id="ml_d_close" class="btnSecondary">Fechar</button>
+            <button id="ml_d_close" class="btnSecondary">${t('derive_close')}</button>
           </div>
         </div>
         <div class="db">
-          <div style="font-weight:900;margin-bottom:6px">Times</div>
+          <div style="font-weight:900;margin-bottom:6px">${t('derive_teams_label')}</div>
           <div class="teamgrid" id="ml_d_teams"></div>
 
           <div style="font-weight:900;margin:12px 0 6px;display:flex;gap:8px;align-items:baseline;">
-            <span>Coment&aacute;rio (observa&ccedil;&atilde;o interna)</span>
+            <span>${t('derive_comment_label')}</span>
             <span id="ml_d_comment_btnwrap" style="margin-left:auto;font-weight:400;"></span>
           </div>
           <textarea id="ml_d_comment">${esc(DERIVE_COMMENT_DEFAULT)}</textarea>
           <div style="font-size:10.5px;color:var(--ml-text-mut);margin:4px 0 0;line-height:1.5;">
-            Placeholders: <code>{key}</code>, <code>{reporter}</code>, <code>{firstname}</code>, <code>{summary}</code>, <code>{description}</code>, <code>{meu_nome}</code>.
+            ${t('derive_placeholders_label')} <code>{key}</code>, <code>{reporter}</code>, <code>{firstname}</code>, <code>{summary}</code>, <code>{description}</code>, <code>{meu_nome}</code>.
           </div>
 
           <div id="ml_d_iss_wrap" class="issWrap" style="display:none;">
             <label class="issLabel">
               <input type="checkbox" id="ml_d_iss" />
-              <span><b>Tambem criar tarefa de troubleshooting (ISS)</b><br/>
-              <span class="issHint">Cria uma Tarefa no projeto ${esc(ISS_TASK_PROJECT)} com voce como respons&aacute;vel, copia a descri&ccedil;&atilde;o e a localidade, e a vincula a este ticket.</span></span>
+              <span><b>${t('derive_iss_checkbox')}</b><br/>
+              <span class="issHint">${t('derive_iss_hint', { project: ISS_TASK_PROJECT })}</span></span>
             </label>
 
           </div>
 
           <div class="row">
-            <button id="ml_d_cancel" class="btnSecondary">Cancelar</button>
-            <button id="ml_d_submit" class="btnPrimary">Derivar</button>
+            <button id="ml_d_cancel" class="btnSecondary">${t('derive_cancel')}</button>
+            <button id="ml_d_submit" class="btnPrimary">${t('derive_submit')}</button>
           </div>
         </div>
       `;
@@ -3324,17 +3552,20 @@
         }
       };
 
-      teams.forEach(t => {
+      // v2.6.16: renomeado de "t" pra "tm" (time) — "t" e' o nome global da funcao de
+      // traducao (t(key)); usar "t" aqui como parametro do forEach a sombreava dentro deste
+      // escopo, quebrando qualquer chamada a t(...) dentro do loop.
+      teams.forEach(tm => {
         const b = document.createElement('button');
         b.className = 'teambtn';
-        const isSuggested = !!(suggestedTeamValue && t.value === suggestedTeamValue);
-        b.textContent = t.value + (isSuggested ? '  (sugerido)' : '');
+        const isSuggested = !!(suggestedTeamValue && tm.value === suggestedTeamValue);
+        b.textContent = tm.value + (isSuggested ? t('derive_suggested_suffix') : '');
         if(isSuggested){
           b.style.borderColor = 'var(--ml-blue, #4f8cff)';
           b.style.boxShadow = '0 0 0 2px rgba(79,140,255,0.18) inset';
         }
         b.onclick = () => {
-          selected = t;
+          selected = tm;
           [...teamsWrap.querySelectorAll('.teambtn')].forEach(x => x.classList.remove('active'));
           b.classList.add('active');
           refreshIssVisibility();
@@ -3343,7 +3574,7 @@
 
         // Auto-seleciona o sugerido (se houver)
         if(isSuggested && !selected){
-          selected = t;
+          selected = tm;
           b.classList.add('active');
           // pequeno delay pra garantir que o issWrap exista
           setTimeout(refreshIssVisibility, 0);
@@ -3376,7 +3607,7 @@
 
       modal.querySelector('#ml_d_submit').addEventListener('click', async () => {
         if(!selected){
-          showToast('Selecione um time antes de derivar.','warn',3000);
+          showToast(t('derive_select_team_warn'),'warn',3000);
           return;
         }
         const comment = modal.querySelector('#ml_d_comment').value || DERIVE_COMMENT_DEFAULT;
@@ -3386,12 +3617,12 @@
         // ISS duplicadas em alguns cenarios). Mostra loading state no botao.
         const btn = modal.querySelector('#ml_d_submit');
         const btnCancel = modal.querySelector('#ml_d_cancel');
-        const originalLabel = btn?.textContent || 'Derivar';
+        const originalLabel = btn?.textContent || t('derive_submit');
         if(btn){
           btn.disabled = true;
           btn.style.opacity = '.7';
           btn.style.cursor = 'not-allowed';
-          btn.textContent = createIssTask ? 'Derivando + criando ISS...' : 'Derivando...';
+          btn.textContent = createIssTask ? t('derive_deriving_iss') : t('derive_deriving');
         }
         showToast(_pickFun('derive'), 'info', 3500);
         if(btnCancel){
@@ -3423,7 +3654,7 @@
           }
           if(overlayEl) overlayEl.style.pointerEvents = '';
           console.error('[jira-localidade][derive] erro no submit:', e);
-          showToast('Erro ao derivar: ' + (e.message || e),'error',5000);
+          showToast(t('derive_error_prefix') + (e.message || e),'error',5000);
         }
       });
 
@@ -12540,16 +12771,16 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
       const badges = [
         score ? `<span class="badge dup">${esc(dupLabel)}</span>` : '',
-        strongMatch ? `<span class="badge strong">forte</span>` : '',
+        strongMatch ? `<span class="badge strong">${t('dup_strong_badge')}</span>` : '',
         ipOnlyMatch ? `<span class="badge ip">ip</span>` : '',
         `<span class="badge">${esc(resTeam)}</span>`,
         `<span class="badge prioBadge" title="Prioridade">${priorityIcon ? `<img src="${esc(priorityIcon)}" alt="" style="width:12px;height:12px;vertical-align:middle;margin-right:3px;" />` : ''}${esc(priorityName)}</span>`,
-        `<button class="detailsBtn" data-details="1" title="Ver detalhes">Detalhes</button>`
+        `<button class="detailsBtn" data-details="1" title="${esc(t('dup_details_btn'))}">${esc(t('dup_details_btn'))}</button>`
       ].filter(Boolean).join('');
 
       const idsHtml = hitVals.length
         ? hitVals.slice(0, 8).map(v => `<span class="idpill">${esc(v)}</span>`).join('')
-        : `<span class="muted">sem IDs em comum</span>`;
+        : `<span class="muted">${esc(t('dup_no_common_ids'))}</span>`;
 
       const fullEsc = esc(item.descText || '');
 
@@ -12575,7 +12806,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             <div class="badges">${badges}</div>
           </div>
           <div class="line2">
-            <div class="desc">${preview ? esc(preview) : '<span class="muted">sem descrição</span>'}</div>
+            <div class="desc">${preview ? esc(preview) : `<span class="muted">${esc(t('dup_no_desc_card'))}</span>`}</div>
             <div class="ids">${idsHtml}</div>
           </div>
         </div>
@@ -12632,7 +12863,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       allKeys = allKeys.filter(k => PROJECTS.includes(k.split('-')[0])).filter(k => k !== issueKey);
 
       if(!allKeys.length){
-        modal.setBody(`<div class="warn">Nenhum ticket (${PROJECTS.join('/')}) encontrado nos vinculados para este asset.</div>`);
+        modal.setBody(`<div class="warn">${esc(t('dup_no_tickets_found', { projects: PROJECTS.join('/') }))}</div>`);
         return;
       }
 
@@ -12663,8 +12894,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const counts = computeCounts(items);
 
       const chipsHtml = currentIds.length
-        ? currentIds.slice(0, 12).map(it => `<span class="chip${it.manual ? ' manual' : ''}" data-chip="${esc(it.value)}" title="${it.manual ? 'Digitado manualmente' : 'Detectado automaticamente'}">${esc(it.value)}${it.manual ? ' ✎' : ''}</span>`).join('')
-        : `<span class="muted">Nenhum ID detectado no ticket atual.</span>`;
+        ? currentIds.slice(0, 12).map(it => `<span class="chip${it.manual ? ' manual' : ''}" data-chip="${esc(it.value)}" title="${it.manual ? esc(t('dup_manual_tag')) : esc(t('dup_auto_tag'))}">${esc(it.value)}${it.manual ? ' ✎' : ''}</span>`).join('')
+        : `<span class="muted">${esc(t('dup_no_ids_detected'))}</span>`;
 
       // Descricao do ticket atual (contexto pra quem esta revisando os candidatos a duplicado
       // sem precisar alternar de aba) + campo pra digitar manualmente um identificador que o
@@ -12672,19 +12903,19 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       // a extracao nao cobre). Ao adicionar, refaz a tela inteira com esse ID mesclado nos
       // detectados automaticamente, recalculando o match contra todos os candidatos.
       const manualChipsHtml = manualIdsRaw.length
-        ? manualIdsRaw.map((raw, i) => `<span class="chip manual" data-manual-remove="${i}" title="Remover">${esc(raw)} ✕</span>`).join('')
+        ? manualIdsRaw.map((raw, i) => `<span class="chip manual" data-manual-remove="${i}" title="${esc(t('dup_manual_remove_title'))}">${esc(raw)} ✕</span>`).join('')
         : '';
       const currentBox = `
         <div class="dupCurrentBox" style="margin-bottom:10px;">
           <details open>
-            <summary style="cursor:pointer;font-weight:700;">Descrição do ticket atual (${esc(issueKey)})</summary>
+            <summary style="cursor:pointer;font-weight:700;">${esc(t('dup_current_desc_title', { key: issueKey }))}</summary>
             ${serialValCurrent ? `<div class="meta" style="margin-top:6px;"><b>Serial Number:</b> ${esc(serialValCurrent)}</div>` : ''}
-            <div class="meta" style="white-space:pre-wrap;margin-top:6px;">${esc(descCurrent) || '<span class="muted">(sem descrição)</span>'}</div>
+            <div class="meta" style="white-space:pre-wrap;margin-top:6px;">${esc(descCurrent) || `<span class="muted">${esc(t('dup_no_desc'))}</span>`}</div>
           </details>
           <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">
-            <input type="text" id="ml_dup_manual_id" placeholder="ID nao detectado? Digite serial/MAC/IP aqui" style="flex:1;min-width:220px;background:var(--ml-bg-0);color:var(--ml-text);border:1px solid var(--ml-border-2);border-radius:var(--ml-radius-sm);padding:6px 10px;font-size:12.5px;" />
-            <button id="ml_dup_manual_add" class="btnSecondary">+ Adicionar ID</button>
-            ${manualIdsRaw.length ? `<button id="ml_dup_manual_clear" class="ghost">Limpar manuais</button>` : ''}
+            <input type="text" id="ml_dup_manual_id" placeholder="${esc(t('dup_manual_input_placeholder'))}" style="flex:1;min-width:220px;background:var(--ml-bg-0);color:var(--ml-text);border:1px solid var(--ml-border-2);border-radius:var(--ml-radius-sm);padding:6px 10px;font-size:12.5px;" />
+            <button id="ml_dup_manual_add" class="btnSecondary">${esc(t('dup_manual_add'))}</button>
+            ${manualIdsRaw.length ? `<button id="ml_dup_manual_clear" class="ghost">${esc(t('dup_manual_clear'))}</button>` : ''}
           </div>
           ${manualChipsHtml ? `<div class="chips" style="margin-top:8px;">${manualChipsHtml}</div>` : ''}
         </div>
@@ -12694,23 +12925,23 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         <div class="topbar">
           <div class="toprow">
             <div class="counts">
-              <span class="countpill">Total: <b>${counts.total}</b></span>
-              <span class="countpill">Com match: <b>${counts.withMatch}</b></span>
-              <span class="countpill">Match forte: <b>${counts.strong}</b></span>
-              <span class="countpill">Só IP: <b>${counts.ipOnly}</b></span>
-              <span class="countpill">Cache: <b>on</b></span>
+              <span class="countpill">${esc(t('dup_count_total'))}: <b>${counts.total}</b></span>
+              <span class="countpill">${esc(t('dup_count_withmatch'))}: <b>${counts.withMatch}</b></span>
+              <span class="countpill">${esc(t('dup_count_strong'))}: <b>${counts.strong}</b></span>
+              <span class="countpill">${esc(t('dup_count_iponly'))}: <b>${counts.ipOnly}</b></span>
+              <span class="countpill">${esc(t('dup_count_cache'))}</span>
             </div>
             <div class="actions">
-              <button id="ml_dup_back" class="ghost">Voltar</button>
-              <a href="${esc(issuesUrl)}" target="_blank" rel="noopener">Abrir busca no Jira</a>
-              <button id="ml_loc_comment" class="disabled">Obs interna (0)</button>
-              <button id="ml_loc_linkdup" class="disabled danger">Vincular duplicado (0)</button>
-              <button id="ml_loc_linkclose" class="disabled danger" title="Vincula como duplicado e ja aplica a transicao de fechamento configurada">Vincular + Fechar (0)</button>
-              <button id="ml_loc_prio" class="disabled">Prioridade selecionados (0)</button>
-              <button id="ml_loc_batch" class="disabled">Derivar selecionados (0)</button>
+              <button id="ml_dup_back" class="ghost">${esc(t('dup_back'))}</button>
+              <a href="${esc(issuesUrl)}" target="_blank" rel="noopener">${esc(t('dup_open_search'))}</a>
+              <button id="ml_loc_comment" class="disabled">${esc(t('dup_btn_comment'))} (0)</button>
+              <button id="ml_loc_linkdup" class="disabled danger">${esc(t('dup_btn_link'))} (0)</button>
+              <button id="ml_loc_linkclose" class="disabled danger" title="Vincula como duplicado e ja aplica a transicao de fechamento configurada">${esc(t('dup_btn_linkclose'))} (0)</button>
+              <button id="ml_loc_prio" class="disabled">${esc(t('dup_btn_prio'))} (0)</button>
+              <button id="ml_loc_batch" class="disabled">${esc(t('dup_btn_batch'))} (0)</button>
             </div>
           </div>
-          <div class="meta">Clique em um ID para filtrar. Clique no card para selecionar. Use “Detalhes” para ver a descrição completa, a localidade e mudar a prioridade (individual ou em “Prioridade selecionados”). IDs marcados com ✎ foram digitados manualmente.</div>
+          <div class="meta">${esc(t('dup_hint'))}</div>
           <div class="chips" id="ml_loc_chips">${chipsHtml}</div>
         </div>
       `;
@@ -12764,11 +12995,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         const selected = new Set();
 
         const refreshButtons = () => {
-          commentBtn.textContent = `Obs interna (${selected.size})`;
-          linkBtn.textContent = `Vincular duplicado (${selected.size})`;
-          linkCloseBtn.textContent = `Vincular + Fechar (${selected.size})`;
-          prioBtn.textContent = `Prioridade selecionados (${selected.size})`;
-          batchBtn.textContent = `Derivar selecionados (${selected.size})`;
+          commentBtn.textContent = `${t('dup_btn_comment')} (${selected.size})`;
+          linkBtn.textContent = `${t('dup_btn_link')} (${selected.size})`;
+          linkCloseBtn.textContent = `${t('dup_btn_linkclose')} (${selected.size})`;
+          prioBtn.textContent = `${t('dup_btn_prio')} (${selected.size})`;
+          batchBtn.textContent = `${t('dup_btn_batch')} (${selected.size})`;
           if(selected.size > 0){
             commentBtn.classList.remove('disabled'); commentBtn.classList.add('primary');
             linkBtn.classList.remove('disabled');
@@ -14686,78 +14917,78 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       modal.style.maxWidth = 'min(900px, 96vw)';
 
       const detected = Array.isArray(opts.initialKeys) ? [...opts.initialKeys] : getQueueKeysFromDom();
-      const sourceLabel = opts.sourceLabel || (Array.isArray(opts.initialKeys) ? 'Recebido do contexto anterior' : 'Detectado automaticamente da pagina');
+      const sourceLabel = opts.sourceLabel || (Array.isArray(opts.initialKeys) ? t('batch_source_context') : t('batch_source_auto'));
 
       modal.innerHTML = `
         <div class="ch">
           <div>
-            <div class="title"><span class="titleDot" style="background:#34c578;box-shadow:0 0 0 4px rgba(52,197,120,.18);"></span>Gerenciador de fila</div>
+            <div class="title"><span class="titleDot" style="background:#34c578;box-shadow:0 0 0 4px rgba(52,197,120,.18);"></span>${t('batch_title')}</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
-            <button id="ml_batch_settings" class="gear" title="Configuracoes">&#9881;</button>
-            <button id="ml_batch_close">Fechar</button>
+            <button id="ml_batch_settings" class="gear" title="${esc(t('batch_settings_title'))}">&#9881;</button>
+            <button id="ml_batch_close">${t('batch_close')}</button>
           </div>
         </div>
         <div class="cb">
           <details class="capHint" style="margin-bottom:10px;">
-            <summary style="cursor:pointer;font-weight:700;color:var(--ml-text-mut);outline:none;">Como funciona</summary>
+            <summary style="cursor:pointer;font-weight:700;color:var(--ml-text-mut);outline:none;">${t('batch_how_it_works')}</summary>
             <ol style="margin:8px 0 0;">
-              <li>${esc(sourceLabel)}: <b>${detected.length}</b> chamado(s) (todos <b>desmarcados</b> por seguranca).</li>
-              <li>Use o filtro pra achar e <b>marque</b> os chamados que quer processar (ou "Marcar todos").</li>
-              <li>Escolha a acao (Derivar para time X / com ISS) e clique "Executar".</li>
-              <li>Ou clique "Auditar selecionados" pra rodar a auditoria por IA nos marcados sem derivar nada (precisa do Webhook de auditoria configurado).</li>
-              <li>Clique "Detalhes" num chamado pra ver a descri&ccedil;&atilde;o completa e mudar a prioridade individualmente, ou marque v&aacute;rios e use "Prioridade selecionados" pra aplicar a mesma prioridade em todos de uma vez.</li>
+              <li>${t('batch_step1', { source: esc(sourceLabel), count: detected.length })}</li>
+              <li>${t('batch_step2')}</li>
+              <li>${t('batch_step3')}</li>
+              <li>${t('batch_step4')}</li>
+              <li>${t('batch_step5')}</li>
             </ol>
           </details>
 
           <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center;">
-            <button id="ml_batch_redetect" class="btnSecondary" title="Re-detectar da página" style="padding:8px 11px;">&#8635;</button>
-            <button id="ml_batch_clear" class="btnSecondary" title="Limpar lista" style="padding:8px 11px;">&#128465;</button>
+            <button id="ml_batch_redetect" class="btnSecondary" title="${esc(t('batch_redetect_title'))}" style="padding:8px 11px;">&#8635;</button>
+            <button id="ml_batch_clear" class="btnSecondary" title="${esc(t('batch_clear_title'))}" style="padding:8px 11px;">&#128465;</button>
           </div>
 
           <div>
             <div style="display:flex;justify-content:space-between;margin-bottom:6px;align-items:center;flex-wrap:wrap;gap:8px;">
               <div style="font-size:12px;color:var(--ml-text-mut);display:flex;align-items:center;gap:8px;">
-                <span id="ml_batch_count">0</span> chamado(s) <span id="ml_batch_sel_count" style="color:var(--ml-text-dim);"></span>
-                <span id="ml_batch_loading" style="color:var(--ml-text-dim);display:none;"><span class="mlSpin"></span> carregando...</span>
+                <span id="ml_batch_count">0</span> ${t('batch_count_suffix')} <span id="ml_batch_sel_count" style="color:var(--ml-text-dim);"></span>
+                <span id="ml_batch_loading" style="color:var(--ml-text-dim);display:none;"><span class="mlSpin"></span> ${t('batch_loading')}</span>
               </div>
               <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-                <input type="text" id="ml_batch_filter" placeholder="Filtrar…"
+                <input type="text" id="ml_batch_filter" placeholder="${esc(t('batch_filter_placeholder'))}"
                   style="padding:4px 10px;background:var(--ml-bg-2);color:var(--ml-text);border:1px solid var(--ml-border-2);border-radius:6px;font-size:11.5px;outline:none;min-width:160px;" />
-                <button id="ml_batch_check_all" class="btnSecondary" style="font-size:11px;padding:4px 10px;">Marcar todos</button>
-                <button id="ml_batch_uncheck_all" class="btnSecondary" style="font-size:11px;padding:4px 10px;">Desmarcar</button>
+                <button id="ml_batch_check_all" class="btnSecondary" style="font-size:11px;padding:4px 10px;">${t('batch_check_all')}</button>
+                <button id="ml_batch_uncheck_all" class="btnSecondary" style="font-size:11px;padding:4px 10px;">${t('batch_uncheck_all')}</button>
               </div>
             </div>
             <div id="ml_batch_list" style="max-height:340px;overflow-y:auto;border-top:1px solid var(--ml-border);"></div>
           </div>
 
           <div style="border-top:1px solid var(--ml-border);padding-top:14px;">
-            <label id="ml_batch_teams_label" style="font-size:12px;color:var(--ml-text-mut);">Derivar para</label>
-            <div id="ml_batch_teams" style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 4px;"><span class="muted">Carregando times...</span></div>
-            <div id="ml_batch_teams_hint" style="display:none;font-size:11px;color:var(--ml-blue);margin:0 0 12px;">Time global desativado &mdash; voc&ecirc; definiu times por ticket na coluna <b>"Derivar para"</b>. Limpe os overrides (&#8629; usar time global) para reativar.</div>
+            <label id="ml_batch_teams_label" style="font-size:12px;color:var(--ml-text-mut);">${t('batch_teams_label')}</label>
+            <div id="ml_batch_teams" style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 4px;"><span class="muted">${t('batch_teams_loading')}</span></div>
+            <div id="ml_batch_teams_hint" style="display:none;font-size:11px;color:var(--ml-blue);margin:0 0 12px;">${t('batch_teams_override_hint')}</div>
             <div id="ml_batch_teams_spacer" style="margin-bottom:12px;"></div>
 
             <label style="font-size:12px;font-weight:700;color:var(--ml-text-mut);display:flex;align-items:center;gap:8px;">
-              <span>Comentario (observacao interna)</span>
+              <span>${t('batch_comment_label')}</span>
               <span id="ml_batch_comment_btnwrap" style="margin-left:auto;font-weight:400;"></span>
             </label>
             <textarea id="ml_batch_comment" style="width:100%;min-height:70px;background:var(--ml-bg-0);color:var(--ml-text);border:1px solid var(--ml-border-2);border-radius:var(--ml-radius-sm);padding:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;margin-top:6px;">${esc(DERIVE_COMMENT_DEFAULT)}</textarea>
             <div style="font-size:10.5px;color:var(--ml-text-mut);margin-top:4px;line-height:1.5;">
-              O mesmo texto vale pra todos os tickets selecionados — os placeholders sao resolvidos por ticket: <code>{key}</code>, <code>{reporter}</code>, <code>{firstname}</code>, <code>{summary}</code>, <code>{description}</code>, <code>{meu_nome}</code>.
+              ${t('batch_placeholders_hint')}
             </div>
 
             <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;cursor:pointer;">
               <input type="checkbox" id="ml_batch_iss_chk" style="transform:scale(1.15);accent-color:var(--ml-blue);" />
-              <span>Tamb&eacute;m criar tarefa ISS para cada chamado</span>
-              <span title="So ativa quando o time selecionado esta em ISS_TASK_TRIGGER_TEAMS (Configuracoes). Cada chamado vira 1 ISS." style="color:var(--ml-text-dim);cursor:help;font-size:14px;line-height:1;">&#9432;</span>
+              <span>${t('batch_iss_checkbox')}</span>
+              <span title="${esc(t('batch_iss_hint_title'))}" style="color:var(--ml-text-dim);cursor:help;font-size:14px;line-height:1;">&#9432;</span>
             </label>
           </div>
 
           <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
-            <button id="ml_batch_cancel" class="btnSecondary">Cancelar</button>
-            <button id="ml_batch_prio_run" class="btnSecondary" title="Aplica uma prioridade escolhida a todos os chamados marcados (campo Prioridade direto, sem transicao).">&#9888; Prioridade selecionados</button>
-            <button id="ml_batch_audit_run" class="btnSecondary" title="Roda a auditoria por IA em cada chamado marcado — não deriva, só analisa e salva o resultado." ${SETTINGS.AUDIT_WEBHOOK_URL ? '' : 'disabled'}>&#128269; Auditar selecionados</button>
-            <button id="ml_batch_run" class="btnPrimary">Executar</button>
+            <button id="ml_batch_cancel" class="btnSecondary">${t('batch_cancel')}</button>
+            <button id="ml_batch_prio_run" class="btnSecondary" title="${esc(t('batch_prio_run_title'))}">&#9888; ${t('batch_prio_run')}</button>
+            <button id="ml_batch_audit_run" class="btnSecondary" title="${esc(t('batch_audit_run_title'))}" ${SETTINGS.AUDIT_WEBHOOK_URL ? '' : 'disabled'}>&#128269; ${t('batch_audit_run')}</button>
+            <button id="ml_batch_run" class="btnPrimary">${t('batch_run')}</button>
           </div>
 
           <div id="ml_batch_progress" style="margin-top:14px;"></div>
