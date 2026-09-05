@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.12
+// @version      2.5.13
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -5745,7 +5745,21 @@
             } else if(ftype === 'user'){
               fields[key] = { accountId: v };
             } else {
-              fields[key] = v;
+              // v2.5.13: "Solution" (CF_SOLUTION_TEXT) e um campo rich-text (JiraRichTextField,
+              // confirmado no payload real da mutation GraphQL do Jira nativo capturado antes —
+              // customfield_12729) — a API REST classica espera um documento ADF pra esse tipo
+              // de campo, nao uma string pura. O fallback generico 'string' mandava texto puro
+              // ate aqui, o que muito provavelmente fazia o Jira rejeitar (ou ignorar) o valor
+              // silenciosamente nesse campo especifico. Mesma deteccao por nome/ID ja usada no
+              // render (isSolutionTextField), pra cobrir tanto o campo configurado quanto um
+              // match por nome (en/es/pt) numa transicao onde o ID configurado nao bater.
+              const _normFieldName3 = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+              const _looksLikeSolutionText2 = key !== 'resolution' && (() => {
+                const n = _normFieldName3(meta?.name || '');
+                return n === 'solution' || n === 'solucion' || n === 'solucao' || n.startsWith('soluc') || n.startsWith('solut');
+              })();
+              const isSolutionTextKey = (key === _cfSolutionTextKey && Number(SETTINGS?.CF_SOLUTION_TEXT || 0) > 0) || _looksLikeSolutionText2;
+              fields[key] = isSolutionTextKey ? textToAdfParagraphs(v) : v;
             }
           }
           if(!valid){
@@ -6016,6 +6030,13 @@
           const newlyMatched = Object.fromEntries(
             Object.entries(matched).filter(([k]) => k !== 'comment' && !(k in extraFields))
           );
+          // v2.5.13: loga SEMPRE (nao so quando sobra pro 2o formulario) — sem isso, um campo
+          // que nunca chega a ser tentado (nem auto-fill, nem form) fica invisivel no log,
+          // dificultando diagnostico depois (foi exatamente esse buraco que escondeu o
+          // problema real do "Solution" num teste real, ate pedirmos o console pro usuario).
+          if(unresolved.length){
+            log(`recovery: nao encontrei automaticamente no editmeta: ${unresolved.join(', ')}`);
+          }
 
           if(Object.keys(newlyMatched).length){
             log(`recovery: achou ${Object.keys(newlyMatched).length} campo(s) extra(s) via editmeta (${Object.keys(newlyMatched).join(', ')})`);
@@ -7017,8 +7038,25 @@
         // 2) Fallback: bate pelo nome exibido — funciona bem pra customfields, cujo nome e
         // configurado pelo admin e nao muda com o idioma da conta.
         const hit = entries.find(([, meta]) => norm(meta?.name) === target);
-        if(hit) matched[hit[0]] = { ...hit[1], required: true };
-        else unresolved.push(rawName);
+        if(hit){ matched[hit[0]] = { ...hit[1], required: true }; continue; }
+        // 3) v2.5.13: "Solution" (CF_SOLUTION_TEXT) e um campo SCREEN-SCOPED que, na pratica,
+        // nao aparece no /editmeta geral do ticket (mesma lacuna ja vista nos campos do
+        // Assets/CMDB — ver _isCmdbObjectField) — por isso nunca batia aqui via (1)/(2), mesmo
+        // com o campo genuinamente vazio no ticket (confirmado num teste real: IS-1103203
+        // continuava preso porque "Solution" nunca chegava a ser tentado). Sintetiza o match
+        // direto pelo ID ja configurado quando o nome citado no erro "parece" Solution
+        // (en/es/pt) — mesmo padrao de deteccao por nome ja usado em promptForTransitionFields
+        // (_looksLikeSolutionText) e em closeIssTaskAfterCreate.
+        const looksLikeSolution = target === 'solution' || target === 'solucion' || target === 'solucao'
+          || target.startsWith('soluc') || target.startsWith('solut');
+        if(looksLikeSolution && Number(SETTINGS?.CF_SOLUTION_TEXT || 0) > 0){
+          const k = `customfield_${Number(SETTINGS.CF_SOLUTION_TEXT)}`;
+          matched[k] = fieldsMetaObj?.[k]
+            ? { ...fieldsMetaObj[k], required: true }
+            : { name: rawName, required: true, schema: { type: 'string' } };
+          continue;
+        }
+        unresolved.push(rawName);
       }
       return { matched, unresolved };
     }
