@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.9
+// @version      2.6.10
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -2704,6 +2704,11 @@
               assetArr,
               resTeam: resTeam?.value || resTeam?.name || ''
             });
+            // v2.6.10: cacheia o idioma do cliente de cada ticket do lote (mesma logica usada
+            // no ticket unico via renderLocationCard/_waOpen) — precisa disso pronto ANTES da
+            // execucao em lote pra poder traduzir o comentario por ticket (idiomas diferentes
+            // no mesmo lote sao normais: fila mistura tickets BR/MX/CO/etc).
+            if(assetInline) _cacheTicketLang(issue.key, assetInline);
           }
         }catch(e){
           for(const k of slice) out.push({ key: k, error: String(e.message || e) });
@@ -2722,6 +2727,7 @@
             const names = await Promise.all(obj.assetArr.map(a => getAssetName(a?.workspaceId, a?.objectId)));
             obj.asset = names.filter(Boolean).join(', ');
             if(!obj.asset) obj.asset = obj.assetArr.map(a => a?.objectId).filter(Boolean).join(', ');
+            if(obj.asset) _cacheTicketLang(obj.key, obj.asset);
           }catch(_){ /* deixa vazio */ }
         }
       }
@@ -3298,6 +3304,12 @@
           ta.parentNode?.insertBefore(hintBox, ta.nextSibling);
           renderSlashCommandsHint(hintBox, { textarea: ta });
         }
+        // v2.6.10: comentario padrao de Derivar tambem traduzido automaticamente pro idioma do
+        // cliente — o textarea ja nasce com DERIVE_COMMENT_DEFAULT (pt-BR, via template acima),
+        // essa chamada so troca pelo traduzido em background se o ticket for de outro idioma.
+        // Usa `locationKey` (parametro ja recebido por quem abriu esse modal) em vez de esperar
+        // o cache por issueKey, que pode ainda nao ter sido gravado nesse momento.
+        if(ta) _fillTextareaWithAutoTranslate(ta, DERIVE_COMMENT_DEFAULT, { locationKey });
       }catch(_){}
 
       modal.querySelector('#ml_d_submit').addEventListener('click', async () => {
@@ -5314,21 +5326,14 @@
       // traduz automaticamente ANTES de inserir — pedido explicito do time (analistas BR
       // atendem tickets hispanos e vice-versa). Se a traducao falhar (rede/timeout/API fora do
       // ar), cai pro texto original sem quebrar o fluxo — o analista so' nao ganha o aviso.
-      let translatedNotice = '';
-      try{
-        const issueKey = getIssueKey();
-        const ticketLang = issueKey ? _getCachedTicketLang(issueKey) : '';
-        if(ticketLang && ticketLang !== SNIPPETS_AUTHOR_LANG){
-          const translated = await translateText(snippetText, ticketLang);
-          if(translated){
-            snippetText = translated;
-            const langNames = { es: 'espanhol', en: 'inglês', pt: 'português' };
-            translatedNotice = ` (traduzido automaticamente para ${langNames[ticketLang] || ticketLang} — revise antes de enviar)`;
-          }
-        }
-      }catch(_){}
-      if(translatedNotice){
-        try{ showToast('Snippet' + translatedNotice + '.', 'info', 5000); }catch(_){}
+      // v2.6.10: passou a usar o helper generico _autoTranslateForTicket (mesma logica, agora
+      // compartilhada com Mudar Status/Derivar/WhatsApp — ver comentario ali).
+      const { text: translatedText, translated: didTranslate, lang: ticketLang } =
+        await _autoTranslateForTicket(snippetText, {});
+      if(didTranslate){
+        snippetText = translatedText;
+        const langNames = { es: 'espanhol', en: 'inglês', pt: 'português' };
+        try{ showToast(`Snippet traduzido automaticamente para ${langNames[ticketLang] || ticketLang} — revise antes de enviar.`, 'info', 5000); }catch(_){}
       }
       return new Promise((resolve) => {
         const cur = String(textarea.value || '');
@@ -6808,7 +6813,9 @@
         const a = selectedTransition?.action || {};
         const cur = String(ta.value || '').trim();
         const isDefaultOrEmpty = !cur || cur === String(a.comment || '').trim();
-        if(isDefaultOrEmpty) ta.value = txt;
+        // v2.6.10: mesma traducao automatica ja usada nos snippets — se o cliente do ticket
+        // fala outro idioma, troca pro traduzido pouco depois (background), sem travar a UI.
+        if(isDefaultOrEmpty) _fillTextareaWithAutoTranslate(ta, txt, { issueKey });
       };
 
       // Roda a auditoria (via _runAuditCore, o mesmo nucleo do botao "Auditar") direto de dentro
@@ -6931,7 +6938,10 @@
         const assignChk = $('#ml_st_assign');
         // Pre-preenche somente se a textarea estiver vazia (ou eh primeira selecao)
         if(!ta.value || ta.dataset.lastTr !== String(t.id)){
-          ta.value = String(a.comment || '');
+          // v2.6.10: mensagem padrao do atalho tambem traduzida automaticamente pro idioma do
+          // cliente, igual snippets/sugestao de fechamento — preenche na hora com o texto
+          // original e troca pelo traduzido em background se detectar idioma diferente.
+          _fillTextareaWithAutoTranslate(ta, String(a.comment || ''), { issueKey });
           ta.dataset.lastTr = String(t.id);
           autoAuditTriggered = false; // nova selecao de transicao -> permite auto-audit de novo
         }
@@ -13764,6 +13774,65 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       });
     }
 
+    // v2.6.10: generalizacao do que so' existia pros snippets (v2.6.0) — pedido explicito do
+    // usuario: "tudo que passar pela ferramenta que faca alguma acao que envolva texto seria
+    // legal ter essa traducao". Helper unico usado por TODO ponto que insere um texto PRONTO
+    // (nao digitado pelo analista) num campo que pode ir pro Jira/WhatsApp do cliente: comentario
+    // padrao de status (Mudar Status), sugestao de fechamento da auditoria, comentario padrao de
+    // Derivar (single e em lote) e mensagem padrao do WhatsApp — alem dos snippets, que passam a
+    // usar este mesmo helper em vez de duplicar a logica.
+    //
+    // Resolve o idioma por, em ordem de preferencia: (1) opts.lang explicito, (2)
+    // opts.locationKey (quando o chamador ja tem a localidade na mao, ex: Derivar, que recebe
+    // isso como parametro — evita depender do cache ainda nao ter sido gravado), (3) cache por
+    // issueKey (ml_loc_lang_<key>, gravado assim que qualquer fluxo resolve a localidade). Nunca
+    // lanca — qualquer falha (rede/timeout/API fora do ar/idioma desconhecido) cai pro texto
+    // original, sem quebrar quem chamou.
+    function _langForTranslation(opts){
+      opts = opts || {};
+      if(opts.lang) return opts.lang;
+      if(opts.locationKey){
+        const l = _langFromLocality(opts.locationKey);
+        if(l) return l;
+      }
+      const key = opts.issueKey || (typeof getIssueKey === 'function' ? (getIssueKey() || '') : '');
+      return key ? _getCachedTicketLang(key) : '';
+    }
+
+    async function _autoTranslateForTicket(text, opts){
+      const clean = String(text || '');
+      if(!clean.trim()) return { text: clean, translated: false, lang: '' };
+      try{
+        const lang = _langForTranslation(opts);
+        if(lang && lang !== SNIPPETS_AUTHOR_LANG){
+          const translated = await translateText(clean, lang);
+          if(translated) return { text: translated, translated: true, lang };
+        }
+      }catch(_){}
+      return { text: clean, translated: false, lang: '' };
+    }
+
+    // Preenche `ta` com `text` IMEDIATAMENTE (sem atraso perceptivel — a traducao e' assincrona
+    // e pode levar segundos), e troca pelo texto traduzido em background quando/se a traducao
+    // chegar — MAS so' se o analista ainda nao tiver mexido no campo nesse meio-tempo (compara
+    // com o valor original antes de sobrescrever), pra nunca apagar uma edicao manual. Mostra um
+    // toast avisando quando a troca acontece, com o mesmo pedido de revisao ja usado nos snippets.
+    function _fillTextareaWithAutoTranslate(ta, text, opts){
+      if(!ta) return;
+      const original = String(text || '');
+      ta.value = original;
+      (async () => {
+        const { text: translated, translated: didTranslate, lang } = await _autoTranslateForTicket(original, opts);
+        if(!didTranslate) return;
+        if(String(ta.value || '') !== original) return; // analista ja editou — nao sobrescreve
+        if(!document.body.contains(ta)) return; // modal fechado nesse meio-tempo
+        ta.value = translated;
+        try{ ta.dispatchEvent(new Event('input', { bubbles: true })); }catch(_){}
+        const langNames = { es: 'espanhol', en: 'inglês', pt: 'português' };
+        try{ showToast(`Texto traduzido automaticamente para ${langNames[lang] || lang} — revise antes de enviar.`, 'info', 5000); }catch(_){}
+      })();
+    }
+
     // Normaliza um telefone para dígitos com código de país.
     // - Se o número já traz "+" (código explícito, ex: +52...), RESPEITA — só usa os dígitos.
     // - Senão, prefixa o código do país inferido da LOCALIDADE (ou o fallback configurado).
@@ -13850,7 +13919,20 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       // assim a mensagem de WhatsApp também não precisa de assinatura fixa hardcoded no template.
       let me = null;
       try{ me = await jiraGetMyself(); }catch(_){}
-      const tmplRaw = String(SETTINGS.WHATSAPP_MSG_TEMPLATE || DEFAULTS.WHATSAPP_MSG_TEMPLATE || '');
+      let tmplRaw = String(SETTINGS.WHATSAPP_MSG_TEMPLATE || DEFAULTS.WHATSAPP_MSG_TEMPLATE || '');
+      // v2.6.10: mensagem do WhatsApp e' a que mais faz sentido traduzir de todas — vai direto
+      // pro CLIENTE, nao fica so' interno no Jira. Traduz o TEMPLATE CRU (antes de substituir
+      // {key}/{reporter}/{firstname}/{summary}/{description}/{meu_nome}) pra nao arriscar o
+      // tradutor mexer nesses tokens depois de virarem texto real (nome/descricao do cliente).
+      try{
+        const { text: translatedTmpl, translated: didTranslateWa, lang: waLang } =
+          await _autoTranslateForTicket(tmplRaw, { locationKey });
+        if(didTranslateWa){
+          tmplRaw = translatedTmpl;
+          const langNames = { es: 'espanhol', en: 'inglês', pt: 'português' };
+          showToast(`Mensagem de WhatsApp traduzida automaticamente para ${langNames[waLang] || waLang} — revise antes de enviar.`, 'info', 5000);
+        }
+      }catch(_){}
       const tmpl = _applyMyNamePlaceholder(tmplRaw, me);
       const first = (reporter || '').split(/\s+/)[0] || '';
       // Substitui os campos curtos primeiro e colapsa só espaços/tabs repetidos (não newlines);
@@ -15115,6 +15197,19 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             const tr = await jiraGetTransitions(key);
             const deriveTr = pickDeriveTransition(tr);
             if(!deriveTr) throw new Error(`Transicao "${DERIVE_TRANSITION_NAME}" nao disponivel`);
+
+            // v2.6.10: traduz o MESMO comentario configurado uma vez pro lote inteiro, pro
+            // idioma do CLIENTE de CADA ticket individualmente — um lote de derivacao normalmente
+            // mistura tickets de paises diferentes (BR/MX/CO/etc), entao um texto so' em pt-BR
+            // nao serve pra todos. Usa o idioma ja cacheado por getIssuesBatchInfo (via
+            // asset/localidade de cada ticket, resolvido quando a lista do lote foi montada).
+            const { text: commentForKey, translated: didTranslateKey, lang: langKey } =
+              await _autoTranslateForTicket(comment, { issueKey: key, locationKey: info[key]?.asset });
+            if(didTranslateKey){
+              const langNames = { es: 'espanhol', en: 'inglês', pt: 'português' };
+              progressLog(`     &#8627; <span style="color:#93c5fd;">coment&aacute;rio traduzido pra ${esc(langNames[langKey] || langKey)}</span>`);
+            }
+
             const wantMention = modal.querySelector('#ml_batch_mention_chk')?.checked;
             const isFieldService = /fieldservice/i.test(ticketTeam.value || '');
             let adfOverride = null;
@@ -15126,11 +15221,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   const acct = ft.email ? await jiraResolveEmailToAccount(ft.email) : null;
                   return { displayName: acct?.displayName || ft.nome, accountId: acct?.accountId || null, turno: ft.turno, onShift: isOnShiftNow(ft.horario) };
                 }));
-                adfOverride = buildAdfWithFieldMentions(comment, resolved);
+                adfOverride = buildAdfWithFieldMentions(commentForKey, resolved);
                 progressLog(`     &#8627; <span style="color:#93c5fd;">resolving @mentions para ${resolved.length} field tech(s)...</span>`);
               }
             }
-            await jiraDoDerive(key, deriveTr.id, ticketTeam.id, comment, adfOverride);
+            await jiraDoDerive(key, deriveTr.id, ticketTeam.id, commentForKey, adfOverride);
             // marcação de uso (label + campo texto) agora acontece dentro do próprio jiraDoDerive
             progressLog(`<b style="color:#86efac;">[OK]</b> ${esc(key)} derivado para ${esc(ticketTeam.value)}`);
             ok++;
