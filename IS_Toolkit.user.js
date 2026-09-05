@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.16
+// @version      2.5.17
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -6109,6 +6109,18 @@
               const label = String(v?.value || v?.name || '').trim().toLowerCase();
               return !label || label === 'nenhum' || label === 'none' || label === 'ninguno';
             };
+            // v2.5.17: reenviar o valor "como veio" do GET funciona pra maioria dos tipos (a API
+            // aceita de volta o mesmo shape) — MAS nao pra campos schema.type === 'string' cujo
+            // GET devolve um OBJETO (ex: "Request Type"-like) — confirmado num teste real
+            // (customfield_11100): a API rejeitou com "O valor da operacao deve ser uma cadeia de
+            // caracteres". "Achata" o valor pro texto puro nesses casos, reaproveitando
+            // _plainFieldText (ja usado na deteccao de duplicados, v2.5.2).
+            const _reshapeForResend = (v, meta) => {
+              if(meta?.schema?.type === 'string' && v != null && typeof v === 'object'){
+                return _plainFieldText(v);
+              }
+              return v;
+            };
             const autoFilled = {};
             const stillMissing = {};
             const needsManualEdit = [];
@@ -6143,7 +6155,7 @@
                 }
                 continue;
               }
-              if(_hasValue(currentValues[k])){ autoFilled[k] = currentValues[k]; continue; }
+              if(_hasValue(currentValues[k])){ autoFilled[k] = _reshapeForResend(currentValues[k], meta); continue; }
               stillMissing[k] = meta;
             }
             if(Object.keys(autoFilled).length){
