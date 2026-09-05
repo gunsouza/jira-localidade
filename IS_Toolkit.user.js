@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.8
+// @version      2.6.9
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -2376,14 +2376,41 @@
       if(!r.ok) throw new Error(`HTTP ${r.status} ao buscar categorias`);
       const d = await r.json();
       const issues = d.issues || [];
-      const counts = {};
-      for(const it of issues){
+
+      // v2.6.9: bug real achado inspecionando um ticket de verdade via Jira MCP (IS-1103724 e
+      // outros) — CF_CATEGORY_INCIDENT/SERVICE (24989/18703) NAO sao campos de select simples,
+      // sao campos de referencia a objeto do Assets/Insight. O shape que a API devolve e' um
+      // ARRAY tipo [{workspaceId, id, objectId}] — SEM nenhum .value/.name/.label, so' o
+      // objectId numerico. A extracao antiga (`v.value ?? v.name`) nunca funcionava pra esse
+      // campo (nem soltando o `Array.isArray`): um array nao tem propriedade .value, entao TODO
+      // ticket caia em "(sem categoria)" — exatamente o "100% sem categoria" que o usuario via,
+      // mesmo com o time preenchendo a categoria normalmente. Fix: resolver o nome legivel via
+      // Assets API (mesma `getAssetName(workspaceId, objectId)` ja usada pra localidade/asset em
+      // outros pontos do codigo), uma vez por objectId UNICO (memoizado aqui) pra nao repetir
+      // chamada de rede pro mesmo objeto em dezenas de tickets da mesma categoria.
+      const refByIssue = issues.map(it => {
         const isIncident = /incident|incidente/i.test(it.fields?.issuetype?.name || '');
         const fieldKey = isIncident
           ? (cfIncident ? `customfield_${cfIncident}` : (cfLegacy ? `customfield_${cfLegacy}` : null))
           : (cfService  ? `customfield_${cfService}`  : (cfLegacy ? `customfield_${cfLegacy}` : null));
-        const v = fieldKey ? it.fields?.[fieldKey] : null;
-        const label = (v && typeof v === 'object') ? (v.value ?? v.name ?? '') : (v ?? '');
+        const raw = fieldKey ? it.fields?.[fieldKey] : null;
+        const arr = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+        return arr[0] || null; // 1 categoria por ticket, igual o resto do campo Assets no projeto
+      });
+
+      const uniqueRefs = new Map();
+      for(const ref of refByIssue){
+        if(ref?.objectId && !uniqueRefs.has(String(ref.objectId))) uniqueRefs.set(String(ref.objectId), ref);
+      }
+      const nameEntries = await Promise.all([...uniqueRefs.entries()].map(async ([oid, ref]) => {
+        try{ return [oid, await getAssetName(ref.workspaceId, ref.objectId)]; }
+        catch(_){ return [oid, '']; }
+      }));
+      const nameById = new Map(nameEntries);
+
+      const counts = {};
+      for(const ref of refByIssue){
+        const label = (ref?.objectId ? nameById.get(String(ref.objectId)) : '') || '';
         const key = String(label || '(sem categoria)').trim() || '(sem categoria)';
         counts[key] = (counts[key] || 0) + 1;
       }
@@ -2549,29 +2576,41 @@
     // filtro de pessoa) — bug real reportado pelo usuario: numeros irreais tipo "Criados: 331,
     // Resolvidos: 350" NUM UNICO DIA, muito acima do que o time realmente atende, porque
     // contava literalmente qualquer ticket dos projetos IS+ISS (de qualquer time/regional).
-    // Fix: em vez de contar de novo com escopo largo, DERIVA o volume somando o mesmo
-    // getAdminTeamOverview(period) que a tabela por pessoa ja precisa buscar (que SIM
-    // restringe por assignee aos membros filtrados do grupo RANKING_TEAM_GROUP) — sem
-    // chamada de rede extra, e com o mesmo universo de pessoas em ambos os blocos.
+    // v2.6.9: outro bug real reportado ("esses numeros estao certos? parece que nao") — o
+    // "Criados" desse card vinha de members[].created, que e' reporter=a-propria-pessoa (ver
+    // getAdminTeamOverview abaixo). Pra um time de N1 isso e' quase sempre ~0 (analista quase
+    // nunca abre ticket pra si mesmo — quem abre e' o cliente/usuario final), entao o backlog
+    // liquido dava SEMPRE fortemente negativo ("encolhendo"), incluisve quando a fila estava
+    // de verdade crescendo — o numero nao media entrada real na fila, so' auto-atendimento.
+    // Fix: "Criados" do card de Volume agora usa `overviewData.queueInflow` (tickets CRIADOS no
+    // periodo que estao atribuidos a alguem do time — assignee, nao reporter), uma metrica de
+    // entrada real na fila, comparavel de verdade com "Resolvidos" (tambem por assignee).
     function _sumAdminVolume(period, overviewData){
       const members = overviewData?.members || [];
-      const created = members.reduce((s, m) => s + (m.created || 0), 0);
+      const created = overviewData?.queueInflow ?? 0;
       const resolved = members.reduce((s, m) => s + (m.resolved || 0), 0);
       return { period, created, resolved, backlogDelta: created - resolved };
     }
 
-    // Criados x Resolvidos x Auto-fechados x Abertos AGORA (reporter = assignee = a mesma
-    // pessoa, ex: quem abre uma ISS pra si mesmo e tambem resolve), por pessoa do grupo
-    // RANKING_TEAM_GROUP. "Abertos agora" e um retrato em tempo real (statusCategory != Done),
-    // independente do periodo escolhido — serve pra enxergar quem esta sobrecarregado AGORA,
-    // nao so quem produziu mais no periodo. 4 contagens por pessoa (em vez de 1, como o
+    // Criados (auto-atendimento: reporter = assignee = a mesma pessoa, ex: quem abre uma ISS pra
+    // si mesmo e tambem resolve) x Resolvidos x Auto-fechados x Abertos AGORA, por pessoa do
+    // grupo RANKING_TEAM_GROUP. "Abertos agora" e um retrato em tempo real (statusCategory !=
+    // Done), independente do periodo escolhido — serve pra enxergar quem esta sobrecarregado
+    // AGORA, nao so quem produziu mais no periodo. 4 contagens por pessoa (em vez de 1, como o
     // Ranking) — concorrencia um pouco menor pra nao estourar rate limit em grupos grandes.
+    // v2.6.9: tambem calcula `queueInflow` (1 contagem so', a nivel de time — nao por pessoa):
+    // tickets criados no periodo e atribuidos a alguem do time (assignee, nao reporter) — a
+    // entrada real de demanda na fila, usada pelo card de Volume (ver _sumAdminVolume acima).
     async function getAdminTeamOverview(period){
       if(!RANKING_TEAM_GROUP) return null;
       const members = await getGroupMembersFiltered(RANKING_TEAM_GROUP);
-      if(!members.length) return { period, members: [] };
+      if(!members.length) return { period, members: [], queueInflow: 0 };
       const scope = _rankingProjScope();
       const startFn = _adminStartFn(period);
+      const memberIdsJql = members.map(m => `"${m.accountId}"`).join(',');
+
+      const queueInflowPromise = countByJql(`${scope}assignee in (${memberIdsJql}) AND created >= ${startFn}`)
+        .catch(e => { console.warn(`[IS Toolkit][admin] falha contando entrada na fila (${period}):`, e); return 0; });
 
       const rows = [];
       const CONCURRENCY = 4;
@@ -2595,7 +2634,8 @@
       }
       await Promise.all(Array.from({ length: Math.min(CONCURRENCY, members.length) }, worker));
       rows.sort((a, b) => b.resolved - a.resolved);
-      return { period, members: rows };
+      const queueInflow = await queueInflowPromise;
+      return { period, members: rows, queueInflow };
     }
 
     async function searchIssuesWithCache(objectId, jql, extraFields){
@@ -13282,15 +13322,32 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               peopleEl.innerHTML = `<div class="homeCard"><div class="muted">Nenhum membro encontrado no grupo "${esc(RANKING_TEAM_GROUP)}".</div></div>`;
               return;
             }
-            const rows = data.members.map(m => `
+            // v2.6.9: numeros da tabela viram link pro Jira issue navigator (nova guia) com a
+            // MESMA jql usada pra contar (getAdminTeamOverview) — pedido do usuario, pra poder
+            // conferir/investigar a lista real por tras de qualquer numero sem digitar jql na mao.
+            const scope = _rankingProjScope();
+            const startFn = _adminStartFn(periodKey);
+            const jqlUrl = jql => `${location.origin}/issues/?jql=${encodeURIComponent(jql)}`;
+            const cell = (count, jql, opts) => {
+              const bold = opts && opts.bold;
+              const style = `text-align:right; font-size:12.5px;${bold ? ' font-weight:700; color:var(--ml-warn, #d97706);' : ''}`;
+              return `<a href="${esc(jqlUrl(jql))}" target="_blank" rel="noopener" style="${style} text-decoration:none; color:inherit;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'" title="Abrir no Jira">${count}</a>`;
+            };
+            const rows = data.members.map(m => {
+              const jqlCreated    = `${scope}reporter = "${m.accountId}" AND created >= ${startFn}`;
+              const jqlResolved   = `${scope}assignee = "${m.accountId}" AND resolutiondate >= ${startFn}`;
+              const jqlSelfClosed = `${scope}reporter = "${m.accountId}" AND assignee = "${m.accountId}" AND resolutiondate >= ${startFn}`;
+              const jqlOpenNow    = `${scope}assignee = "${m.accountId}" AND statusCategory != Done`;
+              return `
               <div style="display:grid; grid-template-columns:1fr 70px 70px 90px 90px; gap:8px; padding:5px 0; border-bottom:1px solid var(--ml-border-2); align-items:center;">
                 <div style="font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(m.displayName)}">${esc(m.displayName)}${m.error ? ' &#9888;&#65039;' : ''}</div>
-                <div style="text-align:right; font-size:12.5px;">${m.created}</div>
-                <div style="text-align:right; font-size:12.5px;">${m.resolved}</div>
-                <div style="text-align:right; font-size:12.5px;">${m.selfClosed}</div>
-                <div style="text-align:right; font-size:12.5px; font-weight:${m.openNow >= 10 ? '700' : '400'}; color:${m.openNow >= 10 ? 'var(--ml-warn, #d97706)' : 'inherit'};">${m.openNow}</div>
+                ${cell(m.created, jqlCreated)}
+                ${cell(m.resolved, jqlResolved)}
+                ${cell(m.selfClosed, jqlSelfClosed)}
+                ${cell(m.openNow, jqlOpenNow, { bold: m.openNow >= 10 })}
               </div>
-            `).join('');
+            `;
+            }).join('');
             peopleEl.innerHTML = `
               <div style="font-weight:700;margin-bottom:8px;">Criados x Resolvidos por pessoa (${esc(periodLabel)}) &middot; carga aberta agora</div>
               <div style="background:var(--ml-bg-2); border:1px solid var(--ml-border-2); border-radius:8px; padding:14px;">
@@ -13298,7 +13355,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <div>Analista</div><div style="text-align:right;">Criados</div><div style="text-align:right;">Resolvidos</div><div style="text-align:right;">Auto-fechados</div><div style="text-align:right;">Abertos agora</div>
                 </div>
                 ${rows}
-                <div class="meta" style="margin-top:6px;">"Auto-fechados" = a mesma pessoa abriu e resolveu o ticket (ex: ISS criada e fechada por quem mesmo a criou). "Abertos agora" é a carga em tempo real (não depende do período escolhido acima) — destacado quando ≥10. Clique num card de Volume acima pra trocar o período desta tabela.</div>
+                <div class="meta" style="margin-top:6px;">Clique num número pra abrir a lista real no Jira (nova guia). "Criados" = a própria pessoa abriu o ticket (reporter = ela mesma) — raro pra N1, serve pra flagar auto-atendimento. "Auto-fechados" = a mesma pessoa abriu e resolveu o ticket. "Abertos agora" é a carga em tempo real (não depende do período escolhido acima) — destacado quando ≥10. Clique num card de Volume acima pra trocar o período desta tabela.</div>
               </div>
             `;
           }
