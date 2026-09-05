@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.14
+// @version      2.6.15
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -13951,11 +13951,20 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
     const _PLACEHOLDER_MARKER_PREFIX = '5209983601';
     function _protectPlaceholders(text){
       const map = [];
-      const protectedText = String(text || '').replace(/\{[a-zA-Z_]+\}/g, (m) => {
+      const protect = (re, str) => str.replace(re, (m) => {
         const marker = `${_PLACEHOLDER_MARKER_PREFIX}${map.length}${_PLACEHOLDER_MARKER_PREFIX}`;
         map.push([marker, m]);
         return marker;
       });
+      let protectedText = protect(/\{[a-zA-Z_]+\}/g, String(text || ''));
+      // v2.6.15: bug real reportado — a palavra "Ticket" (termo de dominio, usado igual em
+      // PT/EN/ES neste contexto de suporte tecnico) e' sistematicamente mal traduzida pelo
+      // Google Translate pra "Boleto" em espanhol (que significa passagem/ingresso, nao
+      // chamado) quando aparece solta no texto, fora de qualquer {token} — ex: template de
+      // Derivar "Ticket sendo derivado...", ou um snippet com "Ticket: <link do portal>".
+      // Protege "Ticket"/"Tickets" do MESMO jeito que os {tokens} (marcador numerico antes
+      // de traduzir, restaura a palavra original depois) — assim nunca chega ao tradutor.
+      protectedText = protect(/\btickets?\b/gi, protectedText);
       return { protectedText, map };
     }
     function _restorePlaceholders(text, map){
