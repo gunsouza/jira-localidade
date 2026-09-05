@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.1
+// @version      2.6.2
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -733,6 +733,12 @@
       // e cujos numeros pessoais poluiriam a media/ranking). Contas de bot/servico ("* Application")
       // ja sao excluidas automaticamente, sem precisar configurar nada (ver _isExcludedMember).
       RANKING_EXCLUDE: [],
+      // v2.6.1: lista positiva alternativa (nome ou accountId, um por linha) — se preenchida,
+      // vira a UNICA fonte de verdade de quem "e do time" (ignora o grupo do Jira e o
+      // RANKING_EXCLUDE acima). Util quando o grupo do Jira tem gente de fora demais pra
+      // valer a pena ir excluindo reativamente. Nomes sao resolvidos via busca de usuario do
+      // Jira (/rest/api/3/user/search) na hora de montar o ranking — ver _resolveRankingMembers.
+      RANKING_INCLUDE: [],
       // 'anonimo' | 'posicao' — o modo 'leaderboard' (nomes com numeros) foi REMOVIDO daqui na
       // v2.4.0 e virou exclusividade do Painel administrativo (ver ADMIN_MODE_SECRET/ADMIN_CODE
       // abaixo): visao com nomes comparando desempenho e sensivel, so faz sentido pra lideranca.
@@ -2332,10 +2338,48 @@
       });
     }
 
+    // v2.6.1: alternativa ao grupo do Jira + exclusao reativa — se RANKING_INCLUDE estiver
+    // preenchido, ele vira a UNICA fonte de verdade de "quem e do time" (o grupo do Jira nem
+    // e' consultado). Cada linha pode ser um accountId (Jira Cloud: hex de 24 chars OU contendo
+    // ":", ex: conta OAuth/app) ou um nome, resolvido pra accountId via busca de usuario do
+    // Jira. Cacheado em memoria por um tempo curto (so pra nao repetir N buscas de usuario a
+    // cada uma das ~4 chamadas que o Painel administrativo faz em paralelo na mesma renderizacao).
+    let _rankingIncludeCache = { key: '', ts: 0, members: null };
+    async function _resolveRankingInclude(){
+      const list = (Array.isArray(SETTINGS.RANKING_INCLUDE) ? SETTINGS.RANKING_INCLUDE : [])
+        .map(s => String(s || '').trim()).filter(Boolean);
+      if(!list.length) return null; // sinaliza "sem allowlist configurada, usar o grupo do Jira"
+
+      const cacheKey = list.join('\n');
+      if(_rankingIncludeCache.key === cacheKey && (Date.now() - _rankingIncludeCache.ts) < 5 * 60 * 1000){
+        return _rankingIncludeCache.members;
+      }
+
+      const isAccountId = s => /^[0-9a-f]{24}$/i.test(s) || s.includes(':');
+      const members = [];
+      for(const entry of list){
+        if(isAccountId(entry)){ members.push({ accountId: entry, displayName: entry }); continue; }
+        try{
+          const url = `${location.origin}/rest/api/3/user/search?query=${encodeURIComponent(entry)}&maxResults=1`;
+          const r = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+          const arr = r.ok ? await r.json() : [];
+          if(arr && arr[0]){ members.push({ accountId: arr[0].accountId, displayName: arr[0].displayName || entry }); continue; }
+          console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: nenhum usuario encontrado pra "${entry}" — ignorado.`);
+        }catch(e){
+          console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: falha resolvendo "${entry}":`, e);
+        }
+      }
+      _rankingIncludeCache = { key: cacheKey, ts: Date.now(), members };
+      return members;
+    }
+
     // Versao filtrada de getGroupMembers — usada em TODO lugar que alimenta Ranking/Painel
     // administrativo (getTeamRanking, getAdminTeamOverview, getCategoryBreakdownThisWeek), pra
-    // bots e exclusoes manuais nunca aparecerem nem entrarem nas medias/somas.
+    // bots e exclusoes manuais nunca aparecerem nem entrarem nas medias/somas. Se RANKING_INCLUDE
+    // estiver configurado, usa ele como allowlist exclusiva (nem consulta o grupo do Jira).
     async function getGroupMembersFiltered(groupName){
+      const included = await _resolveRankingInclude();
+      if(included !== null) return included.filter(m => !_isExcludedMember(m));
       const members = await getGroupMembers(groupName);
       return members.filter(m => !_isExcludedMember(m));
     }
@@ -10947,9 +10991,14 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <div class="hint">Nome exato do grupo no Jira. Define quem entra na compara&ccedil;&atilde;o. Vazio = ranking fica desligado mesmo com a caixa acima marcada.</div>
                 </div>
                 <div class="full">
+                  <label>Quem &eacute; do time (allowlist, opcional)</label>
+                  <textarea id="ml_s_ranking_include" rows="3" placeholder="um nome ou accountId por linha &mdash; deixe vazio pra usar o grupo do Jira acima" style="font-family:var(--ml-mono);font-size:12px;">${esc((Array.isArray(cur.RANKING_INCLUDE) ? cur.RANKING_INCLUDE : (Array.isArray(def.RANKING_INCLUDE) ? def.RANKING_INCLUDE : [])).join('\n'))}</textarea>
+                  <div class="hint">Se preenchido, <b>substitui</b> o grupo do Jira acima &mdash; s&oacute; essas pessoas contam no Ranking/Painel administrativo (ignora quem est&aacute; no grupo). &Uacute;til se o grupo do Jira tiver gente de fora demais. Deixe vazio pra continuar usando o grupo + a lista de exclus&atilde;o abaixo.</div>
+                </div>
+                <div class="full">
                   <label>Excluir do ranking/Painel administrativo</label>
                   <textarea id="ml_s_ranking_exclude" rows="3" placeholder="um nome ou accountId por linha" style="font-family:var(--ml-mono);font-size:12px;">${esc((Array.isArray(cur.RANKING_EXCLUDE) ? cur.RANKING_EXCLUDE : (Array.isArray(def.RANKING_EXCLUDE) ? def.RANKING_EXCLUDE : [])).join('\n'))}</textarea>
-                  <div class="hint">Contas de bot/aplica&ccedil;&atilde;o (nome terminado em "Application") j&aacute; s&atilde;o exclu&iacute;das automaticamente. Use aqui pessoas de <b>outro time</b> que aparecem no grupo acima mas n&atilde;o s&atilde;o do time (ex: algu&eacute;m que fecha chamado na fila por engano) &mdash; um nome (ou peda&ccedil;o do nome) ou accountId por linha.</div>
+                  <div class="hint">S&oacute; usado quando a allowlist acima estiver <b>vazia</b>. Contas de bot/aplica&ccedil;&atilde;o (nome terminado em "Application") j&aacute; s&atilde;o exclu&iacute;das automaticamente. Use aqui pessoas de <b>outro time</b> que aparecem no grupo mas n&atilde;o s&atilde;o do time (ex: algu&eacute;m que fecha chamado na fila por engano) &mdash; um nome (ou peda&ccedil;o do nome) ou accountId por linha.</div>
                 </div>
                 <div>
                   <label>Formato de exibi&ccedil;&atilde;o</label>
@@ -11762,6 +11811,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             // Ranking do time
             RANKING_ENABLED:      !!modal.querySelector('#ml_s_ranking_enabled')?.checked,
             RANKING_TEAM_GROUP:   String(modal.querySelector('#ml_s_ranking_group')?.value || '').trim(),
+            RANKING_INCLUDE:      String(modal.querySelector('#ml_s_ranking_include')?.value || '').replace(/\r\n/g,'\n').split('\n').map(s => s.trim()).filter(Boolean),
             RANKING_EXCLUDE:      String(modal.querySelector('#ml_s_ranking_exclude')?.value || '').replace(/\r\n/g,'\n').split('\n').map(s => s.trim()).filter(Boolean),
             RANKING_DISPLAY_MODE: String(modal.querySelector('#ml_s_ranking_mode')?.value || 'anonimo'),
             RANKING_SHOW_DAILY:   !!modal.querySelector('#ml_s_ranking_daily')?.checked,
