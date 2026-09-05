@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.19
+// @version      2.5.20
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -6154,18 +6154,24 @@
             // apareceram Incident type, IS Ubicacion, Responsavel, Resolucao, Validated with the
             // user, Provider, Solution) — ele so e' citado no texto ESTATICO do erro 400, que
             // sempre lista os mesmos 6 nomes independente do que realmente falta (fato
-            // documentado desde a v2.5.11). Alem disso, seu shape de GET e' de um campo de
+            // documentado desde a v2.5.11). A v2.5.19 tentou so' pular ele quando NAO estivesse
+            // nos campos reais da propria tela da transicao (_allTransitionFields) — testado de
+            // novo no IS-1103203 e continuou sendo reenviado do mesmo jeito. Fomos direto na API
+            // do Jira (MCP, fora do userscript) conferir _allTransitionFields de verdade pra essa
+            // transicao (id 361, "Resolve") nesse ticket: o campo ESTA' la' sim, so' que com
+            // "required": false — ou seja, minha premissa (so pular se nao existir na tela) tava
+            // errada; ele existe la', so' nao e' obrigatorio ali, e por isso o Jira nao renderiza
+            // ele na tela nativa (que so mostra os obrigatorios) mesmo estando tecnicamente
+            // presente nos dados da transicao. Alem disso, seu shape de GET e' de um campo de
             // sistema do JSM (schema "sd-customerrequesttype": {requestType:{id, serviceDeskId,
             // ...}, currentStatus:{...}, _links:{...}}), tipicamente IMUTAVEL apos a criacao do
             // ticket via essa API. Ja tentamos 2 formatos de escrita as cegas — v2.5.17 (achatar
-            // por schema.type==='string') e v2.5.18 ("serviceDeskId/requestTypeId") — e os dois
-            // deram o MESMO erro de novo, byte a byte. Em vez de adivinhar um 3o formato, paramos
-            // de tentar ESCREVER esse campo: se ele nao aparecer nos campos REAIS da propria tela
-            // dessa transicao (_allTransitionFields, mesma fonte usada pro "Validated with the
-            // user"), tratamos como campo que nunca precisou ser tocado — fica de fora do
-            // payload (nem autoFilled, nem stillMissing). Hipotese: a API so reclama dele porque
-            // ele estava presente no payload (por termos tentado reenvia-lo), nao porque falta de
-            // verdade.
+            // por schema.type==='string') e v2.5.18 ("serviceDeskId/requestTypeId") — sem sucesso.
+            // v2.5.20: para de depender de "esta ou nao esta nos campos da tela" — passa a pular
+            // QUALQUER campo com esse shape especifico (JSM Request Type), incondicionalmente,
+            // porque (a) e' opcional (required:false) na propria tela da transicao, (b) nunca
+            // aparece renderizado na tela nativa, e (c) 2 formatos de escrita diferentes ja
+            // falharam. Nunca faz sentido tentar escreve-lo de volta.
             const _isRequestTypeShapedField = (v) => !!(v && typeof v === 'object' && v.requestType && v.requestType.id);
             const autoFilled = {};
             const stillMissing = {};
@@ -6179,9 +6185,9 @@
                 stillMissing[k] = meta;
                 continue;
               }
-              if(_isRequestTypeShapedField(currentValues[k]) && !_allTransitionFields?.[k]){
+              if(_isRequestTypeShapedField(currentValues[k])){
                 skippedRequestType.push(meta?.name || k);
-                log(`recovery: pulando "${meta?.name || k}" — parece o campo de sistema "Request Type" do JSM, nunca apareceu na tela nativa dessa transicao, e 2 formatos de escrita ja falharam (v2.5.17/v2.5.18). Deixando de fora do payload.`);
+                log(`recovery: pulando "${meta?.name || k}" — campo de sistema "Request Type" do JSM (opcional na tela dessa transicao, nunca renderizado na tela nativa, 2 formatos de escrita ja falharam v2.5.17/v2.5.18). Deixando de fora do payload incondicionalmente.`);
                 continue;
               }
               if(_isCmdbObjectField(k)){
