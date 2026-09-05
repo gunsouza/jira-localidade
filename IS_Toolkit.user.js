@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.4
+// @version      2.6.5
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -683,15 +683,14 @@
       // auditoria automaticamente se nao houver uma valida em cache — e usa o "closing_comment"
       // sugerido pela IA pra pre-preencher o comentario. Nunca bloqueia o Aplicar (so informa).
       AUDIT_AUTO_ON_RESOLVE: true,
-      // v2.6.4: usuario reportou que a auditoria demora demais (ja vinha lenta antes da v2.6.3,
-      // entao nao e o prompt maior da Fase 1 — o gargalo real e o tempo de GERACAO do LLM no
-      // workflow externo, fora do nosso controle). "comment_reviews" (reescrever CADA
-      // comentario do analista que levar "warn") e o item do JSON que mais gera texto de saida
-      // por auditoria (potencialmente varios comentarios reescritos por completo) e e so
-      // informativo — nao afeta o score nem os criterios. Default TRUE (pula por padrao,
-      // prioriza velocidade); desligue aqui se quiser as sugestoes de reescrita de comentario
-      // de volta, aceitando que fica mais lento.
-      AUDIT_SKIP_COMMENT_REVIEWS: true,
+      // v2.6.4 tentou default TRUE aqui (pular "comment_reviews" por padrao, pra reduzir o
+      // tempo de geracao do LLM) — v2.6.5 REVERTEU pra default FALSE (sempre gerar) a pedido
+      // do usuario: os comentarios reescritos carregam informacao real de troubleshooting (o
+      // que foi feito, canais usados, etc.), tirar isso nao ajuda em nada o analista, so
+      // enxuga a resposta da IA. Continua so informativo (nao afeta score), e o toggle
+      // (Configuracoes → Auditoria) continua disponivel pra quem quiser desligar na unha um dia
+      // que precisar de velocidade — só nao é mais o padrao.
+      AUDIT_SKIP_COMMENT_REVIEWS: false,
 
       // ---- Central do Grid (dashboard de arquivos usados pelo time) ----
       // Link fixo pra central de Grid do time. Aparece como atalho na Home do toolkit.
@@ -7777,7 +7776,7 @@
     // oficiais (SLA 15 + Tipificacao 40 + Qualidade 45 = 100), o que exige buscar campos de SLA
     // que hoje a auditoria NAO le (Time to First Response/Resolution — ver SLA_FIELD_ID, hoje so
     // usado pro card "Risco de SLA" do Painel do analista, nunca chega no _buildAuditPrompt).
-    const AUDIT_PROMPT_VERSION = '1.55.1';
+    const AUDIT_PROMPT_VERSION = '1.55.2';
 
     // Monta o prompt que sera enviado para a IA via webhook
     function _buildAuditPrompt(data, alreadyFixed){
@@ -7840,9 +7839,9 @@
       // nenhum customfield configurado (v1.99.0).
       const hasSolutionTypeField   = true;
       const hasUserValidationField = Number(SETTINGS.CF_USER_VALIDATION || DEFAULTS.CF_USER_VALIDATION || 0) > 0;
-      // v2.6.4: ver comentario em DEFAULTS.AUDIT_SKIP_COMMENT_REVIEWS — desligado por padrao
-      // pra reduzir o tempo de geracao do LLM (reescrever cada comentario com "warn" e o item
-      // que mais gera texto de saida, e e so informativo).
+      // v2.6.4/v2.6.5: ver comentario em DEFAULTS.AUDIT_SKIP_COMMENT_REVIEWS — ligado (gera
+      // comment_reviews) por padrao; o toggle em Configuracoes → Auditoria deixa desligar caso
+      // a caso pra ganhar velocidade, mas o padrao e sempre gerar (a pedido do usuario).
       const skipCommentReviews = SETTINGS.AUDIT_SKIP_COMMENT_REVIEWS !== false;
 
       // Ticket considerado aberto se nao estiver em status "done"
@@ -10969,8 +10968,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <div class="hint">Em "Mudar status", ao selecionar uma transi&ccedil;&atilde;o de encerramento sem auditoria em cache (ou desatualizada), roda a auditoria sozinha e usa a sugest&atilde;o de fechamento da IA pra pr&eacute;-preencher o coment&aacute;rio. Nunca impede de aplicar a transi&ccedil;&atilde;o, mesmo com pend&ecirc;ncias.</div>
                 </div>
                 <div class="full">
-                  <label class="checkbox"><input type="checkbox" id="ml_s_audit_skip_comment_reviews" ${cur.AUDIT_SKIP_COMMENT_REVIEWS !== false ? 'checked' : ''} /> Pular sugest&otilde;es de reescrita de coment&aacute;rio (mais r&aacute;pido)</label>
-                  <div class="hint">"Coment&aacute;rios revisados" reescreve cada coment&aacute;rio do analista que a IA achar melhor&aacute;vel — &eacute; s&oacute; informativo (n&atilde;o afeta a pontua&ccedil;&atilde;o) e costuma ser a parte que mais gera texto na resposta da IA, ou seja, a que mais pesa no tempo de espera. Marcado (padr&atilde;o): pula essa parte, auditoria roda mais r&aacute;pido. Desmarque se preferir ter essas sugest&otilde;es de volta, mesmo demorando mais.</div>
+                  <label class="checkbox"><input type="checkbox" id="ml_s_audit_skip_comment_reviews" ${cur.AUDIT_SKIP_COMMENT_REVIEWS === true ? 'checked' : ''} /> Pular sugest&otilde;es de reescrita de coment&aacute;rio (mais r&aacute;pido, menos informa&ccedil;&atilde;o)</label>
+                  <div class="hint">"Coment&aacute;rios revisados" reescreve cada coment&aacute;rio do analista que a IA achar melhor&aacute;vel — &eacute; s&oacute; informativo (n&atilde;o afeta a pontua&ccedil;&atilde;o), mas carrega informa&ccedil;&atilde;o real de troubleshooting (o que foi feito, canais usados, etc.), por isso fica <b>ligado por padr&atilde;o</b> (desmarcado aqui). Costuma ser a parte que mais gera texto na resposta da IA, ou seja, a que mais pesa no tempo de espera — marque esta caixa se preferir uma auditoria mais r&aacute;pida abrindo m&atilde;o dessas sugest&otilde;es pontuais.</div>
                 </div>
               </div>
             </div>
