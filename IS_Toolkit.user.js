@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.17
+// @version      2.5.18
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -6115,9 +6115,37 @@
             // (customfield_11100): a API rejeitou com "O valor da operacao deve ser uma cadeia de
             // caracteres". "Achata" o valor pro texto puro nesses casos, reaproveitando
             // _plainFieldText (ja usado na deteccao de duplicados, v2.5.2).
+            // v2.5.18: o fix da v2.5.17 partiu de uma premissa errada - que bastava achatar
+            // objeto->texto quando meta.schema.type === 'string'. Testado de novo em ticket real
+            // (IS-1103203) e deu o MESMO erro de antes, byte a byte - ou seja, a condicao nunca
+            // disparou. Motivo: customfield_11100 e' o campo "Request Type" do Jira Service
+            // Management (JSM), cujo schema.type no editmeta NAO e' "string" (e' um tipo proprio
+            // de JSM, tipo "sd-customerrequesttype"), mesmo a API de transicao reclamando "deve
+            // ser uma cadeia de caracteres" ao tentar setar. Confirmado via MCP do Jira (GET real
+            // do campo): o valor vem como {requestType:{id:"3888", serviceDeskId:"202", ...}, ...}
+            // - nem "value" nem "name" no nivel raiz, entao _plainFieldText(v) sozinho devolveria
+            // string vazia (o que teria dado um erro DIFERENTE de "vazio", nao o mesmo de antes -
+            // confirma que a v2.5.17 nem chegou a tentar reenviar esse campo achatado).
+            // O formato de escrita documentado pra esse campo de JSM e' uma STRING no formato
+            // "{serviceDeskId}/{requestTypeId}" (ex: "202/3888"), no lugar do objeto inteiro do
+            // GET. Deteccao por shape (tem requestType.id + requestType.serviceDeskId), independente
+            // do que o editmeta disser sobre schema.type - jah que aqui o editmeta se mostrou nao
+            // confiavel pra prever o shape exigido na escrita (mesma categoria de bug do CMDB).
+            const _reshapeRequestTypeField = (v) => {
+              const rt = v?.requestType;
+              const sd = rt?.serviceDeskId || rt?.portalId;
+              if(rt && sd && rt.id){
+                return `${sd}/${rt.id}`;
+              }
+              return null;
+            };
             const _reshapeForResend = (v, meta) => {
-              if(meta?.schema?.type === 'string' && v != null && typeof v === 'object'){
-                return _plainFieldText(v);
+              if(v != null && typeof v === 'object'){
+                const rtShape = _reshapeRequestTypeField(v);
+                if(rtShape != null) return rtShape;
+                if(meta?.schema?.type === 'string'){
+                  return _plainFieldText(v);
+                }
               }
               return v;
             };
