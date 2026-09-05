@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.0
+// @version      2.6.1
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -727,6 +727,12 @@
       // geral). Metrica: so "resolvidos no periodo" (nao usa toolkit).
       RANKING_ENABLED: false,
       RANKING_TEAM_GROUP: 'is-ship-nats-n1', // grupo classico do Jira (time de atendimento de fila)
+      // v2.6.1: lista manual de exclusao (nome ou accountId, um por linha) — pra tirar do
+      // Ranking/Painel administrativo pessoas que estao no grupo do Jira mas nao sao "do time"
+      // de verdade (ex: alguem de outro time/regional que as vezes fecha ticket na nossa fila,
+      // e cujos numeros pessoais poluiriam a media/ranking). Contas de bot/servico ("* Application")
+      // ja sao excluidas automaticamente, sem precisar configurar nada (ver _isExcludedMember).
+      RANKING_EXCLUDE: [],
       // 'anonimo' | 'posicao' — o modo 'leaderboard' (nomes com numeros) foi REMOVIDO daqui na
       // v2.4.0 e virou exclusividade do Painel administrativo (ver ADMIN_MODE_SECRET/ADMIN_CODE
       // abaixo): visao com nomes comparando desempenho e sensivel, so faz sentido pra lideranca.
@@ -2241,9 +2247,21 @@
       if(!CATEGORY_BREAKDOWN_ENABLED || (!cfIncident && !cfService && !cfLegacy)) return null;
 
       const fieldKeys = [...new Set([cfIncident, cfService, cfLegacy].filter(Boolean).map(id => `customfield_${id}`))];
-      const who = scope === 'team' ? '' : 'assignee = currentUser() AND ';
+      let who = scope === 'team' ? '' : 'assignee = currentUser() AND ';
       // 'team' usa o mesmo escopo fixo IS+ISS do resto do Painel administrativo/Ranking
-      // (_rankingProjScope), nao os PROJECTS configuraveis (esses so valem pro card pessoal).
+      // (_rankingProjScope), nao os PROJECTS configuraveis (esses so valem pro card pessoal) —
+      // e, igual getTeamRanking/getAdminTeamOverview, restringe por assignee aos membros
+      // filtrados do grupo (RANKING_TEAM_GROUP menos bots/exclusoes). Bug real reportado pelo
+      // usuario: sem esse filtro, "categoria do time" contava QUALQUER resolvido de IS+ISS
+      // (inclusive tickets de outros times/regionais fechados na fila por engano), e boa parte
+      // desses nem tinha a categoria preenchida do jeito que o time preenche — daí o "(sem
+      // categoria): 100%" aparecendo mesmo o time preenchendo categoria normalmente.
+      if(scope === 'team'){
+        if(!RANKING_TEAM_GROUP) return { total: 0, truncated: false, breakdown: [], maxResults: 0 };
+        const members = await getGroupMembersFiltered(RANKING_TEAM_GROUP);
+        if(!members.length) return { total: 0, truncated: false, breakdown: [], maxResults: 0 };
+        who = `assignee in (${members.map(m => `"${m.accountId}"`).join(',')}) AND `;
+      }
       const projScope = scope === 'team' ? _rankingProjScope() : _projScope();
       const jql = `${projScope}${who}resolutiondate >= startOfWeek()`;
       const maxResults = scope === 'team' ? 250 : 100;
@@ -2293,6 +2311,35 @@
       return members;
     }
 
+    // v2.6.1: um membro do grupo do Jira nem sempre "e do time" de verdade — 2 casos reais
+    // achados num teste real do Painel administrativo: (1) contas de bot/servico da propria
+    // Atlassian (ex: "iup_botsupport_01 Application", "sup_pymnatis_01 Application") que entram
+    // no grupo por integracao mas nao sao analistas; (2) pessoas de OUTRO time/regional que as
+    // vezes fecham um chamado na fila do time (ou estao no grupo por engano) e cujos numeros
+    // pessoais nao deveriam contar na media/ranking do time. (1) e' excluido automaticamente
+    // pelo padrao de nome "* Application" (convencao do Jira pra contas de aplicacao). (2)
+    // precisa de configuracao manual (RANKING_EXCLUDE, nome ou accountId, um por linha).
+    function _isExcludedMember(m){
+      const name = String(m?.displayName || '').trim();
+      if(/\bApplication$/i.test(name)) return true;
+      const list = Array.isArray(SETTINGS.RANKING_EXCLUDE) ? SETTINGS.RANKING_EXCLUDE : [];
+      if(!list.length) return false;
+      const nameLower = name.toLowerCase();
+      const idLower = String(m?.accountId || '').toLowerCase();
+      return list.some(x => {
+        const s = String(x || '').trim().toLowerCase();
+        return s && (s === idLower || (s.length >= 3 && nameLower.includes(s)));
+      });
+    }
+
+    // Versao filtrada de getGroupMembers — usada em TODO lugar que alimenta Ranking/Painel
+    // administrativo (getTeamRanking, getAdminTeamOverview, getCategoryBreakdownThisWeek), pra
+    // bots e exclusoes manuais nunca aparecerem nem entrarem nas medias/somas.
+    async function getGroupMembersFiltered(groupName){
+      const members = await getGroupMembers(groupName);
+      return members.filter(m => !_isExcludedMember(m));
+    }
+
     // period: 'day' | 'month' (mes corrente, dia 1 ao ultimo dia — nao janela rolante).
     //
     // Por que contar por analista com /search/approximate-count (countByJql) em vez de UMA
@@ -2304,7 +2351,7 @@
     // aproximada-contagem por pessoa, sem baixar issues) nao tem esse teto.
     async function getTeamRanking(period){
       if(!RANKING_ENABLED || !RANKING_TEAM_GROUP) return null;
-      const members = await getGroupMembers(RANKING_TEAM_GROUP);
+      const members = await getGroupMembersFiltered(RANKING_TEAM_GROUP);
       if(!members.length) return { members: [], myCount: 0, teamAverage: 0, period };
 
       const startFn = period === 'month' ? 'startOfMonth()' : 'startOfDay()';
@@ -2356,13 +2403,19 @@
 
     // Volume da fila (time todo, sem quebrar por pessoa): quantos entraram, quantos saíram
     // e o saldo (backlogDelta > 0 = fila crescendo; < 0 = encolhendo) no período.
-    async function getAdminQueueVolume(period){
-      const scope = _rankingProjScope();
-      const startFn = _adminStartFn(period);
-      const [created, resolved] = await Promise.all([
-        countByJql(`${scope}created >= ${startFn}`),
-        countByJql(`${scope}resolutiondate >= ${startFn}`)
-      ]);
+    //
+    // v2.6.1: ANTES essa funcao contava direto com _rankingProjScope() (todo IS+ISS, sem
+    // filtro de pessoa) — bug real reportado pelo usuario: numeros irreais tipo "Criados: 331,
+    // Resolvidos: 350" NUM UNICO DIA, muito acima do que o time realmente atende, porque
+    // contava literalmente qualquer ticket dos projetos IS+ISS (de qualquer time/regional).
+    // Fix: em vez de contar de novo com escopo largo, DERIVA o volume somando o mesmo
+    // getAdminTeamOverview(period) que a tabela por pessoa ja precisa buscar (que SIM
+    // restringe por assignee aos membros filtrados do grupo RANKING_TEAM_GROUP) — sem
+    // chamada de rede extra, e com o mesmo universo de pessoas em ambos os blocos.
+    function _sumAdminVolume(period, overviewData){
+      const members = overviewData?.members || [];
+      const created = members.reduce((s, m) => s + (m.created || 0), 0);
+      const resolved = members.reduce((s, m) => s + (m.resolved || 0), 0);
       return { period, created, resolved, backlogDelta: created - resolved };
     }
 
@@ -2374,7 +2427,7 @@
     // Ranking) — concorrencia um pouco menor pra nao estourar rate limit em grupos grandes.
     async function getAdminTeamOverview(period){
       if(!RANKING_TEAM_GROUP) return null;
-      const members = await getGroupMembers(RANKING_TEAM_GROUP);
+      const members = await getGroupMembersFiltered(RANKING_TEAM_GROUP);
       if(!members.length) return { period, members: [] };
       const scope = _rankingProjScope();
       const startFn = _adminStartFn(period);
@@ -10893,6 +10946,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <input type="text" id="ml_s_ranking_group" value="${esc(cur.RANKING_TEAM_GROUP || def.RANKING_TEAM_GROUP || '')}" placeholder="ex: is-ship-nats-n1" style="font-family:var(--ml-mono);font-size:12px;" />
                   <div class="hint">Nome exato do grupo no Jira. Define quem entra na compara&ccedil;&atilde;o. Vazio = ranking fica desligado mesmo com a caixa acima marcada.</div>
                 </div>
+                <div class="full">
+                  <label>Excluir do ranking/Painel administrativo</label>
+                  <textarea id="ml_s_ranking_exclude" rows="3" placeholder="um nome ou accountId por linha" style="font-family:var(--ml-mono);font-size:12px;">${esc((Array.isArray(cur.RANKING_EXCLUDE) ? cur.RANKING_EXCLUDE : (Array.isArray(def.RANKING_EXCLUDE) ? def.RANKING_EXCLUDE : [])).join('\n'))}</textarea>
+                  <div class="hint">Contas de bot/aplica&ccedil;&atilde;o (nome terminado em "Application") j&aacute; s&atilde;o exclu&iacute;das automaticamente. Use aqui pessoas de <b>outro time</b> que aparecem no grupo acima mas n&atilde;o s&atilde;o do time (ex: algu&eacute;m que fecha chamado na fila por engano) &mdash; um nome (ou peda&ccedil;o do nome) ou accountId por linha.</div>
+                </div>
                 <div>
                   <label>Formato de exibi&ccedil;&atilde;o</label>
                   <select id="ml_s_ranking_mode">
@@ -11704,6 +11762,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             // Ranking do time
             RANKING_ENABLED:      !!modal.querySelector('#ml_s_ranking_enabled')?.checked,
             RANKING_TEAM_GROUP:   String(modal.querySelector('#ml_s_ranking_group')?.value || '').trim(),
+            RANKING_EXCLUDE:      String(modal.querySelector('#ml_s_ranking_exclude')?.value || '').replace(/\r\n/g,'\n').split('\n').map(s => s.trim()).filter(Boolean),
             RANKING_DISPLAY_MODE: String(modal.querySelector('#ml_s_ranking_mode')?.value || 'anonimo'),
             RANKING_SHOW_DAILY:   !!modal.querySelector('#ml_s_ranking_daily')?.checked,
             RANKING_SHOW_MONTHLY: !!modal.querySelector('#ml_s_ranking_monthly')?.checked,
@@ -12978,68 +13037,100 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
           // Guarda os dados ja carregados (em memoria, so pra essa renderizacao) pra alimentar
           // os botoes de exportar (Copiar resumo / Baixar CSV) sem precisar buscar de novo.
-          const _adminExportData = { volume: null, people: null, category: null };
+          const _adminExportData = { volume: null, people: null, peopleLabel: 'semana', category: null };
 
-          // Volume da fila: criados / resolvidos / backlog liquido, hoje / semana / mes.
+          // v2.6.1: Volume e "por pessoa" agora vem de UMA SO fonte (getAdminTeamOverview, ja
+          // restrita por assignee aos membros filtrados do grupo RANKING_TEAM_GROUP) buscada
+          // uma vez por periodo (dia/semana/mes) em paralelo — Volume soma os 3 campos por
+          // pessoa (_sumAdminVolume), e clicar num card de Volume troca qual periodo alimenta
+          // a tabela por pessoa, sem nenhuma chamada de rede nova (so troca o que ja foi
+          // buscado). Pedido do usuario: cards de Volume clicaveis + Volume escopado ao time
+          // de verdade (nao IS+ISS inteiro).
           const volPeriods = [{ key: 'day', label: 'hoje' }, { key: 'week', label: 'semana' }, { key: 'month', label: 'mês' }];
-          Promise.all(volPeriods.map(p => getAdminQueueVolume(p.key).catch(e => { console.warn(`[IS Toolkit][admin] falha no volume (${p.key}):`, e); return null; })))
-            .then(results => {
-              _adminExportData.volume = volPeriods.map((p, i) => ({ label: p.label, ...(results[i] || {}) }));
-              const el = document.getElementById('ml_dash_admin_volume');
-              if(!el) return;
-              el.innerHTML = volPeriods.map((p, i) => {
-                const d = results[i];
-                if(!d) return `<div class="homeCard"><div class="err">Falha ao carregar (${esc(p.label)}).</div></div>`;
-                const deltaLabel = d.backlogDelta > 0 ? `+${d.backlogDelta} (crescendo)` : (d.backlogDelta < 0 ? `${d.backlogDelta} (encolhendo)` : '0 (estável)');
-                const deltaColor = d.backlogDelta > 0 ? 'var(--ml-warn, #d97706)' : (d.backlogDelta < 0 ? 'var(--ml-green)' : 'var(--ml-text-mut)');
-                return `
-                  <div class="homeCard" style="text-align:left;">
-                    <div style="font-weight:700;">Volume &mdash; ${esc(p.label)}</div>
-                    <div class="muted" style="margin-top:2px;">Criados: ${d.created} &middot; Resolvidos: ${d.resolved}</div>
-                    <div style="margin-top:4px;font-weight:700;color:${deltaColor};">Backlog líquido: ${esc(deltaLabel)}</div>
-                  </div>
-                `;
-              }).join('');
-            });
-
-          // Criados x Resolvidos x Auto-fechados por pessoa (mesmo grupo do Ranking do time).
+          const volEl = document.getElementById('ml_dash_admin_volume');
           const peopleEl = document.getElementById('ml_dash_admin_people');
-          if(peopleEl){
+          let _adminSelectedPeriod = 'week';
+          const _adminOverviewByPeriod = {};
+
+          function _renderAdminPeopleTable(periodKey){
+            if(!peopleEl) return;
             if(!RANKING_TEAM_GROUP){
               peopleEl.innerHTML = `<div class="homeCard"><div class="muted">Configure um grupo do Jira (mesmo campo do Ranking do time, em Configurações → Painel do analista) pra ver o detalhamento por pessoa.</div></div>`;
-            } else {
-              peopleEl.innerHTML = `<div class="homeCard"><div class="muted">Carregando detalhamento por pessoa (esta semana)...</div></div>`;
-              getAdminTeamOverview('week').then(data => {
-                _adminExportData.people = data;
-                if(!document.getElementById('ml_dash_admin_people')) return;
-                if(!data || !data.members.length){
-                  peopleEl.innerHTML = `<div class="homeCard"><div class="muted">Nenhum membro encontrado no grupo "${esc(RANKING_TEAM_GROUP)}".</div></div>`;
-                  return;
-                }
-                const rows = data.members.map(m => `
-                  <div style="display:grid; grid-template-columns:1fr 70px 70px 90px 90px; gap:8px; padding:5px 0; border-bottom:1px solid var(--ml-border-2); align-items:center;">
-                    <div style="font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(m.displayName)}">${esc(m.displayName)}${m.error ? ' &#9888;&#65039;' : ''}</div>
-                    <div style="text-align:right; font-size:12.5px;">${m.created}</div>
-                    <div style="text-align:right; font-size:12.5px;">${m.resolved}</div>
-                    <div style="text-align:right; font-size:12.5px;">${m.selfClosed}</div>
-                    <div style="text-align:right; font-size:12.5px; font-weight:${m.openNow >= 10 ? '700' : '400'}; color:${m.openNow >= 10 ? 'var(--ml-warn, #d97706)' : 'inherit'};">${m.openNow}</div>
-                  </div>
-                `).join('');
-                peopleEl.innerHTML = `
-                  <div style="font-weight:700;margin-bottom:8px;">Criados x Resolvidos por pessoa (esta semana) &middot; carga aberta agora</div>
-                  <div style="background:var(--ml-bg-2); border:1px solid var(--ml-border-2); border-radius:8px; padding:14px;">
-                    <div style="display:grid; grid-template-columns:1fr 70px 70px 90px 90px; gap:8px; padding-bottom:6px; border-bottom:2px solid var(--ml-border-2); font-size:11px; font-weight:700; color:var(--ml-text-mut);">
-                      <div>Analista</div><div style="text-align:right;">Criados</div><div style="text-align:right;">Resolvidos</div><div style="text-align:right;">Auto-fechados</div><div style="text-align:right;">Abertos agora</div>
-                    </div>
-                    ${rows}
-                    <div class="meta" style="margin-top:6px;">"Auto-fechados" = a mesma pessoa abriu e resolveu o ticket (ex: ISS criada e fechada por quem mesmo a criou). "Abertos agora" é a carga em tempo real (não depende do período acima) — destacado quando ≥10.</div>
-                  </div>
-                `;
-              }).catch(e => {
-                if(!document.getElementById('ml_dash_admin_people')) return;
-                peopleEl.innerHTML = `<div class="err">Falha ao carregar detalhamento por pessoa: ${esc(e.message || String(e))}</div>`;
-              });
+              return;
             }
+            const data = _adminOverviewByPeriod[periodKey];
+            const periodLabel = (volPeriods.find(p => p.key === periodKey) || {}).label || periodKey;
+            _adminExportData.people = data;
+            _adminExportData.peopleLabel = periodLabel;
+            if(!data || !data.members.length){
+              peopleEl.innerHTML = `<div class="homeCard"><div class="muted">Nenhum membro encontrado no grupo "${esc(RANKING_TEAM_GROUP)}".</div></div>`;
+              return;
+            }
+            const rows = data.members.map(m => `
+              <div style="display:grid; grid-template-columns:1fr 70px 70px 90px 90px; gap:8px; padding:5px 0; border-bottom:1px solid var(--ml-border-2); align-items:center;">
+                <div style="font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(m.displayName)}">${esc(m.displayName)}${m.error ? ' &#9888;&#65039;' : ''}</div>
+                <div style="text-align:right; font-size:12.5px;">${m.created}</div>
+                <div style="text-align:right; font-size:12.5px;">${m.resolved}</div>
+                <div style="text-align:right; font-size:12.5px;">${m.selfClosed}</div>
+                <div style="text-align:right; font-size:12.5px; font-weight:${m.openNow >= 10 ? '700' : '400'}; color:${m.openNow >= 10 ? 'var(--ml-warn, #d97706)' : 'inherit'};">${m.openNow}</div>
+              </div>
+            `).join('');
+            peopleEl.innerHTML = `
+              <div style="font-weight:700;margin-bottom:8px;">Criados x Resolvidos por pessoa (${esc(periodLabel)}) &middot; carga aberta agora</div>
+              <div style="background:var(--ml-bg-2); border:1px solid var(--ml-border-2); border-radius:8px; padding:14px;">
+                <div style="display:grid; grid-template-columns:1fr 70px 70px 90px 90px; gap:8px; padding-bottom:6px; border-bottom:2px solid var(--ml-border-2); font-size:11px; font-weight:700; color:var(--ml-text-mut);">
+                  <div>Analista</div><div style="text-align:right;">Criados</div><div style="text-align:right;">Resolvidos</div><div style="text-align:right;">Auto-fechados</div><div style="text-align:right;">Abertos agora</div>
+                </div>
+                ${rows}
+                <div class="meta" style="margin-top:6px;">"Auto-fechados" = a mesma pessoa abriu e resolveu o ticket (ex: ISS criada e fechada por quem mesmo a criou). "Abertos agora" é a carga em tempo real (não depende do período escolhido acima) — destacado quando ≥10. Clique num card de Volume acima pra trocar o período desta tabela.</div>
+              </div>
+            `;
+          }
+
+          function _renderAdminVolumeCards(){
+            if(!volEl) return;
+            volEl.innerHTML = volPeriods.map(p => {
+              const data = _adminOverviewByPeriod[p.key];
+              if(data === null) return `<div class="homeCard"><div class="err">Falha ao carregar (${esc(p.label)}).</div></div>`;
+              const d = _sumAdminVolume(p.key, data);
+              const deltaLabel = d.backlogDelta > 0 ? `+${d.backlogDelta} (crescendo)` : (d.backlogDelta < 0 ? `${d.backlogDelta} (encolhendo)` : '0 (estável)');
+              const deltaColor = d.backlogDelta > 0 ? 'var(--ml-warn, #d97706)' : (d.backlogDelta < 0 ? 'var(--ml-green)' : 'var(--ml-text-mut)');
+              const isActive = _adminSelectedPeriod === p.key;
+              return `
+                <div class="homeCard ml_admin_vol_card" data-period="${esc(p.key)}" style="text-align:left;cursor:pointer;${isActive ? 'border-color:var(--ml-purple, #a78bfa);box-shadow:0 0 0 1px var(--ml-purple, #a78bfa) inset;' : ''}">
+                  <div style="font-weight:700;">Volume &mdash; ${esc(p.label)}${isActive ? ' &#128071;' : ''}</div>
+                  <div class="muted" style="margin-top:2px;">Criados: ${d.created} &middot; Resolvidos: ${d.resolved}</div>
+                  <div style="margin-top:4px;font-weight:700;color:${deltaColor};">Backlog líquido: ${esc(deltaLabel)}</div>
+                </div>
+              `;
+            }).join('');
+            _adminExportData.volume = volPeriods.map(p => ({
+              label: p.label,
+              ...(_adminOverviewByPeriod[p.key] !== null ? _sumAdminVolume(p.key, _adminOverviewByPeriod[p.key]) : {})
+            }));
+            volEl.querySelectorAll('.ml_admin_vol_card').forEach(card => {
+              card.addEventListener('click', () => {
+                const period = card.getAttribute('data-period');
+                if(!period || _adminOverviewByPeriod[period] === null || _adminOverviewByPeriod[period] === undefined) return;
+                _adminSelectedPeriod = period;
+                _renderAdminVolumeCards();
+                _renderAdminPeopleTable(period);
+              });
+            });
+          }
+
+          if(!RANKING_TEAM_GROUP){
+            if(volEl) volEl.innerHTML = `<div class="homeCard"><div class="muted">Configure um grupo do Jira (Configurações → Painel do analista) pra ver o volume e o detalhamento do time.</div></div>`;
+            if(peopleEl) peopleEl.innerHTML = `<div class="homeCard"><div class="muted">Configure um grupo do Jira (mesmo campo do Ranking do time, em Configurações → Painel do analista) pra ver o detalhamento por pessoa.</div></div>`;
+          } else {
+            if(volEl) volEl.innerHTML = `<div class="muted">Carregando volume da fila...</div>`;
+            if(peopleEl) peopleEl.innerHTML = `<div class="homeCard"><div class="muted">Carregando detalhamento por pessoa...</div></div>`;
+            Promise.all(volPeriods.map(p => getAdminTeamOverview(p.key).catch(e => { console.warn(`[IS Toolkit][admin] falha no overview (${p.key}):`, e); return null; })))
+              .then(results => {
+                volPeriods.forEach((p, i) => { _adminOverviewByPeriod[p.key] = results[i]; });
+                _renderAdminVolumeCards();
+                _renderAdminPeopleTable(_adminSelectedPeriod);
+              });
           }
 
           // Categoria do time todo (resolvidos da semana) — mesma logica do card pessoal
@@ -13105,8 +13196,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             txt.push('');
             csv.push('');
 
-            txt.push('CRIADOS X RESOLVIDOS POR PESSOA (esta semana) + CARGA ABERTA AGORA');
-            csv.push(csvRow(['Criados x Resolvidos por pessoa (semana) + carga aberta agora']), csvRow(['Analista','Criados','Resolvidos','Auto-fechados','Abertos agora']));
+            const peopleLabel = _adminExportData.peopleLabel || 'semana';
+            txt.push(`CRIADOS X RESOLVIDOS POR PESSOA (${peopleLabel}) + CARGA ABERTA AGORA`);
+            csv.push(csvRow([`Criados x Resolvidos por pessoa (${peopleLabel}) + carga aberta agora`]), csvRow(['Analista','Criados','Resolvidos','Auto-fechados','Abertos agora']));
             (_adminExportData.people?.members || []).forEach(m => {
               txt.push(`${m.displayName}: criados ${m.created}, resolvidos ${m.resolved}, auto-fechados ${m.selfClosed}, abertos agora ${m.openNow}`);
               csv.push(csvRow([m.displayName, m.created, m.resolved, m.selfClosed, m.openNow]));
