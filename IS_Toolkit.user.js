@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.6
+// @version      2.6.7
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -13,6 +13,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addValueChangeListener
 // @grant        GM_removeValueChangeListener
+// @grant        GM_info
 // @connect      furycloud.io
 // @connect      melisystems.com
 // @connect      verdi-flows.melisystems.com
@@ -26,6 +27,14 @@
 
 (function () {
     'use strict';
+
+    // v2.6.7: versao instalada, exibida nos headers dos modais (principal e Configuracoes) —
+    // pedido do usuario, pra facilitar conferir (em teste ou no dia a dia) se todo mundo do
+    // time esta na versao mais recente sem precisar abrir o codigo. Fonte unica: GM_info.script
+    // (o mesmo @version do cabecalho do userscript) — nunca duplicar esse numero numa constante
+    // separada, senao vira mais uma coisa pra lembrar de atualizar a cada bump (like o resto do
+    // fluxo de versionamento do projeto ja exige).
+    const APP_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '?';
 
     // =========================
     // MODO WHATSAPP WEB
@@ -142,16 +151,16 @@
         home_search_clear_title: 'Limpar',
         home_search_hint: 'Acesso rápido a qualquer ticket sem trocar de aba. Você vê resumo, status, localidade e pode marcar como duplicado do ticket atual em 1 clique.',
         home_status_title: 'Mudar Status',
-        home_status_desc: 'Aplica transições com mensagem pré-configurada. A opção <b>Derivar</b> abre o fluxo completo com seleção de time e ISS automático.',
+        home_status_desc: 'Aplica transições com mensagem pré-configurada — sem crise existencial nem duplo-clique acidental. A opção <b>Derivar</b> abre o fluxo completo com seleção de time e ISS automático.',
         home_status_btn: 'Mudar status',
         home_dups_title: 'Duplicados',
-        home_dups_desc: 'Lista tickets da mesma localidade com scoring de match. Filtra por IDs (IP/MAC/serial), vincula e comenta em lote.',
+        home_dups_desc: 'Encontra os dopplegangers deste chamado — outros tickets da mesma localidade, com scoring de match por IP/MAC/serial. Vincula e comenta em lote, sem precisar caçar um por um.',
         home_dups_btn: 'Abrir duplicados',
         home_derive_title: 'Derivar',
-        home_derive_desc: 'Atalho direto para derivar para outro time da allowlist, com ISS automático para <b>IS-SHIP-SE-N2</b>.',
+        home_derive_desc: 'Atalho direto pra passar o bastão pra outro time da allowlist, com ISS automático para <b>IS-SHIP-SE-N2</b>.',
         home_derive_btn: 'Derivar agora',
         home_audit_title: 'Auditar Ticket',
-        home_audit_desc: 'Análise por IA (via n8n): evidências, consistência, qualidade do registro e pontos de melhoria.',
+        home_audit_desc: 'Um auditor implacável (mas gentil) que confere evidências, consistência e qualidade do registro antes que o time oficial faça isso por você.',
         home_audit_webhook_missing_title: 'Configure o Webhook em Configurações → Auditoria',
         home_audit_webhook_missing_btn: 'Webhook não configurado',
         home_audit_btn_reanalyze: 'Reanalisar',
@@ -165,16 +174,16 @@
         home_search_clear_title: 'Limpiar',
         home_search_hint: 'Acceso rápido a cualquier ticket sin cambiar de pestaña. Ves resumen, estado, localidad y puedes marcar como duplicado del ticket actual en 1 clic.',
         home_status_title: 'Cambiar Estado',
-        home_status_desc: 'Aplica transiciones con mensaje preconfigurado. La opción <b>Derivar</b> abre el flujo completo con selección de equipo e ISS automático.',
+        home_status_desc: 'Aplica transiciones con mensaje preconfigurado — sin crisis existencial ni doble clic accidental. La opción <b>Derivar</b> abre el flujo completo con selección de equipo e ISS automático.',
         home_status_btn: 'Cambiar estado',
         home_dups_title: 'Duplicados',
-        home_dups_desc: 'Lista tickets de la misma localidad con scoring de coincidencia. Filtra por IDs (IP/MAC/serial), vincula y comenta en lote.',
+        home_dups_desc: 'Encuentra los "dobles" de este ticket — otros tickets de la misma localidad, con scoring de coincidencia por IP/MAC/serial. Vincula y comenta en lote, sin cazarlos uno por uno.',
         home_dups_btn: 'Abrir duplicados',
         home_derive_title: 'Derivar',
-        home_derive_desc: 'Atajo directo para derivar a otro equipo de la allowlist, con ISS automático para <b>IS-SHIP-SE-N2</b>.',
+        home_derive_desc: 'Atajo directo para pasarle la posta a otro equipo de la allowlist, con ISS automático para <b>IS-SHIP-SE-N2</b>.',
         home_derive_btn: 'Derivar ahora',
         home_audit_title: 'Auditar Ticket',
-        home_audit_desc: 'Análisis por IA (vía n8n): evidencias, consistencia, calidad del registro y puntos de mejora.',
+        home_audit_desc: 'Un auditor implacable (pero amable) que revisa evidencias, consistencia y calidad del registro antes de que el equipo oficial lo haga por vos.',
         home_audit_webhook_missing_title: 'Configure el Webhook en Configuración → Auditoría',
         home_audit_webhook_missing_btn: 'Webhook no configurado',
         home_audit_btn_reanalyze: 'Reanalizar',
@@ -188,16 +197,16 @@
         home_search_clear_title: 'Clear',
         home_search_hint: 'Quick access to any ticket without switching tabs. See summary, status, location, and mark it as a duplicate of the current ticket in 1 click.',
         home_status_title: 'Change Status',
-        home_status_desc: 'Applies transitions with a pre-configured message. The <b>Derive</b> option opens the full flow with team selection and automatic ISS.',
+        home_status_desc: 'Applies transitions with a pre-configured message — no existential crisis, no accidental double-click. The <b>Derive</b> option opens the full flow with team selection and automatic ISS.',
         home_status_btn: 'Change status',
         home_dups_title: 'Duplicates',
-        home_dups_desc: 'Lists tickets from the same location with match scoring. Filters by IDs (IP/MAC/serial), links and comments in bulk.',
+        home_dups_desc: 'Finds this ticket\'s doppelgängers — other tickets from the same location, with match scoring by IP/MAC/serial. Links and comments in bulk, no need to hunt them down one by one.',
         home_dups_btn: 'Open duplicates',
         home_derive_title: 'Derive',
-        home_derive_desc: 'Direct shortcut to derive to another allowlisted team, with automatic ISS for <b>IS-SHIP-SE-N2</b>.',
+        home_derive_desc: 'Direct shortcut to hand the ticket off to another allowlisted team, with automatic ISS for <b>IS-SHIP-SE-N2</b>.',
         home_derive_btn: 'Derive now',
         home_audit_title: 'Audit Ticket',
-        home_audit_desc: 'AI-powered analysis (via n8n): evidence, consistency, record quality, and improvement points.',
+        home_audit_desc: 'A relentless (but friendly) auditor that checks evidence, consistency, and record quality before the official team does it for you.',
         home_audit_webhook_missing_title: 'Configure the Webhook in Settings → Audit',
         home_audit_webhook_missing_btn: 'Webhook not configured',
         home_audit_btn_reanalyze: 'Re-analyze',
@@ -2025,7 +2034,7 @@
       modal.innerHTML = `
         <div class="h">
           <div>
-            <div class="title"><span class="titleDot"></span>${esc(title)}</div>
+            <div class="title"><span class="titleDot"></span>${esc(title)} <span style="font-size:10px;font-weight:400;color:var(--ml-text-mut);margin-left:4px;" title="Versão instalada do IS Toolkit">v${esc(APP_VERSION)}</span></div>
             <div class="subtitle" id="ml_loc_sub">${esc(subtitle || '')}</div>
           </div>
           <div class="headerActions">
@@ -10656,7 +10665,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       modal.innerHTML = `
         <div class="sh">
           <div>
-            <div class="title">&#9881; Configuracoes</div>
+            <div class="title">&#9881; Configuracoes <span style="font-size:10px;font-weight:400;color:var(--ml-text-mut);margin-left:4px;" title="Versão instalada do IS Toolkit">v${esc(APP_VERSION)}</span></div>
             <div class="meta">Salvo neste navegador. Apos salvar, a pagina recarrega para aplicar.</div>
           </div>
           <div style="display:flex;gap:8px">
