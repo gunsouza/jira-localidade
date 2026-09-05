@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.12
+// @version      2.6.13
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -13864,13 +13864,48 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       return key ? _getCachedTicketLang(key) : '';
     }
 
+    // v2.6.13: bug real reportado pelo usuario — a mensagem do WhatsApp traduziu de verdade
+    // (ao contrario da v2.6.11, onde a chamada de traducao simplesmente falhava), MAS o Google
+    // Translate tambem traduziu as PALAVRAS DE VERDADE que estao dentro dos placeholders
+    // ({reporter} -> {reportero}, {summary} -> {resumen}, {description} -> {descripción}) —
+    // faz sentido, sao palavras reais em ingles, o tradutor nao sabe que ali e' um token de
+    // substituicao. Resultado: a substituicao final (que procura o texto EXATO "{reporter}" em
+    // ingles) nunca casava, e o placeholder cru sobrava na mensagem que foi pro cliente.
+    // Fix: troca cada {token} por um marcador numerico opaco ANTES de traduzir (numeros nao sao
+    // traduzidos por definicao) e desfaz a troca depois, restaurando o {token} original — assim
+    // a substituicao de dados que acontece DEPOIS da traducao continua funcionando normal.
+    const _PLACEHOLDER_MARKER_PREFIX = '5209983601';
+    function _protectPlaceholders(text){
+      const map = [];
+      const protectedText = String(text || '').replace(/\{[a-zA-Z_]+\}/g, (m) => {
+        const marker = `${_PLACEHOLDER_MARKER_PREFIX}${map.length}${_PLACEHOLDER_MARKER_PREFIX}`;
+        map.push([marker, m]);
+        return marker;
+      });
+      return { protectedText, map };
+    }
+    function _restorePlaceholders(text, map){
+      let out = String(text || '');
+      for(const [marker, original] of map){
+        // Match exato primeiro (caso comum). Fallback: regex tolerante a espaco/virgula/ponto
+        // que o tradutor as vezes insere no meio de sequencias numericas longas (formatacao de
+        // "numero grande" tipo "5.209.983.601" em vez de "5209983601") — sem isso o marcador
+        // sairia do outro lado com pontuacao extra e o restore falharia silenciosamente.
+        if(out.includes(marker)){ out = out.split(marker).join(original); continue; }
+        const loose = new RegExp(marker.split('').join('[\\s.,]*'), 'g');
+        out = out.replace(loose, original);
+      }
+      return out;
+    }
+
     async function _autoTranslateForTicket(text, opts){
       const clean = String(text || '');
       if(!clean.trim()) return { text: clean, translated: false, lang: '' };
       try{
         const lang = _langForTranslation(opts);
         if(lang && lang !== SNIPPETS_AUTHOR_LANG){
-          let translated = await translateText(clean, lang);
+          const { protectedText, map } = _protectPlaceholders(clean);
+          let translated = await translateText(protectedText, lang);
           if(!translated){
             // v2.6.11: bug real reportado pelo usuario — mensagem do WhatsApp saiu em pt-BR
             // pra um ticket do Mexico mesmo com o DDI (+52) certo, ou seja, o idioma FOI
@@ -13881,9 +13916,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             // das falhas transitorias) + log no console pra dar pra diagnosticar se acontecer
             // de novo (F12 -> Console, procurar "[IS Toolkit][translate]").
             await new Promise(r => setTimeout(r, 700));
-            translated = await translateText(clean, lang);
+            translated = await translateText(protectedText, lang);
           }
-          if(translated) return { text: translated, translated: true, lang };
+          if(translated) return { text: _restorePlaceholders(translated, map), translated: true, lang };
           console.warn(`[IS Toolkit][translate] nao foi possivel traduzir pro idioma "${lang}" depois de 2 tentativas — usando texto original sem traduzir.`);
         }
       }catch(e){
