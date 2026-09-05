@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.7
+// @version      2.6.8
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -1392,15 +1392,24 @@
   // (default 4s) enquanto uma espera longa roda. Retorna uma funcao "stop" — chame quando o
   // resultado chegar (ou o elemento sumir) pra parar o timer e nao vazar memoria. Para de
   // sozinho se o elemento sair do DOM (troca de tela) mesmo sem chamar "stop".
+  // `opts.mode`: 'box' (default) — bloco com borda tracejada + spinner, via innerHTML, pra
+  // areas de loading maiores; 'text' — so troca o textContent, pra caber num BOTAO pequeno
+  // (ex: o antigo "Analisando..." fixo do botao "Auditar" da Home — v2.6.8, pedido do usuario
+  // pra tambem rodar mensagens ali, nao so nos paineis grandes).
   function _startFunLoading(el, context, opts){
     opts = opts || {};
     const intervalMs = opts.intervalMs || 4000;
     const prefix = opts.prefix || '';
+    const mode = opts.mode || 'box';
     if(!el) return () => {};
     let timer = null;
     const render = () => {
       if(!document.body.contains(el)){ if(timer) clearInterval(timer); return; }
-      el.innerHTML = `<div style="padding:10px 12px;border:1px dashed var(--ml-border);border-radius:10px;font-size:12px;color:var(--ml-text-mut);"><span class="ml-spinner">&#x21bb;</span> ${prefix}${esc(_pickFun(context))}</div>`;
+      if(mode === 'text'){
+        el.textContent = `${prefix}${_pickFun(context)}`;
+      } else {
+        el.innerHTML = `<div style="padding:10px 12px;border:1px dashed var(--ml-border);border-radius:10px;font-size:12px;color:var(--ml-text-mut);"><span class="ml-spinner">&#x21bb;</span> ${prefix}${esc(_pickFun(context))}</div>`;
+      }
     };
     render();
     timer = setInterval(render, intervalMs);
@@ -8581,19 +8590,29 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       }
 
       const btn = document.getElementById('ml_home_audit');
-      if(btn){ btn.disabled = true; btn.textContent = 'Analisando...'; }
-      showToast(_pickFun('audit'), 'info', 4500);
+      if(btn){ btn.disabled = true; }
+      // v2.6.8: em vez de um texto fixo "Analisando..." (+ um toast avulso que so aparecia uma
+      // vez), o proprio texto do botao agora roda entre ~5 frases engracadinhas enquanto a
+      // auditoria roda — pedido do usuario pra deixar a espera mais leve tambem no botao, nao
+      // so nos blocos maiores (painel de auditoria inline, lote). `stopFun` para o rodizio em
+      // qualquer saida (sucesso, erro ou retry, que assume o texto do botao pra mostrar a tentativa).
+      let stopFun = _startFunLoading(btn, 'audit', { mode: 'text', intervalMs: 3500 });
 
       try{
         const result = await _runAuditCore(issueKey, {
-          onRetry: (attempt, usedFallback) => { if(btn) btn.textContent = usedFallback ? `Tentativa ${attempt}/3 (proxy)...` : `Tentativa ${attempt}/3...`; }
+          onRetry: (attempt, usedFallback) => {
+            if(stopFun){ stopFun(); stopFun = null; }
+            if(btn) btn.textContent = usedFallback ? `Tentativa ${attempt}/3 (proxy)...` : `Tentativa ${attempt}/3...`;
+          }
         });
+        if(stopFun){ stopFun(); stopFun = null; }
         // Toast de confirmacao: antes so a tela de pontuacao aparecendo indicava sucesso, sem
         // nenhum aviso — confuso principalmente quando o fallback de rede entra em acao e a
         // espera passa de alguns minutos (usuario nao sabe se travou ou se deu certo).
         showToast('✓ Auditoria concluída', 'success', 3000);
         showAuditPanel(modal, issueKey, result, true);
       }catch(e){
+        if(stopFun){ stopFun(); stopFun = null; }
         showToast('Auditoria falhou: ' + (e.message || String(e)), 'error', 6000);
         if(btn){ btn.disabled = false; btn.textContent = 'Auditar'; }
       }
