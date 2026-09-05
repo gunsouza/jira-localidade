@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.2
+// @version      2.6.3
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -7750,7 +7750,25 @@
     // Versao do conjunto de criterios/regras do prompt de auditoria — bump sempre que _buildAuditPrompt mudar
     // de forma que altere o veredito esperado (novo criterio, mudanca de rubrica, nova regra de escopo/guardrail).
     // Fica gravada em cada resultado (result._prompt_version) pra permitir comparar resultados entre versoes.
-    const AUDIT_PROMPT_VERSION = '1.54.0';
+    //
+    // v2.6.2 (Fase 1 de alinhamento com o Auditor de Qualidade NATIS oficial): o usuario achou
+    // na documentacao interna do time o prompt EXATO usado pelo bot de auditoria oficial (o que
+    // roda quando um ticket IS e fechado, posta o comentario interno formal e cria o ticket
+    // ISSM em caso de nao conformidade) e pediu pra alinhar o NOSSO auditor (o coach client-side
+    // deste userscript, que so sugere texto/preenchimento ANTES do fechamento, nunca posta nada
+    // sozinho) com os mesmos criterios, pra reduzir divergencia entre "o que a ferramenta avisa"
+    // e "o que o bot oficial de fato vai avaliar depois". Decisao combinada com o usuario: 2
+    // fases, pra nao arriscar quebrar de uma vez um prompt que ja levou dezenas de iteracoes
+    // (v1.92.0 a v2.1.0) pra ficar estavel. FASE 1 (esta versao): incorporar as regras/excecoes
+    // oficiais (as "Regras Essenciais" 1-27 do prompt oficial) DENTRO dos nossos criterios
+    // atuais, sem mudar o schema JSON nem a pontuacao (continua flat, 10 criterios x 10 pts) —
+    // ou seja, MESMOS criterios de sempre (Evidencias/Categoria/Status Comentado/etc.), so com
+    // as excecoes/guardrails oficiais incorporadas na logica de cada um. FASE 2 (futura, so
+    // depois de testar esta): reescrever o rubric inteiro pra bater 1:1 com os 3 pilares
+    // oficiais (SLA 15 + Tipificacao 40 + Qualidade 45 = 100), o que exige buscar campos de SLA
+    // que hoje a auditoria NAO le (Time to First Response/Resolution — ver SLA_FIELD_ID, hoje so
+    // usado pro card "Risco de SLA" do Painel do analista, nunca chega no _buildAuditPrompt).
+    const AUDIT_PROMPT_VERSION = '1.55.0';
 
     // Monta o prompt que sera enviado para a IA via webhook
     function _buildAuditPrompt(data, alreadyFixed){
@@ -8036,6 +8054,12 @@ J) DELIMITACAO DE ESCOPO: voce avalia qualidade de DOCUMENTACAO, CATEGORIZACAO e
 
 K) ESCALONAMENTO (baixa confianca): se o caso for genuinamente ambiguo — informacao insuficiente pra decidir com seguranca, ou situacao que nao se encaixa claramente nas regras acima — NAO force um veredito confiante. Use "confidence":"baixa" nesse item, comece o "detail" com "[REVISAO HUMANA]" e descreva a pergunta pendente especifica que um analista humano precisaria responder. Isso vale mais do que "chutar" ok/error com confianca alta.
 
+L) FOCO EM PROCESSO, NAO EM PESSOA: seu objetivo e melhorar o processo/registro de atendimento, nunca avaliar o analista como pessoa. Evite linguagem que soe como julgamento pessoal (ex: "o analista foi displicente", "faltou empenho") — descreva sempre o GAP concreto no registro (ex: "faltou documentar a verificacao tecnica antes de normalizar").
+
+M) LINGUAGEM SIMPLES, SEM JARGAO INTERNO: em "detail", "suggestion", "summary" e qualquer texto voltado ao analista, NUNCA use jargao interno do processo de auditoria — nada de "framework", "criterio de auditoria", nomes de niveis internos de qualidade, ou citar regras numeradas. Explique sempre em linguagem direta, como um colega experiente dando feedback (ex: em vez de "criterio Categoria em warn por regra de single-select", diga "a categoria ficou levemente incoerente, mas isso e limitacao do formulario, nao do seu registro").
+
+N) CAMPO SEM DADO DISPONIVEL: se um dado necessario pra avaliar um criterio simplesmente nao esta disponivel no ticket (nao e o mesmo que "analista nao fez"), marque como indisponivel usando "skip" com "detail" explicando que falta o dado — nunca puna por informacao que o analista nao tinha como registrar.
+
 === CONTEXTO DO TIPO DE TICKET ===
 ${issueTypeCtx}
 
@@ -8064,6 +8088,9 @@ Avalie cada criterio e retorne "ok", "warn", "error" ou "skip":
    Subcategorias (tipo de problema) validas: ${subcategoryOptions.join(', ')}.
    Compare com a CAUSA RAIZ REAL discutida nos comentarios dos analistas — nao so a queixa inicial do relator (o sintoma inicial pode nao refletir o que foi de fato investigado; ex: "instabilidade" pode virar "lentidao por sobrecarga de AP" ou "queda intermitente real" dependendo do que foi apurado).
    IMPORTANTE: a categoria inicial normalmente e preenchida pelo PROPRIO SOLICITANTE no portal ao abrir o chamado, nao pelo analista. O analista tem autonomia pra corrigir mas nem sempre corrige — uma categoria errada nao e automaticamente "culpa" do analista, mas se a causa raiz apurada e claramente diferente da categoria e o analista nao ajustou nem comentou, isso e um ajuste legitimo a sinalizar.
+   NUNCA penalize por limitacoes tecnicas do formulario: se o campo e single-select (so permite escolher UMA opcao) e o ticket envolveu mais de uma acao/causa, aceite a opcao mais representativa escolhida pelo analista sem penalizar por nao cobrir as demais — a limitacao e do formulario, nao do analista.
+   COMBINACOES VALIDAS que NAO devem ser penalizadas: (a) ticket encerrado como "Operational User Error"/"Erro Operacional"/"Not Technical Intervention" porque a solicitacao nao era responsabilidade do time e o analista redirecionou o usuario ao canal/time correto com documentacao clara — nesse caso tanto "Consulta e Informacao" quanto a categoria do objeto/sintoma real sao validas; (b) orientacao sobre tramites de acesso (ex: solicitacoes via Shield) categorizada como "Consulta e Informacao" ou pela categoria especifica do objeto/software.
+   REFORCO sobre "falsa correlacao" com rede: se o titulo/descricao inicial sugere um problema de rede mas a investigacao tecnica documentada descarta explicitamente causas de rede/infraestrutura e comprova uma causa raiz distinta, a categorizacao DEVE seguir a causa raiz comprovada, nunca a suspeita inicial do titulo.
    - ok: categoria/subcategoria coerente com a causa raiz discutida, OU categoria inicial ficou desatualizada mas o analista corrigiu/comentou a divergencia.
    - warn: categoria parcialmente incoerente com o que foi apurado, sem correcao nem comentario.
    - error: categoria claramente incompativel com a causa raiz discutida (ex: aberto como um tipo de equipamento, mas a investigacao real foi sobre outro totalmente diferente) e nada foi ajustado/comentado.
@@ -8075,16 +8102,22 @@ Avalie cada criterio e retorne "ok", "warn", "error" ou "skip":
    Se uma transicao ja aparece com "→ Comentario [...]", ela ESTA justificada — marque como ok.
    Apenas transicoes com "→ Sem comentario justificando" podem ser warn/error.
    Se TODAS as transicoes tem comentario proximo = ok. Se algumas faltam = warn. Se nenhuma tem = error.
+   EXCECAO: a transicao automatica INICIAL pro estado padrao com que o sistema abre o ticket (ex: "Waiting for Support" ou equivalente) e automatica — NUNCA exija justificativa pra ela. So transicoes MANUAIS pra Waiting for Customer/Pending/outros estados precisam de comentario proximo.
+   Um unico comentario que combine "recebi o chamado" com a proxima acao (ex: "Recebido, vou verificar X") ja conta como justificativa valida pra essa transicao — nao exija dois comentarios separados.
 
 5. ESCRITA
    Os comentarios dos ANALISTAS estao claros, profissionais e compreensiveis?
    Avalie apenas textos de analistas, nao do relator.
+   NUNCA penalize pelo tom da saudacao (ex: informal demais, sem saudacao formal) — isso nao e motivo de warn/error aqui, independente da prioridade do ticket.
 
 6. SOLUCAO DOCUMENTADA
    ${isClosed
      ? `Foi registrado O QUE o analista fez para resolver? Acoes de diagnostico e tratamento realizadas?
    RASTREABILIDADE: se o fechamento menciona algo tipo "carta de risco", handoff pra outro time, ticket vinculado, escalonamento, etc. SEM numero/link/referencia identificavel, isso e um ajuste a sinalizar (warn) — pedir que cite a referencia especifica.
-   HANDOFF: se a resolucao foi handoff/redirecionamento pra outro time, NAO cobre do analista documentacao do diagnostico tecnico que e responsabilidade do OUTRO time — ele nao tem visibilidade da tratativa de quem recebeu. Cobre so que o handoff em si esteja registrado com referencia.`
+   HANDOFF: se a resolucao foi handoff/redirecionamento pra outro time, NAO cobre do analista documentacao do diagnostico tecnico que e responsabilidade do OUTRO time — ele nao tem visibilidade da tratativa de quem recebeu. Cobre so que o handoff em si esteja registrado com referencia.
+   FORA DE ESCOPO: se o motivo do fechamento e que o problema nao e responsabilidade do time (redirecionamento/erro operacional), NAO exija diagnostico tecnico profundo — basta a identificacao clara do motivo de nao intervir + indicacao do canal/equipe correto.
+   EVIDENCIA DE OS: uma Ordem de Servico (OS) documentada com fornecedor/tecnico externo (abertura/fechamento, mesmo que a narrativa seja breve) e evidencia SUFICIENTE por si so.
+   DIAGNOSTICO AUTOMATIZADO: dados de ferramentas automatizadas (dashboards, scripts de diagnostico) sao insumo, nao substituem a interpretacao do analista — se o comentario so cola o output bruto da ferramenta sem nenhuma linha de interpretacao do analista, isso NAO e suficiente pra "ok".`
      : 'Ticket ainda aberto. Use "skip".'}
 
 7. SOLUCAO EFETIVA
@@ -8095,7 +8128,10 @@ Avalie cada criterio e retorne "ok", "warn", "error" ou "skip":
    - "Invalid Channel" (canal invalido): valido quando a causa raiz real esta fora do escopo desta fila (ex: problema de sistema/software que foi so roteado/redirecionado pra outro time).
    - "Operational User Error" (erro operacional do usuario): valido quando a solucao foi so orientacao/instrucao ao usuario, sem nenhuma acao de sistema do analista.
    - "With technical intervention" (com intervencao tecnica): exige acao tecnica REAL e documentada (ex: reiniciar servico, instalar driver, trocar peca). Se o tipo escolhido e este mas o relato so descreve orientacao ou redirecionamento (sem acao tecnica de fato), isso E incoerencia real a sinalizar — nao invente uma acao tecnica que nao foi relatada.
-   Se o tipo escolhido contradiz o verbo da acao relatada (ex: marcado "with technical intervention" mas o texto so diz "orientei o usuario a reiniciar"), marque warn/error e explique a incoerencia especifica no "detail".` : ''}`
+   Se o tipo escolhido contradiz o verbo da acao relatada (ex: marcado "with technical intervention" mas o texto so diz "orientei o usuario a reiniciar"), marque warn/error e explique a incoerencia especifica no "detail".
+   MINIMO PARA "No technical intervention" EM NORMALIZACAO DE REDE/SISTEMAS: quando o fechamento e por normalizacao de uma queda/oscilacao em rede/sistemas com ferramenta de diagnostico disponivel, exija pelo menos UMA verificacao tecnica basica documentada — um comentario que so diga "normalizou" sem nenhuma checagem NAO atende o minimo (marque warn).
+   EXCECAO 1 (equipamento individual sem ferramenta de diagnostico): quando "No technical intervention" e sobre um equipamento/dispositivo individual sem ferramenta de diagnostico disponivel, a CONFIRMACAO DO USUARIO de que normalizou ja basta — nao exija uma hipotese causal inventada.
+   EXCECAO 2 (incidente massivo com War Room): se o incidente foi massivo e acompanhado por War Room, o monitoramento via War Room ja satisfaz o minimo de verificacao, e "No technical intervention"/"Invalid Channel" sao validos. Nesse caso, eventuais desalinhamentos de estilo (ex: sintoma do titulo vs narrativa tecnica) sao so uma oportunidade de melhoria — NAO deduza pontuacao por isso.` : ''}`
      : 'Ticket ainda aberto. Use "skip".'}
 
 8. VALIDACAO USUARIO
