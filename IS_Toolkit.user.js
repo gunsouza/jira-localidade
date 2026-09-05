@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.13
+// @version      2.5.14
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -6904,17 +6904,45 @@
     // Tenta extrair os NOMES de campo citados numa mensagem de erro do Jira do tipo:
     // "Los campos 'Incident Type', 'Assignee', 'Resolution' no pueden estar vacios." (ou em
     // qualquer outro idioma — so procura o que esta entre aspas simples, nao depende do texto
-    // ao redor). Se a lista de nomes capturados tiver virgula sobrando dentro de algum item
-    // (sinal de aspas desencontradas na mensagem original), tenta de novo achatando tudo e
-    // resplitando por virgula, como fallback tolerante.
+    // ao redor).
+    //
+    // v2.5.14: achado num caso real (IS-1103203) que a extracao por PARES de aspas simples e
+    // fragil a aspas DESENCONTRADAS na PROPRIA mensagem do Jira — ex: "'Assignee, 'Resolution'"
+    // (falta uma aspa de fechamento depois de "Assignee"). Isso descasa TODOS os pares
+    // seguintes: a regex antiga silenciosamente comia "Resolution", "Solution", "IS Ubicacion"
+    // e "Request Type" inteiros sem erro nenhum (cada um caia no "buraco" entre o fechamento
+    // errado de um par e a abertura do proximo) — o recovery so via 2 campos de 6 citados, sem
+    // nenhum sinal de que os outros 4 tinham sido descartados. O fallback antigo (resplitar por
+    // virgula quando sobrava virgula dentro de um item) nao pegava esse caso porque o clean()
+    // ja removia a virgula sobrando ANTES desse teste rodar (ela ficava na BORDA do match, nao
+    // no meio).
+    //
+    // Fix: em vez de exigir pares de aspas corretos, isola o trecho da lista (entre a 1a aspa e
+    // a frase-fronteira conhecida que sempre vem logo depois, tipo "no pueden/no puede/nao
+    // pode(m)/cannot/can't") e faz o split por VIRGULA simples, limpando aspas soltas de cada
+    // pedaco individualmente — funciona mesmo com aspas desencontradas, pq nao depende delas
+    // fecharem em pares. So cai no comportamento antigo (pares de aspas) se essa frase-fronteira
+    // nao for encontrada, pra nao regredir em formatos de mensagem desconhecidos.
     function _parseRequiredFieldNamesFromError(msg){
       const s = String(msg || '');
       const jsonStart = s.indexOf('{');
       const body = jsonStart >= 0 ? s.slice(jsonStart) : s;
       const clean = (arr) => [...new Set(
-        arr.map(n => String(n || '').replace(/^[,\s]+|[,\s]+$/g, '').trim())
+        arr.map(n => String(n || '').replace(/^[,\s'"]+|[,\s'"]+$/g, '').trim())
            .filter(n => n.length >= 2 && n.length <= 60)
       )];
+      const firstQuote = body.indexOf("'");
+      if(firstQuote >= 0){
+        const rest = body.slice(firstQuote);
+        const boundaryMatch = rest.match(/no (pueden|puede)\b|n[ãa]o (pode[m]?|devem?)\b|cannot\b|can'?t\b/i);
+        if(boundaryMatch){
+          const listPart = rest.slice(0, boundaryMatch.index);
+          const namesNew = clean(listPart.split(','));
+          if(namesNew.length) return namesNew;
+        }
+      }
+      // Fallback (comportamento anterior a v2.5.14): pares de aspas + resplitar por virgula se
+      // sobrar virgula dentro de algum item capturado.
       let names = clean([...body.matchAll(/'([^']{1,60})'/g)].map(m => m[1]));
       if(names.some(n => n.includes(','))){
         names = clean(names.join(',').split(','));
