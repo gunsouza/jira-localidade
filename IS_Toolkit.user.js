@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.5
+// @version      2.6.6
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -1325,6 +1325,77 @@
     if(duration>0) setTimeout(()=>{ t.style.transition='opacity .35s ease,transform .35s ease'; t.style.opacity='0'; t.style.transform='translateX(10px)'; setTimeout(()=>t.remove(),380); }, duration);
     if(!document.getElementById('ml_toast_anim')){ const s=document.createElement('style'); s.id='ml_toast_anim'; s.textContent='@keyframes mlToastIn{from{opacity:0;transform:translateX(14px) scale(.95);}to{opacity:1;transform:translateX(0) scale(1);}}'; document.head.appendChild(s); }
     return t;
+  }
+
+  // ======================================================
+  // MENSAGENS DE ESPERA "ENGRACADINHAS" (v2.6.6, pedido do usuario)
+  // Trocam o "Carregando..." seco por frases aleatorias com humor nerd, uma por contexto
+  // (auditoria, duplicados, derivar, etc). Pra esperas LONGAS (auditoria por IA, que pode levar
+  // dezenas de segundos — ver v2.6.4/v2.6.5), _startFunLoading roda um intervalo trocando a
+  // frase a cada poucos segundos, pra parecer "viva" em vez de travada. Pra esperas curtas, um
+  // pick aleatorio unico (_pickFun) ja basta.
+  // ======================================================
+  const FUN_LOADING = {
+    audit: [
+      'Interrogando o ticket sob luz forte e muito café...',
+      'Cruzando evidências, modo detetive de plantão do NATIS...',
+      'Consultando o oráculo da qualidade (ele é sábio, mas devagar)...',
+      'Comparando com o Framework de 100 Pontos, ponto por ponto...',
+      'Procurando pistas nos comentários — modo CSI: Jira...',
+      'Julgando com justiça (e sem cafeína suficiente, calma)...',
+      'Perguntando pro modelo se isso passaria numa auditoria de verdade...',
+      'Relendo tudo com atenção, prometo que já já termina...',
+      'Verificando se o "Validated with the user" existe mesmo dessa vez...',
+      'Meditando sobre a natureza do "No technical intervention"...'
+    ],
+    duplicates: [
+      'Vasculhando universos paralelos atrás de dopplegangers deste chamado...',
+      'Procurando outros tickets com a mesma "impressão digital"...',
+      'Cruzando IPs, seriais e MACs feito detetive de rede...',
+      'Verificando se esse problema já rolou antes (spoiler: talvez sim)...',
+      'Farejando parentes distantes deste equipamento...'
+    ],
+    derive: [
+      'Empacotando o chamado pra viagem pra outro time...',
+      'Preparando a mudança de fila sem perder a bagagem...',
+      'Avisando o outro time que a encomenda está chegando...'
+    ],
+    batch: [
+      'Processando um por um, com carinho...',
+      'Passando ticket por ticket, sem furar a fila...',
+      'Fazendo a rodada completa, sem pular ninguém...'
+    ],
+    health: [
+      'Conferindo se está tudo nos conformes...',
+      'Passando o check-up nas configurações...'
+    ],
+    generic: [
+      'Só um instante, trabalhando nisso...',
+      'Quase lá...',
+      'Um momento, por favor...'
+    ]
+  };
+  function _pickFun(context){
+    const pool = FUN_LOADING[context] || FUN_LOADING.generic;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+  // Preenche `el` com spinner + frase engracadinha, trocando a frase a cada `intervalMs`
+  // (default 4s) enquanto uma espera longa roda. Retorna uma funcao "stop" — chame quando o
+  // resultado chegar (ou o elemento sumir) pra parar o timer e nao vazar memoria. Para de
+  // sozinho se o elemento sair do DOM (troca de tela) mesmo sem chamar "stop".
+  function _startFunLoading(el, context, opts){
+    opts = opts || {};
+    const intervalMs = opts.intervalMs || 4000;
+    const prefix = opts.prefix || '';
+    if(!el) return () => {};
+    let timer = null;
+    const render = () => {
+      if(!document.body.contains(el)){ if(timer) clearInterval(timer); return; }
+      el.innerHTML = `<div style="padding:10px 12px;border:1px dashed var(--ml-border);border-radius:10px;font-size:12px;color:var(--ml-text-mut);"><span class="ml-spinner">&#x21bb;</span> ${prefix}${esc(_pickFun(context))}</div>`;
+    };
+    render();
+    timer = setInterval(render, intervalMs);
+    return () => { if(timer) clearInterval(timer); };
   }
 
 
@@ -3190,6 +3261,7 @@
           btn.style.cursor = 'not-allowed';
           btn.textContent = createIssTask ? 'Derivando + criando ISS...' : 'Derivando...';
         }
+        showToast(_pickFun('derive'), 'info', 3500);
         if(btnCancel){
           btnCancel.disabled = true;
           btnCancel.style.opacity = '.5';
@@ -6687,18 +6759,24 @@
       // "Reauditar". Nunca lanca pra fora — falha vira toast leve, nunca bloqueia o Aplicar.
       const _runInlineAudit = async () => {
         auditBusy = true; _renderAuditBlock();
+        // v2.6.6: enquanto a auditoria roda (pode levar dezenas de segundos, ver v2.6.4/5),
+        // troca a frase de espera a cada poucos segundos em vez de deixar um texto fixo parado.
+        let stopFun = _startFunLoading($('#ml_st_audit'), 'audit');
         try{
           const result = await _runAuditCore(issueKey, {
             onRetry: (attempt, usedFallback) => {
+              if(stopFun) stopFun();
               const el = $('#ml_st_audit');
               if(el) el.innerHTML = `<div style="padding:10px 12px;border:1px dashed var(--ml-border);border-radius:10px;font-size:12px;color:var(--ml-text-mut);"><span class="ml-spinner">&#x21bb;</span> Tentativa ${attempt}/3${usedFallback ? ' (proxy)' : ''}...</div>`;
             }
           });
+          if(stopFun){ stopFun(); stopFun = null; }
           showToast('✓ Auditoria concluída', 'success', 2500);
           auditBusy = false;
           _renderAuditBlock();
           _applyClosingSuggestion(result?.closing_comment);
         }catch(e){
+          if(stopFun){ stopFun(); stopFun = null; }
           auditBusy = false;
           _renderAuditBlock();
           showToast('Auditoria falhou: ' + (e.message || String(e)), 'warn', 5000);
@@ -6721,7 +6799,7 @@
         box.style.display = '';
 
         if(auditBusy){
-          box.innerHTML = `<div style="padding:10px 12px;border:1px dashed var(--ml-border);border-radius:10px;font-size:12px;color:var(--ml-text-mut);"><span class="ml-spinner">&#x21bb;</span> Auditando ticket...</div>`;
+          box.innerHTML = `<div style="padding:10px 12px;border:1px dashed var(--ml-border);border-radius:10px;font-size:12px;color:var(--ml-text-mut);"><span class="ml-spinner">&#x21bb;</span> ${esc(_pickFun('audit'))}</div>`;
           return;
         }
 
@@ -8495,6 +8573,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
       const btn = document.getElementById('ml_home_audit');
       if(btn){ btn.disabled = true; btn.textContent = 'Analisando...'; }
+      showToast(_pickFun('audit'), 'info', 4500);
 
       try{
         const result = await _runAuditCore(issueKey, {
@@ -12304,7 +12383,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
     async function renderDuplicates(modal, issueKey, opts) {
       opts = opts || {};
       const manualIdsRaw = Array.isArray(opts.manualIds) ? opts.manualIds : [];
-      modal.setBody(`<div class="meta">Carregando duplicados…</div>`);
+      modal.setBody(`<div class="meta">${esc(_pickFun('duplicates'))}</div>`);
 
       const [issueCurrent, asset, serialFieldId] = await Promise.all([
         getIssueFields(issueKey, ["summary","description","*all"]),
@@ -15133,8 +15212,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         auditBtn.innerHTML = `<span class="mlSpin"></span> Auditando...`;
 
         const p = modal.querySelector('#ml_batch_progress');
-        p.innerHTML = `<div style="font-weight:700;color:var(--ml-text);margin-bottom:8px;">Progresso (0/${targetKeys.length})</div>`;
+        p.innerHTML = `<div style="font-weight:700;color:var(--ml-text);margin-bottom:8px;">Progresso (0/${targetKeys.length})</div><div id="ml_batch_audit_fun" style="margin-bottom:8px;"></div>`;
         const counter = (i) => p.firstChild.textContent = `Progresso (${i}/${targetKeys.length})`;
+        // v2.6.6: frase engracadinha rotativa enquanto o lote roda (pode ser bem longo — N
+        // tickets, cada um com o mesmo tempo de espera de uma auditoria individual).
+        const stopBatchFun = _startFunLoading(p.querySelector('#ml_batch_audit_fun'), 'batch');
 
         let okA = 0, failA = 0;
         const scores = [];
@@ -15156,6 +15238,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           if(i < targetKeys.length - 1) await new Promise(r => setTimeout(r, 600));
         }
         counter(targetKeys.length);
+        stopBatchFun();
 
         const avg = scores.length ? Math.round(scores.reduce((a,b) => a+b, 0) / scores.length) : null;
         const summaryA = document.createElement('div');
