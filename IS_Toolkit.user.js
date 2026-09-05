@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.11
+// @version      2.5.12
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -19,8 +19,8 @@
 // @connect      grid.melioffice.com
 // @noframes
 // @homepageURL  https://github.com/gunsouza/jira-localidade
-// @updateURL    https://raw.githubusercontent.com/gunsouza/jira-localidade/main/IS_Toolkit.user.js
-// @downloadURL  https://raw.githubusercontent.com/gunsouza/jira-localidade/main/IS_Toolkit.user.js
+// @updateURL    https://cdn.jsdelivr.net/gh/gunsouza/jira-localidade@main/IS_Toolkit.user.js
+// @downloadURL  https://cdn.jsdelivr.net/gh/gunsouza/jira-localidade@main/IS_Toolkit.user.js
 // ==/UserScript==
 
 (function () {
