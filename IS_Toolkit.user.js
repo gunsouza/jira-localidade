@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.11
+// @version      2.6.12
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -755,7 +755,45 @@
       // RANKING_EXCLUDE acima). Util quando o grupo do Jira tem gente de fora demais pra
       // valer a pena ir excluindo reativamente. Nomes sao resolvidos via busca de usuario do
       // Jira (/rest/api/3/user/search) na hora de montar o ranking — ver _resolveRankingMembers.
-      RANKING_INCLUDE: [],
+      // v2.6.12: hardcoded com os accountIds REAIS do time "NATIS" no Atlassian Teams
+      // (home.atlassian.com/.../people/team/1a5c0aab-31b1-4bbf-bde6-7a171b2218d9), obtidos via
+      // Teamwork Graph API — pedido explicito do usuario ("na verdade prefiro colocar a lista
+      // no codigo" ao inves de preencher isso nas Configuracoes). Essa fonte e' mais confiavel
+      // que o grupo do Jira (RANKING_TEAM_GROUP) pra saber quem "e do time" de verdade — a conta
+      // de bot que aparecia junto ("sup_pymnatis_01 Application") foi excluida daqui de proposito
+      // (ja cairia fora mesmo assim, via _isExcludedMember). ATENCAO: e' uma FOTO de agora
+      // (2026-09) — quem entrar/sair do time precisa ser adicionado/removido aqui manualmente,
+      // nao sincroniza sozinho (o userscript, rodando no navegador, nao tem como chamar a mesma
+      // API do Atlassian Teams que so' foi acessivel aqui via uma conexao MCP privilegiada).
+      RANKING_INCLUDE: [
+        '712020:34841585-ccf0-4ceb-8290-5f5712dd7ec4', // Gustavo Nunes De Souza
+        '712020:d15da891-36c7-4fd5-9513-731be1653b39', // David Rey Medel
+        '712020:fa9b9244-57f3-494f-96b4-477664ac6963', // Bryan Gonzalez
+        '712020:2b25f1f1-2f79-44d6-a889-17e7e8096e42', // Leonardo Guerrero
+        '712020:d573cecb-4e95-49a3-8ffc-9d2c33ce7d9c', // Leonardo Guerrero (conta diferente, mesmo nome)
+        '712020:accee687-49f9-4b90-a4c7-c3d9721036cb', // Milena Do Carmo Moreira De Sousa
+        '712020:bfb7334d-126b-4832-b633-0ec97bbefc35', // Igor Pimentel Dos Santos
+        '712020:9ebf548c-498d-464a-a4de-9c023ba4ab32', // Kore Zuri Arriaga
+        '70121:8fa6d870-9ef3-4f7a-82f5-38e3c3f4516f',  // Danillo Henrique De Castro Ferreira
+        '712020:44ecb0a5-7a9a-4e70-9af1-363081a4a637', // Nathalia Cristino Tomaz
+        '712020:32bdfb80-441c-41f6-92e9-df9a8ac7bd7b', // Leonardo Dylan Da Silva
+        '712020:59ad8bb5-8d88-45c7-9be2-0dd8e1bf6a85', // Jose Roberto Carabeo
+        '712020:af595a4f-4633-4edb-a369-f0e8b39cf2e8', // Thamiris Alves Do Vale
+        '629db4934e1a640070c22aee',                    // Leonardo Perceval Barbosa
+        '6396e850abc764d2ca5eb5e4',                    // Ramon De Santana Trevisan
+        '712020:ea8afbf0-b413-4f1c-92ff-4a276d551c1b', // David Ramirez
+        '712020:88d922f2-73d8-4e07-a4a8-972989c44c81', // Vitor De Camargo Martins
+        '5c6410e3cefe97640e69a995',                    // Eder Mitsunori Yamasaki
+        '712020:6a1299be-cb44-4f4c-82e8-bbf54831a438', // Gustavo Henrique Rodrigues
+        '61adc39fc15977006a1d1d29',                    // Patrick Costa Rosal
+        '712020:090a9883-592f-4692-baa0-acb81c7263c8', // Olivia Vazquez
+        '712020:ae381a1c-cf0f-4baf-8e93-ee0719daf7d4', // Gustavo Guenka De Souza
+        '712020:01419848-87f1-435d-883e-6ff8f86d9696', // Kevin Barros Santos
+        '62fa02440268bddf1c90ebfe',                    // Sandibell Coutino
+        '628206cdcc1d15006fa93b80',                    // Ana Carolina Principe Rodrigues
+        '712020:f775e293-ad59-4deb-89ea-ad53a91d4691', // Kaio Vinicius de Lima Olimpio
+        '712020:62c2e455-29d5-4967-8828-7ce150a65a07'  // Edwin Brandon Diaz
+      ],
       // 'anonimo' | 'posicao' — o modo 'leaderboard' (nomes com numeros) foi REMOVIDO daqui na
       // v2.4.0 e virou exclusividade do Painel administrativo (ver ADMIN_MODE_SECRET/ADMIN_CODE
       // abaixo): visao com nomes comparando desempenho e sensivel, so faz sentido pra lideranca.
@@ -876,6 +914,20 @@
         saveSettings(SETTINGS);
         console.log('[is-toolkit] AUDIT_WEBHOOK_URL migrado do proxy furycloud.io de volta pro endpoint direto (proxy nao completa POST de verdade).');
       }
+    }
+
+    // v2.6.12: MESMO problema de cima, agora com RANKING_INCLUDE — o default antigo era `[]`
+    // (allowlist vazia, cai pro grupo do Jira). Quem ja abriu Configuracoes e clicou Salvar
+    // alguma vez (mesmo por outro campo qualquer) ja tem `RANKING_INCLUDE: []` GRAVADO no
+    // proprio storage, e loadSettings() sempre prioriza o que ja foi salvo sobre o DEFAULTS —
+    // entao so' trocar DEFAULTS.RANKING_INCLUDE (pra hardcodar o time NATIS real, accountIds
+    // via Atlassian Teams) NAO seria suficiente pra quem ja passou pelas Configuracoes uma vez.
+    // Fix: se o array salvo estiver vazio, aplica o novo default e persiste — nao mexe em quem
+    // JA customizou essa lista de verdade (array nao-vazio existente e' sempre respeitado).
+    if(!Array.isArray(SETTINGS.RANKING_INCLUDE) || !SETTINGS.RANKING_INCLUDE.length){
+      SETTINGS.RANKING_INCLUDE = DEFAULTS.RANKING_INCLUDE;
+      saveSettings(SETTINGS);
+      console.log('[is-toolkit] RANKING_INCLUDE estava vazio — aplicado o default hardcoded do time NATIS (v2.6.12).');
     }
 
     const CF_ASSET = SETTINGS.CF_ASSET;
