@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.13
+// @version      2.6.14
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -2707,7 +2707,7 @@
       if(!Array.isArray(keys) || !keys.length) return [];
 
       const fieldList = [
-        'summary','status','priority','assignee','issuetype',
+        'summary','status','priority','assignee','issuetype','reporter','description',
         `customfield_${CF_ASSET}`,
         `customfield_${CF_RES_TEAM}`
       ];
@@ -2741,6 +2741,11 @@
             // Asset inline (pode vir vazio - resolvemos via Assets API depois, async)
             let assetInline = assetArr.map(a => a?.objectKey || a?.label || a?.name).filter(Boolean).join(', ');
             const resTeam = f[`customfield_${CF_RES_TEAM}`];
+            // v2.6.14: reporter/description tambem buscados aqui pra alimentar os tokens
+            // {reporter}/{firstname}/{description} do comentario de Derivar em lote — antes
+            // so' summary vinha, entao esses tokens ficariam vazios no fluxo em lote.
+            let descText = '';
+            try{ descText = f.description ? _adfToText(f.description, 500) : ''; }catch(_){}
             out.push({
               key: issue.key,
               summary: f.summary || '(sem titulo)',
@@ -2752,6 +2757,8 @@
               assignee: f.assignee?.displayName || '',
               issuetype: f.issuetype?.name || '',
               issuetypeIcon: f.issuetype?.iconUrl || '',
+              reporter: f.reporter?.displayName || '',
+              description: descText,
               asset: assetInline,
               assetArr,
               resTeam: resTeam?.value || resTeam?.name || ''
@@ -3277,6 +3284,9 @@
             <span id="ml_d_comment_btnwrap" style="margin-left:auto;font-weight:400;"></span>
           </div>
           <textarea id="ml_d_comment">${esc(DERIVE_COMMENT_DEFAULT)}</textarea>
+          <div style="font-size:10.5px;color:var(--ml-text-mut);margin:4px 0 0;line-height:1.5;">
+            Placeholders: <code>{key}</code>, <code>{reporter}</code>, <code>{firstname}</code>, <code>{summary}</code>, <code>{description}</code>, <code>{meu_nome}</code>.
+          </div>
 
           <div id="ml_d_iss_wrap" class="issWrap" style="display:none;">
             <label class="issLabel">
@@ -3820,10 +3830,15 @@
         // Calcula sugestao de time baseada no summary + description (best-effort).
         let suggestedTeamValue = null;
         let locationKey = null;
+        // v2.6.14: reaproveita esse mesmo fetch (summary/description ja vinham buscados aqui
+        // pra sugestao de time) pra tambem alimentar os tokens {reporter}/{summary}/
+        // {description} do comentario de Derivar, sem precisar de um 2º request.
+        let ticketData = null;
         try{
-          const issue = await getIssueFields(issueKey, ['summary', 'description', `customfield_${CF_ASSET}`]);
+          const issue = await getIssueFields(issueKey, ['summary', 'description', 'reporter', `customfield_${CF_ASSET}`]);
           const summary = String(issue?.fields?.summary || '');
           const descText = descriptionToText(issue?.fields?.description) || '';
+          ticketData = { reporter: issue?.fields?.reporter?.displayName || '', summary, description: descText };
           suggestedTeamValue = suggestTeamForText(`${summary}\n${descText}`);
           // Garante que o time sugerido esta na lista filtrada (allowlist)
           if(suggestedTeamValue && !teams.find(t => t.value === suggestedTeamValue)){
@@ -3858,9 +3873,13 @@
           locationKey,
           fieldTechs,
           onSubmit: async ({ team, comment, createIssTask }) => {
+            // v2.6.14: aplica {key}/{reporter}/{firstname}/{summary}/{description}/{meu_nome}
+            // no comentario de Derivar (o texto ja saiu traduzido, se aplicavel, do proprio
+            // textarea — essa chamada so preenche os tokens que sobraram como texto literal).
+            const finalComment = await _applyTicketPlaceholders(comment || DERIVE_COMMENT_DEFAULT, { issueKey, ticketData });
             // 1) Derivar primeiro (fonte da verdade). Se falhar, lanca erro pro
             // handler do botao reabilitar a UI e mostrar mensagem.
-            await jiraDoDerive(issueKey, deriveTr.id, team.id, comment || DERIVE_COMMENT_DEFAULT);
+            await jiraDoDerive(issueKey, deriveTr.id, team.id, finalComment);
             // marcação de uso (label + campo texto) agora acontece dentro do próprio jiraDoDerive
 
             // 1.4) Unassign best-effort (libera ticket pra fila do novo time)
@@ -4023,6 +4042,54 @@
       if(!text) return text;
       const name = me?.displayName || '';
       return text.replace(/\{meu_nome\}/gi, name);
+    }
+
+    // v2.6.14: os tokens {key}/{reporter}/{firstname}/{summary}/{description} ja funcionavam
+    // de verdade so' na mensagem de WhatsApp (_waOpen) — os outros templates de comentario
+    // (ASSIGN_COMMENT, STATUS_ACTIONS, DERIVE_COMMENT_DEFAULT) so aceitavam {meu_nome}. Esses
+    // dois helpers generalizam a MESMA logica de substituicao pra qualquer template.
+    const _CONTEXT_PLACEHOLDER_RE = /\{(key|reporter|firstname|summary|description)\}/i;
+    function _usesContextPlaceholders(text){
+      return _CONTEXT_PLACEHOLDER_RE.test(String(text || ''));
+    }
+
+    // Busca reporter/summary/description do ticket pra alimentar os tokens de contexto.
+    // So' chamada quando o template realmente usa algum desses tokens (evita 1 request
+    // extra pra quem so usa {meu_nome}, que continua sendo o caso mais comum).
+    async function _fetchTicketPlaceholderData(issueKey){
+      try{
+        const issue = await getIssueFields(issueKey, ['reporter', 'summary', 'description']);
+        const reporter = issue?.fields?.reporter?.displayName || '';
+        const summary = issue?.fields?.summary || '';
+        let description = '';
+        try{ description = issue?.fields?.description ? _adfToText(issue.fields.description, 500) : ''; }catch(_){}
+        return { reporter, summary, description };
+      }catch(e){
+        console.warn('[IS Toolkit][placeholders] falha ao buscar campos do ticket pra substituir tokens:', e);
+        return { reporter: '', summary: '', description: '' };
+      }
+    }
+
+    // Substitui {key}/{reporter}/{firstname}/{summary}/{description}/{meu_nome} num texto —
+    // mesma ordem/logica ja usada no WhatsApp (_waOpen), generalizada pra qualquer template.
+    // `me` e/ou `ticketData` podem ser passados quando o chamador ja tiver esses dados em
+    // maos (evita requests duplicados); senao busca sozinho (so precisa de `issueKey`
+    // quando o texto contiver algum token de contexto — {meu_nome} sozinho nao precisa dele).
+    async function _applyTicketPlaceholders(text, { issueKey, me, ticketData } = {}){
+      let out = String(text || '');
+      if(!me){ try{ me = await jiraGetMyself(); }catch(_){ me = null; } }
+      out = _applyMyNamePlaceholder(out, me);
+      if(!_usesContextPlaceholders(out)) return out;
+      const data = ticketData || (issueKey ? await _fetchTicketPlaceholderData(issueKey) : { reporter:'', summary:'', description:'' });
+      const first = (data.reporter || '').split(/\s+/)[0] || '';
+      out = out
+        .replace(/\{key\}/g, issueKey || '')
+        .replace(/\{reporter\}/g, data.reporter || '')
+        .replace(/\{firstname\}/g, first)
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/\{summary\}/g, data.summary || '')
+        .replace(/\{description\}/g, data.description || '');
+      return out;
     }
 
     async function getIssueFullForCopy(issueKey){
@@ -6402,7 +6469,9 @@
       }
 
       // 5) Monta comentario default + campos extras
-      const defaultComment = _applyMyNamePlaceholder(String(opts.comment || action.comment || '').trim(), me);
+      // v2.6.14: alem de {meu_nome}, agora tambem aceita {key}/{reporter}/{firstname}/
+      // {summary}/{description} — mesmos tokens que ja funcionavam so' no WhatsApp.
+      const defaultComment = await _applyTicketPlaceholders(String(opts.comment || action.comment || '').trim(), { issueKey, me });
       let extraFields = {};
       let commentForTransition = defaultComment;
       const isInternal = action.internal === true;
@@ -10861,7 +10930,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 <div class="full">
                   <label>Comentario padrao da derivacao (obs interna, aceita varias linhas)</label>
                   <textarea id="ml_s_derive_msg" style="min-height: 80px;">${esc(cur.DERIVE_COMMENT_DEFAULT)}</textarea>
-                  <div class="hint">Pre-preenche o campo de comentario nos modais Derivar e Gerenciador. Pode usar quebras de linha.</div>
+                  <div class="hint">Pre-preenche o campo de comentario nos modais Derivar (single e em lote) e Gerenciador. Pode usar quebras de linha.<br/>
+                    Placeholders: <code>{key}</code> (chamado), <code>{reporter}</code> (relator, nome completo), <code>{firstname}</code> (so o 1o nome do relator), <code>{summary}</code> (titulo), <code>{description}</code> (o que foi solicitado), <code>{meu_nome}</code> (seu nome, via login do Jira).
+                  </div>
                 </div>
                 <div class="full">
                   <label>Allowlist de times (um por linha)</label>
@@ -11232,7 +11303,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <div class="hint">
                     Mensagem postada como coment&aacute;rio <strong>p&uacute;blico</strong> ao mover o ticket para <em>In Progress</em> via atalho.
                     Quebras de linha s&atilde;o preservadas. Padr&atilde;o: <code>${esc(def.ASSIGN_COMMENT || 'Iniciando atendimento.')}</code><br/>
-                    Use <code>{meu_nome}</code> pra assinar automaticamente com o nome de quem est&aacute; logado no Jira &mdash; assim o mesmo texto serve pra qualquer analista, sem nome fixo.
+                    Placeholders: <code>{key}</code> (chamado), <code>{reporter}</code> (relator, nome completo), <code>{firstname}</code> (s&oacute; o 1&ordm; nome do relator), <code>{summary}</code> (t&iacute;tulo), <code>{description}</code> (o que foi solicitado), <code>{meu_nome}</code> (seu nome, via login do Jira &mdash; assim o mesmo texto serve pra qualquer analista, sem nome fixo).
                   </div>
                 </div>
               </div>
@@ -11646,6 +11717,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           <div>
             <div style="font-size:10.5px;color:var(--ml-text-mut);margin-bottom:2px;">Comentario (multilinha)</div>
             <textarea class="status-comment" placeholder="Mensagem que vai no comentario quando aplicar esta acao..." style="min-height: 110px; resize: vertical;">${esc(a.comment || '')}</textarea>
+            <div style="font-size:10.5px;color:var(--ml-text-mut);margin-top:4px;line-height:1.5;">
+              Placeholders: <code>{key}</code> (chamado), <code>{reporter}</code> (relator), <code>{firstname}</code> (1o nome do relator), <code>{summary}</code> (titulo), <code>{description}</code> (o que foi solicitado), <code>{meu_nome}</code> (seu nome, via login do Jira).
+            </div>
             <div style="display:flex;gap:14px;margin-top:6px;font-size:11.5px;">
               <label class="checkbox" style="display:flex;align-items:center;gap:5px;">
                 <input type="checkbox" class="status-internal" ${a.internal === true ? 'checked' : ''} />
@@ -14659,6 +14733,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               <span id="ml_batch_comment_btnwrap" style="margin-left:auto;font-weight:400;"></span>
             </label>
             <textarea id="ml_batch_comment" style="width:100%;min-height:70px;background:var(--ml-bg-0);color:var(--ml-text);border:1px solid var(--ml-border-2);border-radius:var(--ml-radius-sm);padding:10px;font-family:inherit;font-size:13px;resize:vertical;outline:none;margin-top:6px;">${esc(DERIVE_COMMENT_DEFAULT)}</textarea>
+            <div style="font-size:10.5px;color:var(--ml-text-mut);margin-top:4px;line-height:1.5;">
+              O mesmo texto vale pra todos os tickets selecionados — os placeholders sao resolvidos por ticket: <code>{key}</code>, <code>{reporter}</code>, <code>{firstname}</code>, <code>{summary}</code>, <code>{description}</code>, <code>{meu_nome}</code>.
+            </div>
 
             <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;cursor:pointer;">
               <input type="checkbox" id="ml_batch_iss_chk" style="transform:scale(1.15);accent-color:var(--ml-blue);" />
@@ -15308,6 +15385,10 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
         let ok = 0, fail = 0, unwatched = 0;
         const issResults = [];
+        // v2.6.14: busca /myself uma unica vez pro lote inteiro (usado pra {meu_nome} no
+        // comentario de cada ticket) em vez de repetir a chamada a cada iteracao do loop.
+        let batchMe = null;
+        try{ batchMe = await jiraGetMyself(); }catch(_){}
 
         for(let i = 0; i < targetKeys.length; i++){
           const key = targetKeys[i];
@@ -15323,12 +15404,21 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             // mistura tickets de paises diferentes (BR/MX/CO/etc), entao um texto so' em pt-BR
             // nao serve pra todos. Usa o idioma ja cacheado por getIssuesBatchInfo (via
             // asset/localidade de cada ticket, resolvido quando a lista do lote foi montada).
-            const { text: commentForKey, translated: didTranslateKey, lang: langKey } =
+            const { text: commentTranslatedForKey, translated: didTranslateKey, lang: langKey } =
               await _autoTranslateForTicket(comment, { issueKey: key, locationKey: info[key]?.asset });
             if(didTranslateKey){
               const langNames = { es: 'espanhol', en: 'inglês', pt: 'português' };
               progressLog(`     &#8627; <span style="color:#93c5fd;">coment&aacute;rio traduzido pra ${esc(langNames[langKey] || langKey)}</span>`);
             }
+            // v2.6.14: {key}/{reporter}/{firstname}/{summary}/{description}/{meu_nome} —
+            // mesmos tokens do WhatsApp, agora tambem no comentario de Derivar em lote.
+            // Usa os dados ja buscados por getIssuesBatchInfo (info[key]) pra nao precisar
+            // de mais um request por ticket dentro do loop.
+            const commentForKey = await _applyTicketPlaceholders(commentTranslatedForKey, {
+              issueKey: key,
+              me: batchMe,
+              ticketData: { reporter: info[key]?.reporter || '', summary: info[key]?.summary || '', description: info[key]?.description || '' }
+            });
 
             const wantMention = modal.querySelector('#ml_batch_mention_chk')?.checked;
             const isFieldService = /fieldservice/i.test(ticketTeam.value || '');
@@ -16080,7 +16170,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         }
       }
 
-      const commentText = _applyMyNamePlaceholder((SETTINGS.ASSIGN_COMMENT || DEFAULTS.ASSIGN_COMMENT || 'Iniciando atendimento.').trim(), me);
+      // v2.6.14: alem de {meu_nome}, agora tambem aceita {key}/{reporter}/{firstname}/
+      // {summary}/{description} — mesmos tokens que ja funcionavam so' no WhatsApp.
+      const commentText = await _applyTicketPlaceholders((SETTINGS.ASSIGN_COMMENT || DEFAULTS.ASSIGN_COMMENT || 'Iniciando atendimento.').trim(), { issueKey, me });
       await jiraApplyTransitionWithFields(issueKey, tr.id, {
         commentText,
         internal: false,
