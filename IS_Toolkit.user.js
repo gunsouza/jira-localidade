@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.20
+// @version      2.5.21
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -5460,9 +5460,9 @@
       const _normVal = s => String(s || '').trim().toLowerCase();
       // IDs configurados (0 = nao configurado -> nenhum campo bate por ID, so por acaso teria
       // key "customfield_0" o que nunca acontece de verdade).
-      const _cfSolutionTextKey = `customfield_${Number(SETTINGS?.CF_SOLUTION_TEXT || 0)}`;
-      const _cfSolutionTypeKey = `customfield_${Number(SETTINGS?.CF_SOLUTION_TYPE || 0)}`;
-      const _cfUserValidationKey = `customfield_${Number(SETTINGS?.CF_USER_VALIDATION || 0)}`;
+      const _cfSolutionTextKey = `customfield_${Number(SETTINGS?.CF_SOLUTION_TEXT || DEFAULTS.CF_SOLUTION_TEXT || 0)}`;
+      const _cfSolutionTypeKey = `customfield_${Number(SETTINGS?.CF_SOLUTION_TYPE || DEFAULTS.CF_SOLUTION_TYPE || 0)}`;
+      const _cfUserValidationKey = `customfield_${Number(SETTINGS?.CF_USER_VALIDATION || DEFAULTS.CF_USER_VALIDATION || 0)}`;
       // Listas de valores validos ja conhecidas (v2.0.0) pros 4 campos de categoria/tipo do
       // Assets/CMDB. Usadas aqui (v2.5.3) como FALLBACK quando um desses campos aparece como
       // obrigatorio (tipicamente via recovery de um erro 400 — ver runStatusAction) mas a API
@@ -5530,7 +5530,7 @@
           const defaultUser = (isUserField && me.accountId) ? me.accountId : '';
 
           if(isCascading){
-            const isUserValidationField = key === _cfUserValidationKey && Number(SETTINGS?.CF_USER_VALIDATION || 0) > 0;
+            const isUserValidationField = key === _cfUserValidationKey && Number(SETTINGS?.CF_USER_VALIDATION || DEFAULTS.CF_USER_VALIDATION || 0) > 0;
             const suggestedParent = isUserValidationField ? String(auditSug.validated_with_user_suggestion || '').trim() : '';
             const parentMatch = suggestedParent ? allowed.find(v => _normVal(v.value || v.name) === _normVal(suggestedParent)) : null;
             const parentOptsHtml = allowed.map(v => {
@@ -5560,7 +5560,7 @@
             // literal. CF_SOLUTION_TYPE fica so como fallback legado (customfield separado,
             // caso alguma instancia/projeto use um).
             const isSolutionTypeField = key === 'resolution'
-              || (key === _cfSolutionTypeKey && Number(SETTINGS?.CF_SOLUTION_TYPE || 0) > 0);
+              || (key === _cfSolutionTypeKey && Number(SETTINGS?.CF_SOLUTION_TYPE || DEFAULTS.CF_SOLUTION_TYPE || 0) > 0);
             // v2.5.4: campo de categoria sintetico (Incident/Service Type, Problem/Service
             // Hardware) tambem pode vir pre-selecionado, se a auditoria por IA ja tiver rodado
             // nesse ticket e sugerido "equipamento > tipo de problema" (v2.0.0) — mesmo dado
@@ -5620,7 +5620,7 @@
             const n = _normFieldName(label);
             return n === 'solution' || n === 'solucion' || n === 'solucao' || n.startsWith('soluc') || n.startsWith('solut');
           })();
-          const isSolutionTextField = (key === _cfSolutionTextKey && Number(SETTINGS?.CF_SOLUTION_TEXT || 0) > 0) || _looksLikeSolutionText;
+          const isSolutionTextField = (key === _cfSolutionTextKey && Number(SETTINGS?.CF_SOLUTION_TEXT || DEFAULTS.CF_SOLUTION_TEXT || 0) > 0) || _looksLikeSolutionText;
           const solutionSuggestion = isSolutionTextField ? String(auditSug.solution_text || '').trim() : '';
           if(isSolutionTextField){
             return `
@@ -5689,7 +5689,7 @@
           const childSel = modal.querySelector(`[data-fk-child="${CSS.escape(key)}"]`);
           if(!parentSel || !childSel) return;
 
-          const isUserValidationField = key === _cfUserValidationKey && Number(SETTINGS?.CF_USER_VALIDATION || 0) > 0;
+          const isUserValidationField = key === _cfUserValidationKey && Number(SETTINGS?.CF_USER_VALIDATION || DEFAULTS.CF_USER_VALIDATION || 0) > 0;
           const suggestedChild = isUserValidationField ? String(auditSug.validated_with_user_channel_suggestion || '').trim() : '';
 
           const populateChild = (preselectValue) => {
@@ -5758,7 +5758,7 @@
                 const n = _normFieldName3(meta?.name || '');
                 return n === 'solution' || n === 'solucion' || n === 'solucao' || n.startsWith('soluc') || n.startsWith('solut');
               })();
-              const isSolutionTextKey = (key === _cfSolutionTextKey && Number(SETTINGS?.CF_SOLUTION_TEXT || 0) > 0) || _looksLikeSolutionText2;
+              const isSolutionTextKey = (key === _cfSolutionTextKey && Number(SETTINGS?.CF_SOLUTION_TEXT || DEFAULTS.CF_SOLUTION_TEXT || 0) > 0) || _looksLikeSolutionText2;
               fields[key] = isSolutionTextKey ? textToAdfParagraphs(v) : v;
             }
           }
@@ -6068,16 +6068,16 @@
           // Trocado pra buscar em getAllFieldsOfTransition(trData, chosenTransition.id) — os
           // mesmos dados brutos ja carregados no inicio da funcao, sem precisar sintetizar
           // allowedValues (arriscado pra um campo do tipo select/cascading).
-          const _cfUserValidationKeyRS = `customfield_${Number(SETTINGS?.CF_USER_VALIDATION || 0)}`;
+          const _cfUserValidationKeyRS = `customfield_${Number(SETTINGS?.CF_USER_VALIDATION || DEFAULTS.CF_USER_VALIDATION || 0)}`;
           const _allTransitionFields = getAllFieldsOfTransition(trData, chosenTransition.id);
           const _userValidationMeta = _allTransitionFields?.[_cfUserValidationKeyRS] || editMetaFields?.[_cfUserValidationKeyRS];
-          if(Number(SETTINGS?.CF_USER_VALIDATION || 0) > 0
+          if(Number(SETTINGS?.CF_USER_VALIDATION || DEFAULTS.CF_USER_VALIDATION || 0) > 0
              && _userValidationMeta
              && !(_cfUserValidationKeyRS in extraFields)
              && !newlyMatched[_cfUserValidationKeyRS]){
             newlyMatched[_cfUserValidationKeyRS] = { ..._userValidationMeta, required: true };
             log('recovery: incluindo "Validated with the user" de forma proativa (nunca citado no erro, mas exigido pela tela)');
-          } else if(Number(SETTINGS?.CF_USER_VALIDATION || 0) > 0 && !_userValidationMeta){
+          } else if(Number(SETTINGS?.CF_USER_VALIDATION || DEFAULTS.CF_USER_VALIDATION || 0) > 0 && !_userValidationMeta){
             log('recovery: "Validated with the user" configurado mas nao achado nem nos campos da transicao nem no editmeta — nao vou conseguir montar o dropdown com opcoes reais.');
           }
 
@@ -7209,7 +7209,7 @@
         // (_looksLikeSolutionText) e em closeIssTaskAfterCreate.
         const looksLikeSolution = target === 'solution' || target === 'solucion' || target === 'solucao'
           || target.startsWith('soluc') || target.startsWith('solut');
-        if(looksLikeSolution && Number(SETTINGS?.CF_SOLUTION_TEXT || 0) > 0){
+        if(looksLikeSolution && Number(SETTINGS?.CF_SOLUTION_TEXT || DEFAULTS.CF_SOLUTION_TEXT || 0) > 0){
           const k = `customfield_${Number(SETTINGS.CF_SOLUTION_TEXT)}`;
           matched[k] = fieldsMetaObj?.[k]
             ? { ...fieldsMetaObj[k], required: true }
@@ -10834,17 +10834,17 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 </div>
                 <div>
                   <label>Valida&ccedil;&atilde;o do usu&aacute;rio (CF ID)</label>
-                  <input type="number" id="ml_s_cf_user_validation" value="${Number(cur.CF_USER_VALIDATION)||0}" min="0" />
+                  <input type="number" id="ml_s_cf_user_validation" value="${Number(cur.CF_USER_VALIDATION || DEFAULTS.CF_USER_VALIDATION || 0)}" min="0" />
                   <div class="hint">Se for um campo em cascata (Yes/No + canal), a auditoria detecta automaticamente e sugere os dois n&iacute;veis ao resolver (v1.97.0).</div>
                 </div>
                 <div>
                   <label>Resolu&ccedil;&atilde;o &mdash; override legado (CF ID, normalmente deixe 0)</label>
-                  <input type="number" id="ml_s_cf_solution_type" value="${Number(cur.CF_SOLUTION_TYPE)||0}" min="0" />
+                  <input type="number" id="ml_s_cf_solution_type" value="${Number(cur.CF_SOLUTION_TYPE || DEFAULTS.CF_SOLUTION_TYPE || 0)}" min="0" />
                   <div class="hint">"Resolu&ccedil;&atilde;o" (With technical intervention/etc.) &eacute; o campo <b>nativo</b> do Jira, n&atilde;o um customfield &mdash; a auditoria j&aacute; detecta e sugere automaticamente, <b>sem precisar configurar nada aqui</b> (v1.99.0). S&oacute; preencha este ID se sua inst&acirc;ncia usar um customfield separado no lugar do nativo.</div>
                 </div>
                 <div>
                   <label>Solution &mdash; texto t&eacute;cnico (CF ID)</label>
-                  <input type="number" id="ml_s_cf_solution_text" value="${Number(cur.CF_SOLUTION_TEXT)||0}" min="0" />
+                  <input type="number" id="ml_s_cf_solution_text" value="${Number(cur.CF_SOLUTION_TEXT || DEFAULTS.CF_SOLUTION_TEXT || 0)}" min="0" />
                   <div class="hint">Campo de texto livre "Solution" (diagn&oacute;stico + a&ccedil;&atilde;o t&eacute;cnica), diferente do coment&aacute;rio p&uacute;blico. A auditoria pr&eacute;-preenche com um texto mais t&eacute;cnico ao resolver o ticket.</div>
                 </div>
                 <div>
