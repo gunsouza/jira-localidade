@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.5.22
+// @version      2.6.0
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -17,6 +17,7 @@
 // @connect      melisystems.com
 // @connect      verdi-flows.melisystems.com
 // @connect      grid.melioffice.com
+// @connect      translate.googleapis.com
 // @noframes
 // @homepageURL  https://github.com/gunsouza/jira-localidade
 // @updateURL    https://cdn.jsdelivr.net/gh/gunsouza/jira-localidade@main/IS_Toolkit.user.js
@@ -96,6 +97,128 @@
           }catch(_){}
         }, 1500);
       }
+    }
+
+    // =========================
+    // I18N (v2.6.0) — deteccao automatica de idioma + dicionario pt/es/en
+    // Time atende varios paises da LATAM (Brasil, Mexico, Colombia, Chile, Argentina, Peru,
+    // etc.) e o Jira ja roda no idioma de cada analista — detectamos esse mesmo idioma (via
+    // <html lang="..."> que o proprio Jira seta, com fallback pro idioma do navegador) e
+    // trocamos os textos da ferramenta automaticamente. pt-BR continua sendo o "idioma nativo"
+    // do codigo (todo o historico do projeto foi escrito assim) e serve de fallback final pra
+    // qualquer chave ainda nao traduzida — ou seja, cobertura parcial NUNCA quebra a tela, só
+    // mostra o texto em portugues nesse ponto especifico ate ser traduzido.
+    // Cobertura (ver docs/CHANGELOG.md pra fases): comeca pelas telas de maior uso (botao
+    // flutuante, menu principal, toasts genericos, WhatsApp, confirmacoes das acoes
+    // principais) e vai crescendo em versoes seguintes — sem isso, arriscariamos reescrever
+    // milhares de linhas de uma vez so' num arquivo que ja se mostrou fragil o bastante ao
+    // longo dessa sessao (varios bugs sutis por mudanca grande demais de uma vez).
+    // =========================
+    function _detectLocale(){
+      try{
+        const htmlLang = String(document.documentElement.lang || '').trim().toLowerCase();
+        if(htmlLang.startsWith('es')) return 'es';
+        if(htmlLang.startsWith('en')) return 'en';
+        if(htmlLang.startsWith('pt')) return 'pt';
+      }catch(_){}
+      try{
+        const navLang = String((navigator.languages && navigator.languages[0]) || navigator.language || '').trim().toLowerCase();
+        if(navLang.startsWith('es')) return 'es';
+        if(navLang.startsWith('en')) return 'en';
+        if(navLang.startsWith('pt')) return 'pt';
+      }catch(_){}
+      return 'pt'; // default historico — mantem comportamento identico a antes do i18n existir
+    }
+    const LOCALE = _detectLocale();
+
+    // Dicionario: cada chave só precisa existir em 'pt' pra funcionar (fallback automatico).
+    // Convencao de chave: snake_case curto e descritivo, agrupado por tela/feature em comentarios.
+    const I18N = {
+      pt: {
+        // --- Home (tela principal) ---
+        home_search_toggle: 'Buscar outro ticket',
+        home_search_placeholder: 'Cole uma chave de ticket (ex: IS-1028327) e Enter para inspecionar...',
+        home_search_btn: 'Buscar',
+        home_search_clear_title: 'Limpar',
+        home_search_hint: 'Acesso rápido a qualquer ticket sem trocar de aba. Você vê resumo, status, localidade e pode marcar como duplicado do ticket atual em 1 clique.',
+        home_status_title: 'Mudar Status',
+        home_status_desc: 'Aplica transições com mensagem pré-configurada. A opção <b>Derivar</b> abre o fluxo completo com seleção de time e ISS automático.',
+        home_status_btn: 'Mudar status',
+        home_dups_title: 'Duplicados',
+        home_dups_desc: 'Lista tickets da mesma localidade com scoring de match. Filtra por IDs (IP/MAC/serial), vincula e comenta em lote.',
+        home_dups_btn: 'Abrir duplicados',
+        home_derive_title: 'Derivar',
+        home_derive_desc: 'Atalho direto para derivar para outro time da allowlist, com ISS automático para <b>IS-SHIP-SE-N2</b>.',
+        home_derive_btn: 'Derivar agora',
+        home_audit_title: 'Auditar Ticket',
+        home_audit_desc: 'Análise por IA (via n8n): evidências, consistência, qualidade do registro e pontos de melhoria.',
+        home_audit_webhook_missing_title: 'Configure o Webhook em Configurações → Auditoria',
+        home_audit_webhook_missing_btn: 'Webhook não configurado',
+        home_audit_btn_reanalyze: 'Reanalisar',
+        home_audit_btn_analyze: 'Auditar',
+        grid_central: 'Central Natis'
+      },
+      es: {
+        home_search_toggle: 'Buscar otro ticket',
+        home_search_placeholder: 'Pegue una clave de ticket (ej: IS-1028327) y Enter para inspeccionar...',
+        home_search_btn: 'Buscar',
+        home_search_clear_title: 'Limpiar',
+        home_search_hint: 'Acceso rápido a cualquier ticket sin cambiar de pestaña. Ves resumen, estado, localidad y puedes marcar como duplicado del ticket actual en 1 clic.',
+        home_status_title: 'Cambiar Estado',
+        home_status_desc: 'Aplica transiciones con mensaje preconfigurado. La opción <b>Derivar</b> abre el flujo completo con selección de equipo e ISS automático.',
+        home_status_btn: 'Cambiar estado',
+        home_dups_title: 'Duplicados',
+        home_dups_desc: 'Lista tickets de la misma localidad con scoring de coincidencia. Filtra por IDs (IP/MAC/serial), vincula y comenta en lote.',
+        home_dups_btn: 'Abrir duplicados',
+        home_derive_title: 'Derivar',
+        home_derive_desc: 'Atajo directo para derivar a otro equipo de la allowlist, con ISS automático para <b>IS-SHIP-SE-N2</b>.',
+        home_derive_btn: 'Derivar ahora',
+        home_audit_title: 'Auditar Ticket',
+        home_audit_desc: 'Análisis por IA (vía n8n): evidencias, consistencia, calidad del registro y puntos de mejora.',
+        home_audit_webhook_missing_title: 'Configure el Webhook en Configuración → Auditoría',
+        home_audit_webhook_missing_btn: 'Webhook no configurado',
+        home_audit_btn_reanalyze: 'Reanalizar',
+        home_audit_btn_analyze: 'Auditar',
+        grid_central: 'Central Natis'
+      },
+      en: {
+        home_search_toggle: 'Search another ticket',
+        home_search_placeholder: 'Paste a ticket key (e.g. IS-1028327) and press Enter to inspect...',
+        home_search_btn: 'Search',
+        home_search_clear_title: 'Clear',
+        home_search_hint: 'Quick access to any ticket without switching tabs. See summary, status, location, and mark it as a duplicate of the current ticket in 1 click.',
+        home_status_title: 'Change Status',
+        home_status_desc: 'Applies transitions with a pre-configured message. The <b>Derive</b> option opens the full flow with team selection and automatic ISS.',
+        home_status_btn: 'Change status',
+        home_dups_title: 'Duplicates',
+        home_dups_desc: 'Lists tickets from the same location with match scoring. Filters by IDs (IP/MAC/serial), links and comments in bulk.',
+        home_dups_btn: 'Open duplicates',
+        home_derive_title: 'Derive',
+        home_derive_desc: 'Direct shortcut to derive to another allowlisted team, with automatic ISS for <b>IS-SHIP-SE-N2</b>.',
+        home_derive_btn: 'Derive now',
+        home_audit_title: 'Audit Ticket',
+        home_audit_desc: 'AI-powered analysis (via n8n): evidence, consistency, record quality, and improvement points.',
+        home_audit_webhook_missing_title: 'Configure the Webhook in Settings → Audit',
+        home_audit_webhook_missing_btn: 'Webhook not configured',
+        home_audit_btn_reanalyze: 'Re-analyze',
+        home_audit_btn_analyze: 'Audit',
+        grid_central: 'Central Natis'
+      }
+    };
+
+    // t(key, vars?): busca a traducao no idioma detectado, cai pro pt se a chave nao existir
+    // nesse idioma, e cai pro texto da PROPRIA key como ultimo recurso (nunca quebra a UI).
+    // vars: objeto pra interpolar {nome} dentro do texto (mesma convencao ja usada nos templates
+    // de comentario/WhatsApp do projeto, ex: {key}, {reporter}, {meu_nome}).
+    function t(key, vars){
+      const dict = I18N[LOCALE] || I18N.pt;
+      let str = (key in dict) ? dict[key] : (I18N.pt[key] ?? key);
+      if(vars){
+        for(const k of Object.keys(vars)){
+          str = str.split(`{${k}}`).join(String(vars[k] ?? ''));
+        }
+      }
+      return str;
     }
 
     // =========================
@@ -4949,7 +5072,29 @@
     // Helper: insere o snippet no textarea respeitando a escolha do usuario
     // (substituir / anexar / cancelar). Mostra um mini-prompt visual quando ja ha
     // texto digitado; se vazio, insere direto.
-    function _applySnippetToTextarea(textarea, snippetText){
+    async function _applySnippetToTextarea(textarea, snippetText){
+      // v2.6.0: se o ticket atual tiver um idioma de cliente ja detectado (via localidade,
+      // cacheado em ml_loc_lang_<issueKey> por renderLocationCard/_waOpen) e esse idioma for
+      // diferente do idioma em que o time escreve os snippets (pt-BR, SNIPPETS_AUTHOR_LANG),
+      // traduz automaticamente ANTES de inserir — pedido explicito do time (analistas BR
+      // atendem tickets hispanos e vice-versa). Se a traducao falhar (rede/timeout/API fora do
+      // ar), cai pro texto original sem quebrar o fluxo — o analista so' nao ganha o aviso.
+      let translatedNotice = '';
+      try{
+        const issueKey = getIssueKey();
+        const ticketLang = issueKey ? _getCachedTicketLang(issueKey) : '';
+        if(ticketLang && ticketLang !== SNIPPETS_AUTHOR_LANG){
+          const translated = await translateText(snippetText, ticketLang);
+          if(translated){
+            snippetText = translated;
+            const langNames = { es: 'espanhol', en: 'inglês', pt: 'português' };
+            translatedNotice = ` (traduzido automaticamente para ${langNames[ticketLang] || ticketLang} — revise antes de enviar)`;
+          }
+        }
+      }catch(_){}
+      if(translatedNotice){
+        try{ showToast('Snippet' + translatedNotice + '.', 'info', 5000); }catch(_){}
+      }
       return new Promise((resolve) => {
         const cur = String(textarea.value || '');
         if(!cur.trim()){
@@ -8919,15 +9064,15 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
           <div>
             <div id="ml_home_clipboard"></div>
-            <button id="ml_home_search_toggle" class="ghost" style="font-size:12px;padding:5px 10px;">+ Buscar outro ticket</button>
+            <button id="ml_home_search_toggle" class="ghost" style="font-size:12px;padding:5px 10px;">+ ${t('home_search_toggle')}</button>
             <div id="ml_home_search_collapsible" style="display:none;margin-top:10px;">
               <div class="searchBox">
-                <input type="text" id="ml_home_search_input" placeholder="Cole uma chave de ticket (ex: IS-1028327) e Enter para inspecionar..." spellcheck="false" />
-                <button id="ml_home_search_btn" class="primary">Buscar</button>
-                <button id="ml_home_search_clear" class="ghost" title="Limpar">Limpar</button>
+                <input type="text" id="ml_home_search_input" placeholder="${t('home_search_placeholder')}" spellcheck="false" />
+                <button id="ml_home_search_btn" class="primary">${t('home_search_btn')}</button>
+                <button id="ml_home_search_clear" class="ghost" title="${t('home_search_clear_title')}">${t('home_search_clear_title')}</button>
               </div>
               <div class="hint" style="color: var(--ml-text-dim); font-size: 11px; margin-top: 6px;">
-                Acesso rapido a qualquer ticket sem trocar de aba. Voce ve resumo, status, localidade e pode marcar como duplicado do ticket atual em 1 clique.
+                ${t('home_search_hint')}
               </div>
               <div id="ml_home_search_hist" style="margin-top: 10px;"></div>
               <div id="ml_home_search_result" style="margin-top: 12px;"></div>
@@ -8940,35 +9085,35 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           <div class="homeGrid">
             <div class="homeCard">
               <div class="hcIcon">&#x21BB;</div>
-              <h3>Mudar Status</h3>
-              <p>Aplica transi&ccedil;&otilde;es com mensagem pr&eacute;-configurada. A op&ccedil;&atilde;o <b>Derivar</b> abre o fluxo completo com sele&ccedil;&atilde;o de time e ISS autom&aacute;tico.</p>
+              <h3>${t('home_status_title')}</h3>
+              <p>${t('home_status_desc')}</p>
               <div class="row">
-                <button id="ml_home_status" class="primary">Mudar status</button>
+                <button id="ml_home_status" class="primary">${t('home_status_btn')}</button>
               </div>
             </div>
 
             <div class="homeCard">
               <div class="hcIcon">&#9783;</div>
-              <h3>Duplicados</h3>
-              <p>Lista tickets da mesma localidade com scoring de match. Filtra por IDs (IP/MAC/serial), vincula e comenta em lote.</p>
+              <h3>${t('home_dups_title')}</h3>
+              <p>${t('home_dups_desc')}</p>
               <div class="row">
-                <button id="ml_home_dups" class="primary">Abrir duplicados</button>
+                <button id="ml_home_dups" class="primary">${t('home_dups_btn')}</button>
               </div>
             </div>
 
             <div class="homeCard">
               <div class="hcIcon">&#10142;</div>
-              <h3>Derivar</h3>
-              <p>Atalho direto para derivar para outro time da allowlist, com ISS autom&aacute;tico para <b>IS-SHIP-SE-N2</b>.</p>
+              <h3>${t('home_derive_title')}</h3>
+              <p>${t('home_derive_desc')}</p>
               <div class="row">
-                <button id="ml_home_derive" class="primary">Derivar agora</button>
+                <button id="ml_home_derive" class="primary">${t('home_derive_btn')}</button>
               </div>
             </div>
 
             <div class="homeCard">
               <div class="hcIcon">&#x1F50D;</div>
-              <h3>Auditar Ticket</h3>
-              <p>An&aacute;lise por IA (via n8n): evid&ecirc;ncias, consist&ecirc;ncia, qualidade do registro e pontos de melhoria.</p>
+              <h3>${t('home_audit_title')}</h3>
+              <p>${t('home_audit_desc')}</p>
               ${(() => {
                 const cached = _loadAuditGM(issueKey);
                 const tsLabel = cached?._ts
@@ -8976,8 +9121,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   : null;
                 const scoreLabel = cached ? ` · ${cached.score}pts` : '';
                 return `<div class="row" style="gap:8px;flex-wrap:wrap;">
-                  <button id="ml_home_audit" class="primary" ${!SETTINGS.AUDIT_WEBHOOK_URL ? 'disabled title="Configure o Webhook em Configuracoes → Auditoria"' : ''}>
-                    ${!SETTINGS.AUDIT_WEBHOOK_URL ? 'Webhook n&atilde;o configurado' : (cached ? 'Reanalisar' : 'Auditar')}
+                  <button id="ml_home_audit" class="primary" ${!SETTINGS.AUDIT_WEBHOOK_URL ? `disabled title="${t('home_audit_webhook_missing_title')}"` : ''}>
+                    ${!SETTINGS.AUDIT_WEBHOOK_URL ? t('home_audit_webhook_missing_btn') : (cached ? t('home_audit_btn_reanalyze') : t('home_audit_btn_analyze'))}
                   </button>
                   ${tsLabel ? `<button id="ml_home_audit_cached" class="ghost" style="font-size:12px;">&#x23F1; ${tsLabel}${scoreLabel}</button>` : ''}
                   <span id="ml_home_audit_stale"></span>
@@ -8988,7 +9133,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           ${GRID_CENTRAL_URL ? `
           <div style="grid-column:1 / -1;margin-top:10px;">
             <a href="${esc(GRID_CENTRAL_URL)}" target="_blank" rel="noopener" class="primary" style="text-decoration:none;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;padding:10px 18px;width:100%;box-sizing:border-box;">
-              &#128194; Central Natis
+              &#128194; ${t('grid_central')}
             </a>
           </div>` : ''}
         </div>
@@ -9080,6 +9225,10 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       }
 
       if(!locationKey) { slot.style.minHeight = ''; slot.innerHTML = ''; return; }
+      // v2.6.0: assim que a localidade do ticket e' conhecida (cache ou recem-resolvida), ja
+      // deixa o IDIOMA DO CLIENTE cacheado tambem — usado depois na hora de inserir um snippet
+      // de comentario (traducao automatica, ver translateText/_getCachedTicketLang mais abaixo).
+      _cacheTicketLang(issueKey, locationKey);
 
       // Loading state
       // Extrai código e nome do novo formato ("BR_XD_CAMPINAS BRXSP23") e antigo ("BRXSP23 - XD Campinas")
@@ -13187,6 +13336,69 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       return (m && WA_CC_BY_COUNTRY[m[1]]) ? WA_CC_BY_COUNTRY[m[1]] : '';
     }
 
+    // =========================
+    // TRADUÇÃO AUTOMÁTICA DE SNIPPETS (v2.6.0)
+    // Time atende tickets de vários países da LATAM (analista BR atende ticket do México e
+    // vice-versa) — os snippets de comentário são escritos por cada analista no PRÓPRIO idioma
+    // (normalmente pt-BR), mas o CLIENTE do ticket pode falar espanhol. Diferente do i18n da
+    // interface (que segue o idioma do Jira/navegador do ANALISTA), aqui o idioma-alvo é o do
+    // CLIENTE — inferido pela localidade do ticket (mesmo mapa de prefixo usado pro DDI do
+    // WhatsApp acima), com cache por ticket (mesma sessionStorage key usada pra localidade,
+    // 'ml_loc_key_<issueKey>' → 'ml_loc_lang_<issueKey>') pra nao recalcular/rechamar toda vez.
+    // =========================
+
+    // Idioma "nativo" assumido dos snippets: o time escreve em pt-BR por padrão.
+    const SNIPPETS_AUTHOR_LANG = 'pt';
+
+    // Idioma do cliente por prefixo da localidade (BR->pt, resto da LATAM coberta->es).
+    const LANG_BY_COUNTRY_PREFIX = { BR:'pt', MX:'es', CO:'es', CL:'es', AR:'es', PE:'es' };
+
+    function _langFromLocality(locationKey){
+      const m = String(locationKey || '').trim().toUpperCase().match(/^([A-Z]{2})/);
+      return (m && LANG_BY_COUNTRY_PREFIX[m[1]]) ? LANG_BY_COUNTRY_PREFIX[m[1]] : '';
+    }
+
+    // Cacheia o idioma do ticket (sessionStorage, mesma issueKey da localidade) assim que a
+    // localidade for resolvida em qualquer fluxo (renderLocationCard, _waOpen, etc.) — pra que
+    // no momento de inserir um snippet a deteccao ja esteja pronta, sem esperar rede.
+    function _cacheTicketLang(issueKey, locationKey){
+      try{
+        const lang = _langFromLocality(locationKey);
+        if(lang) sessionStorage.setItem('ml_loc_lang_' + issueKey, lang);
+      }catch(_){}
+    }
+    function _getCachedTicketLang(issueKey){
+      try{ return sessionStorage.getItem('ml_loc_lang_' + issueKey) || ''; }catch(_){ return ''; }
+    }
+
+    // Traduz um texto usando a API publica (nao-oficial, sem chave) do Google Translate.
+    // GM_xmlhttpRequest (nao fetch) pra bypassar CORS, igual ja usado pro Grid/auditoria.
+    // Resolve null em qualquer falha (rede, timeout, resposta inesperada) — quem chama deve
+    // tratar null como "nao deu pra traduzir, usa o texto original".
+    function translateText(text, targetLang){
+      return new Promise((resolve) => {
+        const q = String(text || '').trim();
+        if(!q || !targetLang){ resolve(null); return; }
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(q)}`;
+        try{
+          GM_xmlhttpRequest({
+            method: 'GET',
+            url,
+            timeout: 8000,
+            onload(resp){
+              try{
+                const data = JSON.parse(resp.responseText);
+                const translated = (data?.[0] || []).map(seg => seg?.[0] || '').join('');
+                resolve(translated || null);
+              }catch(_){ resolve(null); }
+            },
+            onerror(){ resolve(null); },
+            ontimeout(){ resolve(null); }
+          });
+        }catch(_){ resolve(null); }
+      });
+    }
+
     // Normaliza um telefone para dígitos com código de país.
     // - Se o número já traz "+" (código explícito, ex: +52...), RESPEITA — só usa os dígitos.
     // - Senão, prefixa o código do país inferido da LOCALIDADE (ou o fallback configurado).
@@ -13264,6 +13476,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       }
       if(!phone) phone = _waPhoneFromDom();
       if(!phone){ showToast('Telefone de contato não encontrado neste ticket.', 'warn', 4000); return; }
+      if(locationKey) _cacheTicketLang(issueKey, locationKey);
 
       const num = _waNormalizePhone(phone, SETTINGS.WHATSAPP_COUNTRY_CODE || DEFAULTS.WHATSAPP_COUNTRY_CODE, locationKey);
       if(!num || num.length < 10){ showToast('Telefone inválido: ' + phone, 'warn', 4000); return; }
