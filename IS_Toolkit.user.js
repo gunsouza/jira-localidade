@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.17
+// @version      2.6.18
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -46,6 +46,10 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.6.18': [
+        '"Semana" agora é os últimos 7 dias corridos, não mais domingo-a-sábado (evita "hoje" e "semana" ficarem iguais no início da semana) — vale pro Painel administrativo, Minha produtividade e Categoria da semana.',
+        'Painel administrativo: corrigido ticket com categoria preenchida aparecendo como "(sem categoria)" — agora só cai nesse balde quem realmente não tem categoria; falha de resolução de nome vira "(categoria não identificada)".'
+      ],
       '2.6.17': [
         'Painel administrativo: corrigido nome de analista aparecendo como accountId cru na tabela por pessoa.',
         'Tradução automática mais resiliente: cache local (menos dependência do tradutor a cada uso) + aviso na tela quando a tradução do WhatsApp falha.'
@@ -2543,7 +2547,9 @@
       const projScope = PROJECTS.length ? `project in (${PROJECTS.map(p=>`"${p}"`).join(',')}) AND ` : '';
       const queries = {
         resolvedToday: `${projScope}assignee = currentUser() AND resolutiondate >= startOfDay()`,
-        resolvedWeek:  `${projScope}assignee = currentUser() AND resolutiondate >= startOfWeek()`,
+        // v2.6.18: rolling 7 dias (startOfDay(-6d)), nao mais startOfWeek() calendario — ver
+        // _adminStartFn pro motivo (evita "hoje" == "semana" todo domingo).
+        resolvedWeek:  `${projScope}assignee = currentUser() AND resolutiondate >= startOfDay(-6d)`,
         openNow:       `${projScope}assignee = currentUser() AND statusCategory != Done`,
         toolkitToday:  `${projScope}labels = "${SETTINGS.USAGE_LABEL || DEFAULTS.USAGE_LABEL || 'is-toolkit'}" AND assignee = currentUser() AND updated >= startOfDay()`,
       };
@@ -2685,7 +2691,9 @@
         who = `assignee in (${members.map(m => `"${m.accountId}"`).join(',')}) AND `;
       }
       const projScope = scope === 'team' ? _rankingProjScope() : _projScope();
-      const jql = `${projScope}${who}resolutiondate >= startOfWeek()`;
+      // v2.6.18: rolling 7 dias (startOfDay(-6d)), nao mais startOfWeek() calendario — ver
+      // _adminStartFn pro motivo.
+      const jql = `${projScope}${who}resolutiondate >= startOfDay(-6d)`;
       const maxResults = scope === 'team' ? 250 : 100;
       const r = await fetch(`${location.origin}/rest/api/3/search/jql`, {
         method: 'POST', credentials: 'same-origin',
@@ -2707,30 +2715,68 @@
       // Assets API (mesma `getAssetName(workspaceId, objectId)` ja usada pra localidade/asset em
       // outros pontos do codigo), uma vez por objectId UNICO (memoizado aqui) pra nao repetir
       // chamada de rede pro mesmo objeto em dezenas de tickets da mesma categoria.
+      // v2.6.18: bug real reportado pelo usuario ("tem uns que aparecer como sem categoria
+      // porem tem") — dois problemas achados aqui:
+      // 1) a escolha de campo (Incident x Service) era SO pelo issuetype, sem fallback pro
+      //    outro campo quando o "certo" vinha vazio — ticket com o valor no campo "errado"
+      //    (issuetype que nao bate 100% no regex, ou fluxo que preencheu o outro CF) caia em
+      //    "sem categoria" mesmo tendo uma categoria de verdade preenchida.
+      // 2) a resolucao do nome via Assets API (getAssetName) rodava em Promise.all sem
+      //    NENHUM limite de concorrencia — com muitos objectIds unicos na mesma leva (ex:
+      //    "Categoria do time" com ate 250 tickets), isso estoura rate limit da Assets API
+      //    silenciosamente (erro engolido -> vira '' -> some no mesmo balde de "sem
+      //    categoria"), mesmo o campo tendo um objectId valido.
+      const pickRef = (it, fieldKey) => {
+        if(!fieldKey) return null;
+        const raw = it.fields?.[fieldKey];
+        const arr = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+        return arr[0] || null;
+      };
       const refByIssue = issues.map(it => {
         const isIncident = /incident|incidente/i.test(it.fields?.issuetype?.name || '');
-        const fieldKey = isIncident
-          ? (cfIncident ? `customfield_${cfIncident}` : (cfLegacy ? `customfield_${cfLegacy}` : null))
-          : (cfService  ? `customfield_${cfService}`  : (cfLegacy ? `customfield_${cfLegacy}` : null));
-        const raw = fieldKey ? it.fields?.[fieldKey] : null;
-        const arr = Array.isArray(raw) ? raw : (raw ? [raw] : []);
-        return arr[0] || null; // 1 categoria por ticket, igual o resto do campo Assets no projeto
+        const primaryKey   = isIncident ? (cfIncident && `customfield_${cfIncident}`) : (cfService && `customfield_${cfService}`);
+        const secondaryKey = isIncident ? (cfService  && `customfield_${cfService}`)  : (cfIncident && `customfield_${cfIncident}`);
+        const legacyKey    = cfLegacy && `customfield_${cfLegacy}`;
+        // 1 categoria por ticket, igual o resto do campo Assets no projeto — tenta o campo do
+        // issuetype primeiro, so cai pro outro (ou pro legado) se ele vier vazio.
+        return pickRef(it, primaryKey) || pickRef(it, secondaryKey) || pickRef(it, legacyKey);
       });
 
       const uniqueRefs = new Map();
       for(const ref of refByIssue){
         if(ref?.objectId && !uniqueRefs.has(String(ref.objectId))) uniqueRefs.set(String(ref.objectId), ref);
       }
-      const nameEntries = await Promise.all([...uniqueRefs.entries()].map(async ([oid, ref]) => {
-        try{ return [oid, await getAssetName(ref.workspaceId, ref.objectId)]; }
-        catch(_){ return [oid, '']; }
-      }));
-      const nameById = new Map(nameEntries);
+      // Resolve nome via Assets API com pool de concorrencia + 1 retry (mesmo padrao usado em
+      // _resolveRankingInclude/tradução) — sem isso, leva grande estourava rate limit e
+      // mascarava categoria preenchida como "sem categoria".
+      const nameById = new Map();
+      const refEntries = [...uniqueRefs.entries()];
+      const CONCURRENCY = 5;
+      let _catIdx = 0;
+      async function _catWorker(){
+        while(_catIdx < refEntries.length){
+          const [oid, ref] = refEntries[_catIdx++];
+          let name = '';
+          try{ name = await getAssetName(ref.workspaceId, ref.objectId); }catch(_){}
+          if(!name){
+            await new Promise(r => setTimeout(r, 400));
+            try{ name = await getAssetName(ref.workspaceId, ref.objectId); }catch(_){}
+          }
+          if(!name) console.warn(`[IS Toolkit][categoria] objectId ${oid}: categoria preenchida no ticket, mas a Assets API nao devolveu nome legivel apos retry (objeto deletado/sem acesso/rate limit persistente?) — vai contar como "categoria nao identificada", nao "sem categoria".`);
+          nameById.set(oid, name);
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, refEntries.length) }, _catWorker));
 
       const counts = {};
       for(const ref of refByIssue){
-        const label = (ref?.objectId ? nameById.get(String(ref.objectId)) : '') || '';
-        const key = String(label || '(sem categoria)').trim() || '(sem categoria)';
+        let key;
+        if(!ref?.objectId){
+          key = '(sem categoria)'; // campo realmente vazio nos dois CFs (e no legado)
+        } else {
+          const label = (nameById.get(String(ref.objectId)) || '').trim();
+          key = label || '(categoria não identificada)'; // tinha valor, so a Assets API nao resolveu o nome
+        }
         counts[key] = (counts[key] || 0) + 1;
       }
       const breakdown = Object.entries(counts).map(([label, count]) => ({ label, count })).sort((a,b) => b.count - a.count);
@@ -2918,8 +2964,15 @@
     // (_rankingProjScope, igual o Ranking) e reusa o mesmo grupo do Jira configurado em
     // RANKING_TEAM_GROUP pra saber quem entra na visao por pessoa. So chamado quando
     // ADMIN_MODE_UNLOCKED e true (ver renderDashboardsHome).
+    // v2.6.18: "semana" era startOfWeek() (calendario dom-sab do Jira) — bug de UX real
+    // reportado pelo usuario: num domingo, "hoje" e "semana" davam os MESMOS numeros (a
+    // semana calendario tinha acabado de comecar), fazendo o card de "semana" parecer inutil/
+    // errado logo no comeco de cada semana. Trocado pra janela ROLANTE de 7 dias corridos
+    // (startOfDay(-6d) ate agora, hoje incluido) — mesmo conceito ja usado no grafico de
+    // "Minha produtividade" (getWeeklyProductivityCounts), agora consistente em todo lugar
+    // que fala de "semana" no painel.
     function _adminStartFn(period){
-      return period === 'month' ? 'startOfMonth()' : period === 'week' ? 'startOfWeek()' : 'startOfDay()';
+      return period === 'month' ? 'startOfMonth()' : period === 'week' ? 'startOfDay(-6d)' : 'startOfDay()';
     }
 
     // Volume da fila (time todo, sem quebrar por pessoa): quantos entraram, quantos saíram
@@ -11582,7 +11635,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <div class="hint">Tickets abertos comigo criados h&aacute; mais desse tanto de dias entram no card "Tickets antigos". <b>0</b> = esconde o card.</div>
                 </div>
                 <div>
-                  <label class="checkbox"><input type="checkbox" id="ml_s_category_breakdown" ${cur.CATEGORY_BREAKDOWN_ENABLED !== false ? 'checked' : ''} /> Mostrar resolvidos da semana por categoria</label>
+                  <label class="checkbox"><input type="checkbox" id="ml_s_category_breakdown" ${cur.CATEGORY_BREAKDOWN_ENABLED !== false ? 'checked' : ''} /> Mostrar resolvidos (últimos 7 dias) por categoria</label>
                   <div class="hint">Usa o campo real de Categoria (mesmo da auditoria, CF_CATEGORY, configur&aacute;vel na aba Auditoria) em modo somente leitura.</div>
                 </div>
               </div>
@@ -13473,7 +13526,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         const fmt = (n) => (n == null ? '—' : String(n));
         const cards = [
           { label: 'Resolvidos hoje',      icon: '&#9989;', value: stats.resolvedToday },
-          { label: 'Resolvidos essa semana', icon: '&#128197;', value: stats.resolvedWeek },
+          { label: 'Resolvidos (últimos 7 dias)', icon: '&#128197;', value: stats.resolvedWeek },
           { label: 'Abertos comigo agora',  icon: '&#128203;', value: stats.openNow },
           { label: 'Via IS Toolkit hoje',   icon: '&#9889;', value: stats.toolkitToday },
         ];
@@ -13628,8 +13681,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           if(!data){ catEl.innerHTML = ''; return; }
           if(!data.breakdown.length){
             catEl.innerHTML = `
-              <div style="font-weight:700;margin-bottom:10px;">Resolvidos essa semana, por categoria</div>
-              <div class="homeCard"><div class="muted">Nenhum resolvido essa semana ainda.</div></div>
+              <div style="font-weight:700;margin-bottom:10px;">Resolvidos (últimos 7 dias), por categoria</div>
+              <div class="homeCard"><div class="muted">Nenhum resolvido nos últimos 7 dias ainda.</div></div>
             `;
             return;
           }
@@ -13644,7 +13697,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             </div>
           `).join('');
           catEl.innerHTML = `
-            <div style="font-weight:700;margin-bottom:10px;">Resolvidos essa semana, por categoria</div>
+            <div style="font-weight:700;margin-bottom:10px;">Resolvidos (últimos 7 dias), por categoria</div>
             <div style="background:var(--ml-bg-2); border:1px solid var(--ml-border-2); border-radius:8px; padding:14px;">
               ${rows}
               ${data.truncated ? `<div class="meta" style="margin-top:4px;">Mostrando os primeiros ${data.maxResults} resolvidos da semana.</div>` : ''}
@@ -13733,7 +13786,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
           // Guarda os dados ja carregados (em memoria, so pra essa renderizacao) pra alimentar
           // os botoes de exportar (Copiar resumo / Baixar CSV) sem precisar buscar de novo.
-          const _adminExportData = { volume: null, people: null, peopleLabel: 'semana', category: null };
+          const _adminExportData = { volume: null, people: null, peopleLabel: 'últimos 7 dias', category: null };
 
           // v2.6.1: Volume e "por pessoa" agora vem de UMA SO fonte (getAdminTeamOverview, ja
           // restrita por assignee aos membros filtrados do grupo RANKING_TEAM_GROUP) buscada
@@ -13742,7 +13795,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           // a tabela por pessoa, sem nenhuma chamada de rede nova (so troca o que ja foi
           // buscado). Pedido do usuario: cards de Volume clicaveis + Volume escopado ao time
           // de verdade (nao IS+ISS inteiro).
-          const volPeriods = [{ key: 'day', label: 'hoje' }, { key: 'week', label: 'semana' }, { key: 'month', label: 'mês' }];
+          const volPeriods = [{ key: 'day', label: 'hoje' }, { key: 'week', label: 'últimos 7 dias' }, { key: 'month', label: 'mês' }];
           const volEl = document.getElementById('ml_dash_admin_volume');
           const peopleEl = document.getElementById('ml_dash_admin_people');
           let _adminSelectedPeriod = 'week';
@@ -13857,8 +13910,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               if(!data){ catAdminEl.innerHTML = ''; return; }
               if(!data.breakdown.length){
                 catAdminEl.innerHTML = `
-                  <div style="font-weight:700;margin-bottom:10px;">Categoria do time (resolvidos esta semana)</div>
-                  <div class="homeCard"><div class="muted">Nenhum resolvido essa semana ainda.</div></div>
+                  <div style="font-weight:700;margin-bottom:10px;">Categoria do time (resolvidos últimos 7 dias)</div>
+                  <div class="homeCard"><div class="muted">Nenhum resolvido nos últimos 7 dias ainda.</div></div>
                 `;
                 return;
               }
@@ -13873,7 +13926,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 </div>
               `).join('');
               catAdminEl.innerHTML = `
-                <div style="font-weight:700;margin-bottom:10px;">Categoria do time (resolvidos esta semana)</div>
+                <div style="font-weight:700;margin-bottom:10px;">Categoria do time (resolvidos últimos 7 dias)</div>
                 <div style="background:var(--ml-bg-2); border:1px solid var(--ml-border-2); border-radius:8px; padding:14px;">
                   ${rows}
                   ${data.truncated ? `<div class="meta" style="margin-top:4px;">Mostrando os primeiros ${data.maxResults} resolvidos da semana.</div>` : ''}
@@ -13909,7 +13962,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             txt.push('');
             csv.push('');
 
-            const peopleLabel = _adminExportData.peopleLabel || 'semana';
+            const peopleLabel = _adminExportData.peopleLabel || 'últimos 7 dias';
             txt.push(`CRIADOS X RESOLVIDOS POR PESSOA (${peopleLabel}) + CARGA ABERTA AGORA`);
             csv.push(csvRow([`Criados x Resolvidos por pessoa (${peopleLabel}) + carga aberta agora`]), csvRow(['Analista','Criados','Resolvidos','Auto-fechados','Abertos agora']));
             (_adminExportData.people?.members || []).forEach(m => {
@@ -13919,7 +13972,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             txt.push('');
             csv.push('');
 
-            txt.push('CATEGORIA DO TIME (resolvidos esta semana)');
+            txt.push('CATEGORIA DO TIME (resolvidos últimos 7 dias)');
             csv.push(csvRow(['Categoria do time (resolvidos semana)']), csvRow(['Categoria','Quantidade']));
             (_adminExportData.category?.breakdown || []).forEach(b => {
               txt.push(`${b.label}: ${b.count}`);
