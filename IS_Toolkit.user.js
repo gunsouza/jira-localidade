@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.18
+// @version      2.6.19
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -46,6 +46,9 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.6.19': [
+        'RANKING_INCLUDE agora ignora automaticamente contas desativadas no Jira — não precisa mais remover à mão da lista quando alguém sai do time.'
+      ],
       '2.6.18': [
         '"Semana" agora é os últimos 7 dias corridos, não mais domingo-a-sábado (evita "hoje" e "semana" ficarem iguais no início da semana) — vale pro Painel administrativo, Minha produtividade e Categoria da semana.',
         'Painel administrativo: corrigido ticket com categoria preenchida aparecendo como "(sem categoria)" — agora só cai nesse balde quem realmente não tem categoria; falha de resolução de nome vira "(categoria não identificada)".'
@@ -2854,13 +2857,24 @@
       // nunca resolver o nome de verdade via API. So passava batido antes porque
       // RANKING_INCLUDE ficou vazio ate a v2.6.12 — esse caminho quase nunca rodava.
       const accountIdEntries = [];
+      // v2.6.18: pedido do usuario — quem sai do time (conta desativada no Jira) nao deve
+      // precisar ser removido a mao de RANKING_INCLUDE toda vez. A API do Jira ja informa
+      // `.active` tanto no user/search quanto no user?accountId=..., entao filtra aqui e nunca
+      // entra no Ranking/Painel administrativo (so loga um aviso, pra saber que foi ignorado).
       for(const entry of list){
         if(isAccountId(entry)){ accountIdEntries.push(entry); continue; }
         try{
           const url = `${location.origin}/rest/api/3/user/search?query=${encodeURIComponent(entry)}&maxResults=1`;
           const r = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
           const arr = r.ok ? await r.json() : [];
-          if(arr && arr[0]){ members.push({ accountId: arr[0].accountId, displayName: arr[0].displayName || entry }); continue; }
+          if(arr && arr[0]){
+            if(arr[0].active === false){
+              console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: "${entry}" resolveu pra uma conta DESATIVADA — ignorado automaticamente (nao precisa remover da lista a mao).`);
+              continue;
+            }
+            members.push({ accountId: arr[0].accountId, displayName: arr[0].displayName || entry });
+            continue;
+          }
           console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: nenhum usuario encontrado pra "${entry}" — ignorado.`);
         }catch(e){
           console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: falha resolvendo "${entry}":`, e);
@@ -2875,17 +2889,23 @@
           while(idx < accountIdEntries.length){
             const accountId = accountIdEntries[idx++];
             let displayName = accountId; // fallback: se a API falhar, ao menos nao quebra a tela
+            let active = true; // assume ativo se a API falhar — nao esconde silenciosamente
             try{
               const url = `${location.origin}/rest/api/3/user?accountId=${encodeURIComponent(accountId)}`;
               const r = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
               if(r.ok){
                 const d = await r.json();
                 displayName = d?.displayName || accountId;
+                active = d?.active !== false;
               } else {
                 console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: HTTP ${r.status} ao resolver nome de "${accountId}" — mostrando accountId cru.`);
               }
             }catch(e){
               console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: erro ao resolver nome de "${accountId}":`, e);
+            }
+            if(!active){
+              console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: "${accountId}" (${displayName}) esta DESATIVADO no Jira — ignorado automaticamente (nao precisa remover da lista a mao).`);
+              continue;
             }
             members.push({ accountId, displayName });
           }
