@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.19
+// @version      2.6.20
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -46,6 +46,9 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.6.20': [
+        'Localidade Sumaré/Campinas (BRRC02): cadastradas as variantes "SSP3" e "Mega Campinas XD" que apareciam no Jira sem achar os field techs — agora o card de Localidade e o Painel de fila encontram a equipe de campo certa pra essas duas também.'
+      ],
       '2.6.19': [
         'RANKING_INCLUDE agora ignora automaticamente contas desativadas no Jira — não precisa mais remover à mão da lista quando alguém sai do time.'
       ],
@@ -4129,6 +4132,12 @@
       'XSP27': 'XSP1',            // BRXSP27
       'BR_SVC_BARUERI': 'XSP1',
       'BR_XD_BARUERI': 'XSP1',    // casa "BR_XD_Barueri - ARENA" (parte antes do traço)
+      // Site Sumaré/Campinas = BRRC02 (RC02). O nome "BR_XD_Sumaré - CAMPINAS - BRRC02" ja
+      // resolve sozinho (extractLocationCode acha o padrao BRXXX## embutido), mas as outras
+      // duas variantes que aparecem no Jira/Assets pra essa MESMA localidade nao tem nenhum
+      // token em comum com "RC02", entao precisam de alias explicito (v2.6.20):
+      'SSP3': 'RC02',
+      'MEGA CAMPINAS XD': 'RC02',
     };
 
     // Dada a string bruta da localidade, resolve o código canônico via LOCATION_ALIASES,
