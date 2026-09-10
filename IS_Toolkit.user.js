@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.20
+// @version      2.6.21
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -46,6 +46,9 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.6.21': [
+        'Mais duas localidades mapeadas: "SRJ13" (site BRRJ02) e "XPR1" (site BRPR01, Araucária) agora encontram os field techs certos.'
+      ],
       '2.6.20': [
         'Localidade Sumaré/Campinas (BRRC02): cadastradas as variantes "SSP3" e "Mega Campinas XD" que apareciam no Jira sem achar os field techs — agora o card de Localidade e o Painel de fila encontram a equipe de campo certa pra essas duas também.'
       ],
@@ -4138,6 +4141,10 @@
       // token em comum com "RC02", entao precisam de alias explicito (v2.6.20):
       'SSP3': 'RC02',
       'MEGA CAMPINAS XD': 'RC02',
+      // Site BRRJ02, confirmado pelo usuario: "SRJ13" e o mesmo site que BRRJ02.
+      'SRJ13': 'RJ02',
+      // Site Araucaria = BRPR01, confirmado pelo usuario: "XPR1" e o mesmo site.
+      'XPR1': 'PR01',
     };
 
     // Dada a string bruta da localidade, resolve o código canônico via LOCATION_ALIASES,
