@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.21
+// @version      2.6.22
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -46,6 +46,9 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.6.22': [
+        'Corrigido o próprio popup de "o que há de novo": ele estava aparecendo com as tags de formatação cruas na tela (ex: "<b>", "&bull;") em vez de renderizadas — se você está lendo isto sem símbolos estranhos, o fix funcionou.'
+      ],
       '2.6.21': [
         'Mais duas localidades mapeadas: "SRJ13" (site BRRJ02) e "XPR1" (site BRPR01, Araucária) agora encontram os field techs certos.'
       ],
@@ -84,7 +87,7 @@
         if(!bullets.length) return;
         const msg = `<b>IS Toolkit atualizado para v${esc(APP_VERSION)}</b> — novidades:<br>` +
           bullets.map(b => `&bull; ${esc(b)}`).join('<br>');
-        showToast(msg, 'info', 0); // duration 0 = fica ate o analista fechar (ler com calma)
+        showToast(msg, 'info', 0, { html: true }); // duration 0 = fica ate o analista fechar (ler com calma)
       }catch(e){ console.warn('[IS Toolkit][whats-new] falha ao verificar novidades:', e); }
     }
 
@@ -1641,9 +1644,20 @@
   //   type: 'success'|'error'|'warn'|'info'  default: 'success'
   //   duration: ms  default: 3000  (0 = permanente)
   // ======================================================
-  function showToast(msg, type, duration){
+  function showToast(msg, type, duration, opts){
     type = type || 'success';
     duration = duration != null ? duration : 3000;
+    // v2.6.22: fix bug real reportado pelo usuario — o popup "o que ha de novo" (v2.6.17)
+    // aparecia com as tags/entidades HTML literais na tela ("<b>...</b>", "&bull;", "&quot;")
+    // em vez de renderizadas. Causa: showToast SEMPRE escapava a mensagem inteira (pensado
+    // pra texto puro vindo de qualquer chamada normal), mas _maybeShowWhatsNew ja monta a
+    // mensagem com HTML de proposito (<b>, <br>, &bull;) esperando que fosse injetada direto
+    // via innerHTML — resultado: HTML escapado 2x (ex: "&bull;" virava "&amp;bull;", que
+    // renderiza como "&bull;" na tela ao inves do simbolo •). Fix: novo 4º parametro opcional
+    // `opts.html` — quando true, pula o escape e usa a mensagem como HTML de verdade. Default
+    // (sem opts, ou html ausente/false) continua escapando tudo, sem mudar nenhuma chamada
+    // existente de showToast.
+    const isHtml = !!(opts && opts.html);
     const C = {
       success:{ bg:'linear-gradient(135deg,#1a5c35,#133d23)',border:'#2dd870',icon:'&#10003;',color:'#86efac' },
       error:  { bg:'linear-gradient(135deg,#5c1a1a,#3d1313)',border:'#f05a5a',icon:'&#9888;', color:'#fca5a5' },
@@ -1660,7 +1674,9 @@
     }
     const t = document.createElement('div');
     t.style.cssText = `background:${c.bg};color:#fff;border:1px solid ${c.border};border-radius:14px;padding:12px 16px;font:600 13px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 12px 32px rgba(0,0,0,.55);line-height:1.45;pointer-events:all;display:flex;gap:10px;align-items:flex-start;animation:mlToastIn .25s cubic-bezier(.34,1.56,.64,1);max-width:400px;`;
-    const safeMsg = String(msg||'').replace(/[<>&]/g,ch=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[ch])).replace(/\n/g,'<br>');
+    const safeMsg = isHtml
+      ? String(msg||'')
+      : String(msg||'').replace(/[<>&]/g,ch=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[ch])).replace(/\n/g,'<br>');
     t.innerHTML = `<span style="font-size:16px;line-height:1;color:${c.color};flex-shrink:0;">${c.icon}</span><span style="flex:1;">${safeMsg}</span><button onclick="this.parentElement.remove()" style="background:transparent;border:0;color:rgba(255,255,255,.45);font-size:16px;cursor:pointer;padding:0;line-height:1;flex-shrink:0;">&times;</button>`;
     stack.appendChild(t);
     if(duration>0) setTimeout(()=>{ t.style.transition='opacity .35s ease,transform .35s ease'; t.style.opacity='0'; t.style.transform='translateX(10px)'; setTimeout(()=>t.remove(),380); }, duration);
