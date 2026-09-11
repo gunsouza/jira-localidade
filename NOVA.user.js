@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NOVA
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.7.0
+// @version      2.7.1
 // @description  NOVA (Natis Operational Virtual Assistant) — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -51,6 +51,9 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.7.1': [
+        'Modais ganharam um detalhe dourado NOVA: a linha fina no topo do cabeçalho e a bolinha ao lado do título dos modais.'
+      ],
       '2.7.0': [
         'A ferramenta agora se chama <b>NOVA</b> (Natis Operational Virtual Assistant) — mesmo funcionamento de sempre, só o nome e o visual que mudaram (era "IS Toolkit"). Os 3 botões flutuantes ganharam uma estrelinha dourada de identidade visual.'
       ],
@@ -1924,7 +1927,7 @@
         }
         #${IDS.modal} .h::before,#${IDS.dModal} .dh::before,#${IDS.sModal} .sh::before,.mlCapModal .ch::before{
           content:'';position:absolute;top:0;left:0;right:0;height:2px;
-          background:linear-gradient(90deg,var(--ml-blue),var(--ml-purple),transparent);
+          background:linear-gradient(90deg,#FFC94A,var(--ml-purple),transparent);
         }
         #${IDS.modal} .h .title, #${IDS.dModal} .dh .title, #${IDS.sModal} .sh .title, .mlCapModal .ch .title{
           font-size: 17px; font-weight: 800; letter-spacing:.2px;
@@ -1935,7 +1938,7 @@
         }
         #${IDS.modal} .h .titleDot{
           width:8px; height:8px; border-radius:50%;
-          background: var(--ml-blue); box-shadow: 0 0 0 4px var(--ml-blue-soft);
+          background: #FFC94A; box-shadow: 0 0 0 4px rgba(255,201,74,.22);
         }
 
         /* ============= BODY COMUM (rolavel) ============= */
