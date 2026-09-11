@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NOVA
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.7.3
+// @version      2.7.4
 // @description  NOVA (Natis Operational Virtual Assistant) — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -45,7 +45,8 @@
     // v2.7.3: dourado mais escuro/discreto (era #FFC94A, muito claro/vibrante -- usuario achou
     // "esquisito"), e o icone agora "pulsa" (anima leve, tipo explosao respirando) via classe
     // .nova-icon-anim (keyframes definidos em ensureStyle). Respeita prefers-reduced-motion.
-    const NOVA_GOLD = '#C9962E';
+    // v2.7.4: dourado escurecido de novo (era #C9962E, ainda achou "clarinho") -- tom bronze/antigo.
+    const NOVA_GOLD = '#8A6A1E';
     const NOVA_ICON_SVG = '<span class="nova-icon-anim" style="display:inline-flex;vertical-align:-2px;margin-right:6px;flex:none;"><svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="2.6" fill="' + NOVA_GOLD + '"/><g stroke="' + NOVA_GOLD + '" stroke-linecap="round"><line x1="12" y1="0.5" x2="12" y2="6" stroke-width="2"/><line x1="12" y1="18" x2="12" y2="23.5" stroke-width="1.4"/><line x1="0.5" y1="12" x2="6" y2="12" stroke-width="1.4"/><line x1="18" y1="12" x2="23.5" y2="12" stroke-width="2"/><line x1="3" y1="3" x2="6.8" y2="6.8" stroke-width="1.2"/><line x1="17.2" y1="17.2" x2="21" y2="21" stroke-width="1.6"/><line x1="21" y1="3" x2="17.2" y2="6.8" stroke-width="1.6"/><line x1="6.8" y1="17.2" x2="3" y2="21" stroke-width="1.2"/></g></svg></span>';
     // v2.7.2: fonte "Orbitron" (Google Fonts) so pro texto NOVA dos 3 botoes flutuantes --
     // resto do app (modais, textos, titulos) continua na fonte de sistema de sempre (--ml-font).
@@ -71,6 +72,9 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.7.4': [
+        'Dourado do NOVA escurecido de novo (ficou muito claro na v2.7.3) — agora num tom bronze mais discreto, na borda dos botões, no ícone e no detalhe dos modais.'
+      ],
       '2.7.3': [
         'Ajustes finos no visual do NOVA: o dourado (ícone, borda dos botões, detalhe dos modais) ficou mais escuro e discreto — e o ícone de supernova dos 3 botões agora "pulsa" suavemente, como uma explosão acontecendo.'
       ],
@@ -1974,7 +1978,7 @@
         }
         #${IDS.modal} .h .titleDot{
           width:8px; height:8px; border-radius:50%;
-          background: ${NOVA_GOLD}; box-shadow: 0 0 0 4px rgba(201,150,46,.22);
+          background: ${NOVA_GOLD}; box-shadow: 0 0 0 4px rgba(138,106,30,.22);
         }
 
         /* ============= BODY COMUM (rolavel) ============= */
