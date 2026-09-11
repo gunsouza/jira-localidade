@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.22
+// @version      2.6.23
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -46,6 +46,9 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.6.23': [
+        'Duplicados: agora dá pra remover um ID auto-detectado que na verdade é código de localidade (ex: "SSP55"), não de equipamento — ele some do match sem precisar dele influenciar o resultado. Tem um botão pra restaurar caso remova por engano.'
+      ],
       '2.6.22': [
         'Corrigido o próprio popup de "o que há de novo": ele estava aparecendo com as tags de formatação cruas na tela (ex: "<b>", "&bull;") em vez de renderizadas — se você está lendo isto sem símbolos estranhos, o fix funcionou.'
       ],
@@ -256,6 +259,9 @@
         dup_no_ids_detected: 'Nenhum ID detectado no ticket atual.',
         dup_manual_tag: 'Digitado manualmente',
         dup_auto_tag: 'Detectado automaticamente',
+        dup_auto_ids_title: 'IDs detectados automaticamente',
+        dup_auto_remove_title: 'Não é um IP/serial? Remover da detecção',
+        dup_auto_restore: 'Restaurar removidos',
         dup_no_tickets_found: 'Nenhum ticket ({projects}) encontrado nos vinculados para este asset.',
         dup_btn_comment: 'Obs interna',
         dup_btn_link: 'Vincular duplicado',
@@ -355,6 +361,9 @@
         dup_no_ids_detected: 'Ningún ID detectado en el ticket actual.',
         dup_manual_tag: 'Ingresado manualmente',
         dup_auto_tag: 'Detectado automáticamente',
+        dup_auto_ids_title: 'IDs detectados automáticamente',
+        dup_auto_remove_title: '¿No es un IP/serial? Quitar de la detección',
+        dup_auto_restore: 'Restaurar eliminados',
         dup_no_tickets_found: 'Ningún ticket ({projects}) encontrado en los vinculados para este asset.',
         dup_btn_comment: 'Obs. interna',
         dup_btn_link: 'Vincular duplicado',
@@ -454,6 +463,9 @@
         dup_no_ids_detected: 'No ID detected in the current ticket.',
         dup_manual_tag: 'Manually entered',
         dup_auto_tag: 'Automatically detected',
+        dup_auto_ids_title: 'Automatically detected IDs',
+        dup_auto_remove_title: "Not an IP/serial? Remove from detection",
+        dup_auto_restore: 'Restore removed',
         dup_no_tickets_found: 'No ticket ({projects}) found among the linked ones for this asset.',
         dup_btn_comment: 'Internal note',
         dup_btn_link: 'Link duplicate',
@@ -12996,6 +13008,14 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
     async function renderDuplicates(modal, issueKey, opts) {
       opts = opts || {};
       const manualIdsRaw = Array.isArray(opts.manualIds) ? opts.manualIds : [];
+      // v2.6.23: IDs auto-detectados que o analista marcou como falso-positivo (ex: "SSP55" —
+      // codigo de LOCALIDADE, nao de equipamento — casa com o regex generico shortEquipRe de
+      // extractIdentifiersFromText por ter o mesmo formato letras+digitos de um codigo de
+      // camera/equipamento real). Nao da pra distinguir isso so por regex sem arriscar perder
+      // codigos de equipamento legitimos, entao vira curadoria manual, simetrica ao "+
+      // Adicionar ID" que ja existe pros que faltam.
+      const excludedAutoIdsRaw = Array.isArray(opts.excludedAutoIds) ? opts.excludedAutoIds : [];
+      const excludedAutoIdsSet = new Set(excludedAutoIdsRaw);
       modal.setBody(`<div class="meta">${esc(_pickFun('duplicates'))}</div>`);
 
       const [issueCurrent, asset, serialFieldId] = await Promise.all([
@@ -13017,7 +13037,10 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         .join(' ');
       const currentText = `${summaryCurrent}\n${descCurrent}\n${extraFieldsText}\n${serialValCurrent}`.trim();
 
-      const autoIds = extractIdentifiersFromText(currentText);
+      const autoIdsAll = extractIdentifiersFromText(currentText);
+      // Remove os que o analista marcou como falso-positivo (ver comentario acima sobre
+      // excludedAutoIdsRaw) antes de qualquer uso — nem entram no match nem na exibicao.
+      const autoIds = autoIdsAll.filter(x => !excludedAutoIdsSet.has(x.value));
       // IDs digitados manualmente (quando o auto-detect nao pega, ex: formato fora do padrao).
       // Tenta reconhecer o TIPO certo (ip/mac/serial/etc, mesmo peso do auto-detect); se nao
       // bater em nenhum padrao conhecido, entra como token generico "manual" com peso alto —
@@ -13083,6 +13106,18 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const manualChipsHtml = manualIdsRaw.length
         ? manualIdsRaw.map((raw, i) => `<span class="chip manual" data-manual-remove="${i}" title="${esc(t('dup_manual_remove_title'))}">${esc(raw)} ✕</span>`).join('')
         : '';
+      // v2.6.23: chips dos IDs auto-detectados (ja filtrados dos excluidos), cada um com um "x"
+      // pra remover — simetrico ao manualChipsHtml acima, so que pra EXCLUIR em vez de incluir.
+      const autoRemovableChipsHtml = autoIds.length
+        ? autoIds.slice(0, 12).map(it => `<span class="chip" data-auto-remove="${esc(it.value)}" title="${esc(t('dup_auto_remove_title'))}">${esc(it.value)} ✕</span>`).join('')
+        : `<span class="muted">${esc(t('dup_no_ids_detected'))}</span>`;
+      const autoIdsBox = `
+        <div style="margin-top:10px;">
+          <div class="meta" style="font-weight:700;">${esc(t('dup_auto_ids_title'))}</div>
+          <div class="chips" style="margin-top:6px;">${autoRemovableChipsHtml}</div>
+          ${excludedAutoIdsRaw.length ? `<div style="margin-top:6px;"><button id="ml_dup_auto_restore" class="ghost">${esc(t('dup_auto_restore'))} (${excludedAutoIdsRaw.length})</button></div>` : ''}
+        </div>
+      `;
       const currentBox = `
         <div class="dupCurrentBox" style="margin-bottom:10px;">
           <details open>
@@ -13096,6 +13131,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             ${manualIdsRaw.length ? `<button id="ml_dup_manual_clear" class="ghost">${esc(t('dup_manual_clear'))}</button>` : ''}
           </div>
           ${manualChipsHtml ? `<div class="chips" style="margin-top:8px;">${manualChipsHtml}</div>` : ''}
+          ${autoIdsBox}
         </div>
       `;
 
@@ -13146,17 +13182,29 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         const doAdd = () => {
           const v = input.value.trim();
           if(!v) return;
-          renderDuplicates(modal, issueKey, { manualIds: [...manualIdsRaw, v] });
+          renderDuplicates(modal, issueKey, { manualIds: [...manualIdsRaw, v], excludedAutoIds: excludedAutoIdsRaw });
         };
         addBtn.onclick = doAdd;
         input.addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); doAdd(); } });
-        if(clearBtn) clearBtn.onclick = () => renderDuplicates(modal, issueKey, { manualIds: [] });
+        if(clearBtn) clearBtn.onclick = () => renderDuplicates(modal, issueKey, { manualIds: [], excludedAutoIds: excludedAutoIdsRaw });
         document.querySelectorAll('[data-manual-remove]').forEach(chip => {
           chip.addEventListener('click', () => {
             const idx = Number(chip.getAttribute('data-manual-remove'));
-            renderDuplicates(modal, issueKey, { manualIds: manualIdsRaw.filter((_, i) => i !== idx) });
+            renderDuplicates(modal, issueKey, { manualIds: manualIdsRaw.filter((_, i) => i !== idx), excludedAutoIds: excludedAutoIdsRaw });
           });
         });
+        // v2.6.23: clicar num ID auto-detectado o marca como falso-positivo (ex: codigo de
+        // localidade tipo "SSP55") e refaz a tela sem ele contar pro match; o botao de
+        // restaurar (so aparece quando ha algo excluido) zera a lista de exclusoes.
+        document.querySelectorAll('[data-auto-remove]').forEach(chip => {
+          chip.addEventListener('click', () => {
+            const val = chip.getAttribute('data-auto-remove') || '';
+            if(!val) return;
+            renderDuplicates(modal, issueKey, { manualIds: manualIdsRaw, excludedAutoIds: [...excludedAutoIdsRaw, val] });
+          });
+        });
+        const restoreBtn = document.getElementById('ml_dup_auto_restore');
+        if(restoreBtn) restoreBtn.onclick = () => renderDuplicates(modal, issueKey, { manualIds: manualIdsRaw, excludedAutoIds: [] });
       })();
 
       setTimeout(() => {
