@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IS Toolkit
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.23
+// @version      2.6.24
 // @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -46,6 +46,9 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.6.24': [
+        'Os botões flutuantes "Gerenciador" e "Meu Perfil" agora se chamam "IS Toolkit - Gerenciador" e "IS Toolkit - Meu Perfil" — pra ficar claro, pra quem não usa toda hora, que os 3 botões (o azul "IS Toolkit" dentro do ticket incluído) são da mesma ferramenta.'
+      ],
       '2.6.23': [
         'Duplicados: agora dá pra remover um ID auto-detectado que na verdade é código de localidade (ex: "SSP55"), não de equipamento — ele some do match sem precisar dele influenciar o resultado. Tem um botão pra restaurar caso remova por engano.'
       ],
@@ -11192,8 +11195,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           <div style="font-size:12px;color:#bbb;line-height:1.6;">
             Só um aparece por vez, dependendo da página:<br/>
             <b>IS Toolkit</b> (azul) — dentro de um ticket (<code>/browse/...</code>): duplicados, derivação, ISS, status, snippets.<br/>
-            <b>Gerenciador</b> (verde) — na fila (<code>/issues</code> ou <code>/queues</code>): ações em lote nos tickets da fila.<br/>
-            <b>Meu Perfil</b> (roxo) — em Dashboards: seus cards de produtividade, SLA, auditoria pendente e afins.
+            <b>IS Toolkit - Gerenciador</b> (verde) — na fila (<code>/issues</code> ou <code>/queues</code>): ações em lote nos tickets da fila.<br/>
+            <b>IS Toolkit - Meu Perfil</b> (roxo) — em Dashboards: seus cards de produtividade, SLA, auditoria pendente e afins.
           </div>
         </div>
 
@@ -15140,8 +15143,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       if(document.getElementById('ml_batch_btn')) return;
       const b = document.createElement('button');
       b.id = 'ml_batch_btn';
-      b.textContent = 'Gerenciador';
-      b.title = 'Aplicar acoes em massa (derivar / criar ISS) nesta tela';
+      // v2.6.24: prefixo "IS Toolkit - " em todos os botoes flutuantes que nao sao o principal,
+      // pra deixar claro (pra quem nao usa toda hora) que os 3 botoes sao da MESMA ferramenta,
+      // so mudando de nome/cor conforme a pagina (pedido do usuario).
+      b.textContent = 'IS Toolkit - Gerenciador';
+      b.title = 'IS Toolkit — Aplicar acoes em massa (derivar / criar ISS) nesta tela';
       Object.assign(b.style, {
         position: 'fixed', right: '18px', bottom: '70px', zIndex: '9999997',
         background: 'linear-gradient(135deg, #34c578, #28a366)', color: '#fff',
@@ -15166,8 +15172,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       if(document.getElementById('ml_profile_btn')) return;
       const b = document.createElement('button');
       b.id = 'ml_profile_btn';
-      b.textContent = 'Meu Perfil';
-      b.title = 'Painel do analista — desempenho, pendências de auditoria e SLA';
+      b.textContent = 'IS Toolkit - Meu Perfil';
+      b.title = 'IS Toolkit — Painel do analista: desempenho, pendências de auditoria e SLA';
       Object.assign(b.style, {
         position: 'fixed', right: '20px', bottom: '70px', zIndex: '9999997',
         background: 'linear-gradient(135deg, var(--ml-purple, #a78bfa), #6d28d9)', color: '#fff',
