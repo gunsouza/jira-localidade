@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NOVA
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.7.1
+// @version      2.7.2
 // @description  NOVA (Natis Operational Virtual Assistant) — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -39,7 +39,23 @@
     // v2.7.0: emblema do NOVA — estrela original (preto/dourado), NAO o personagem Nova da
     // Marvel (nada de capacete/silhueta com direitos autorais, so uma forma de estrela generica
     // na paleta de cor que remete ao herói). Usado como prefixo visual nos 3 botoes flutuantes.
-    const NOVA_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="vertical-align:-2px;margin-right:6px;flex:none;"><path d="M12 1.5 L14.7 8.8 L22.5 9.3 L16.3 14.3 L18.4 22 L12 17.6 L5.6 22 L7.7 14.3 L1.5 9.3 L9.3 8.8 Z" fill="#FFC94A" stroke="#111318" stroke-width="0.8" stroke-linejoin="round"/></svg>';
+    // v2.7.2: emblema trocado de estrela simples pra um "estouro" de supernova (raios
+    // irregulares saindo de um nucleo) -- remete ao significado literal do nome NOVA
+    // (fenomeno astronomico real) em vez de tentar remeter ao personagem da Marvel.
+    const NOVA_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="vertical-align:-2px;margin-right:6px;flex:none;"><circle cx="12" cy="12" r="2.6" fill="#FFC94A"/><g stroke="#FFC94A" stroke-linecap="round"><line x1="12" y1="0.5" x2="12" y2="6" stroke-width="2"/><line x1="12" y1="18" x2="12" y2="23.5" stroke-width="1.4"/><line x1="0.5" y1="12" x2="6" y2="12" stroke-width="1.4"/><line x1="18" y1="12" x2="23.5" y2="12" stroke-width="2"/><line x1="3" y1="3" x2="6.8" y2="6.8" stroke-width="1.2"/><line x1="17.2" y1="17.2" x2="21" y2="21" stroke-width="1.6"/><line x1="21" y1="3" x2="17.2" y2="6.8" stroke-width="1.6"/><line x1="6.8" y1="17.2" x2="3" y2="21" stroke-width="1.2"/></g></svg>';
+    // v2.7.2: fonte "Orbitron" (Google Fonts) so pro texto NOVA dos 3 botoes flutuantes --
+    // resto do app (modais, textos, titulos) continua na fonte de sistema de sempre (--ml-font).
+    const NOVA_BRAND_FONT = "'Orbitron', var(--ml-font, sans-serif)";
+    function ensureNovaBrandFont(){
+      if(document.getElementById('ml_nova_font_link')) return;
+      try{
+        const lk = document.createElement('link');
+        lk.id = 'ml_nova_font_link';
+        lk.rel = 'stylesheet';
+        lk.href = 'https://fonts.googleapis.com/css2?family=Orbitron:wght@700&display=swap';
+        document.head.appendChild(lk);
+      } catch(_) { /* rede bloqueada: os botoes caem de volta pra --ml-font, sem quebrar nada */ }
+    }
 
     // =========================
     // "O QUE HA DE NOVO" (v2.6.17)
@@ -51,6 +67,9 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.7.2': [
+        'Novo emblema nos 3 botões flutuantes: uma "explosão" de supernova (o fenômeno astronômico que dá nome à ferramenta) no lugar da estrelinha simples. O texto "NOVA" desses botões também ganhou uma fonte com mais cara de identidade visual (o resto da ferramenta continua igual).'
+      ],
       '2.7.1': [
         'Modais ganharam um detalhe dourado NOVA: a linha fina no topo do cabeçalho e a bolinha ao lado do título dos modais.'
       ],
@@ -1886,7 +1905,7 @@
           padding:12px 22px;font-weight:700;cursor:pointer;
           display:inline-flex;align-items:center;
           box-shadow:var(--ml-shadow-blue),0 4px 12px rgba(0,0,0,.40);
-          font-family:var(--ml-font);font-size:13px;letter-spacing:.3px;
+          font-family:${NOVA_BRAND_FONT};font-size:13px;letter-spacing:.3px;
           transition:transform .18s cubic-bezier(.34,1.56,.64,1),box-shadow .2s ease,filter .15s ease;
         }
         #${IDS.btn}:hover{transform:translateY(-3px) scale(1.03);box-shadow:0 16px 36px rgba(96,144,240,.40),0 6px 14px rgba(0,0,0,.40);filter:brightness(1.08);}
@@ -14247,6 +14266,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
     function ensureButton(){
       ensureStyle();
+      ensureNovaBrandFont();
       if(document.getElementById(IDS.btn)) return;
       const b = document.createElement('button');
       b.id = IDS.btn;
@@ -15152,6 +15172,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         return;
       }
       ensureStyle();
+      ensureNovaBrandFont();
       if(document.getElementById('ml_batch_btn')) return;
       const b = document.createElement('button');
       b.id = 'ml_batch_btn';
@@ -15166,7 +15187,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         border: '2px solid #FFC94A', borderRadius: '999px', padding: '11px 18px',
         fontWeight: '700', cursor: 'pointer', display: 'inline-flex', alignItems: 'center',
         boxShadow: '0 12px 28px rgba(52,197,120,.35), 0 4px 10px rgba(0,0,0,.30)',
-        fontFamily: 'var(--ml-font, system-ui)', fontSize: '13px', letterSpacing: '.2px'
+        fontFamily: NOVA_BRAND_FONT, fontSize: '13px', letterSpacing: '.2px'
       });
       b.addEventListener('click', openBatchModal);
       document.body.appendChild(b);
@@ -15181,6 +15202,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         return;
       }
       ensureStyle();
+      ensureNovaBrandFont();
       if(document.getElementById('ml_profile_btn')) return;
       const b = document.createElement('button');
       b.id = 'ml_profile_btn';
@@ -15192,7 +15214,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         border: '2px solid #FFC94A', borderRadius: '999px', padding: '11px 18px',
         fontWeight: '700', cursor: 'pointer', display: 'inline-flex', alignItems: 'center',
         boxShadow: '0 12px 28px rgba(167,139,250,.35), 0 4px 10px rgba(0,0,0,.30)',
-        fontFamily: 'var(--ml-font, system-ui)', fontSize: '13px', letterSpacing: '.2px'
+        fontFamily: NOVA_BRAND_FONT, fontSize: '13px', letterSpacing: '.2px'
       });
       b.addEventListener('click', runAppOrRestore);
       document.body.appendChild(b);
