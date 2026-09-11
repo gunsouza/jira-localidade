@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         IS Toolkit
+// @name         NOVA
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.6.24
-// @description  IS Toolkit — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
+// @version      2.7.0
+// @description  NOVA (Natis Operational Virtual Assistant) — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
 // @match        https://web.whatsapp.com/*
@@ -21,8 +21,8 @@
 // @connect      translate.googleapis.com
 // @noframes
 // @homepageURL  https://github.com/gunsouza/jira-localidade
-// @updateURL    https://cdn.jsdelivr.net/gh/gunsouza/jira-localidade@main/IS_Toolkit.user.js
-// @downloadURL  https://cdn.jsdelivr.net/gh/gunsouza/jira-localidade@main/IS_Toolkit.user.js
+// @updateURL    https://cdn.jsdelivr.net/gh/gunsouza/jira-localidade@main/NOVA.user.js
+// @downloadURL  https://cdn.jsdelivr.net/gh/gunsouza/jira-localidade@main/NOVA.user.js
 // ==/UserScript==
 
 (function () {
@@ -36,6 +36,11 @@
     // fluxo de versionamento do projeto ja exige).
     const APP_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) || '?';
 
+    // v2.7.0: emblema do NOVA — estrela original (preto/dourado), NAO o personagem Nova da
+    // Marvel (nada de capacete/silhueta com direitos autorais, so uma forma de estrela generica
+    // na paleta de cor que remete ao herói). Usado como prefixo visual nos 3 botoes flutuantes.
+    const NOVA_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="vertical-align:-2px;margin-right:6px;flex:none;"><path d="M12 1.5 L14.7 8.8 L22.5 9.3 L16.3 14.3 L18.4 22 L12 17.6 L5.6 22 L7.7 14.3 L1.5 9.3 L9.3 8.8 Z" fill="#FFC94A" stroke="#111318" stroke-width="0.8" stroke-linejoin="round"/></svg>';
+
     // =========================
     // "O QUE HA DE NOVO" (v2.6.17)
     // Toast leve, mostrado uma UNICA vez por versao nova instalada (o auto-update via
@@ -46,8 +51,11 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.7.0': [
+        'A ferramenta agora se chama <b>NOVA</b> (Natis Operational Virtual Assistant) — mesmo funcionamento de sempre, só o nome e o visual que mudaram (era "IS Toolkit"). Os 3 botões flutuantes ganharam uma estrelinha dourada de identidade visual.'
+      ],
       '2.6.24': [
-        'Os botões flutuantes "Gerenciador" e "Meu Perfil" agora se chamam "IS Toolkit - Gerenciador" e "IS Toolkit - Meu Perfil" — pra ficar claro, pra quem não usa toda hora, que os 3 botões (o azul "IS Toolkit" dentro do ticket incluído) são da mesma ferramenta.'
+        'Os botões flutuantes "Gerenciador" e "Meu Perfil" agora se chamam "NOVA - Gerenciador" e "NOVA - Meu Perfil" — pra ficar claro, pra quem não usa toda hora, que os 3 botões (o azul "NOVA" dentro do ticket incluído) são da mesma ferramenta.'
       ],
       '2.6.23': [
         'Duplicados: agora dá pra remover um ID auto-detectado que na verdade é código de localidade (ex: "SSP55"), não de equipamento — ele some do match sem precisar dele influenciar o resultado. Tem um botão pra restaurar caso remova por engano.'
@@ -91,10 +99,10 @@
         const relevant = idxSeen === -1 ? versions.slice(0, 1) : versions.slice(0, idxSeen);
         const bullets = relevant.flatMap(v => WHATS_NEW[v] || []);
         if(!bullets.length) return;
-        const msg = `<b>IS Toolkit atualizado para v${esc(APP_VERSION)}</b> — novidades:<br>` +
+        const msg = `<b>NOVA atualizado para v${esc(APP_VERSION)}</b> — novidades:<br>` +
           bullets.map(b => `&bull; ${esc(b)}`).join('<br>');
         showToast(msg, 'info', 0, { html: true }); // duration 0 = fica ate o analista fechar (ler com calma)
-      }catch(e){ console.warn('[IS Toolkit][whats-new] falha ao verificar novidades:', e); }
+      }catch(e){ console.warn('[NOVA][whats-new] falha ao verificar novidades:', e); }
     }
 
     // =========================
@@ -1871,8 +1879,9 @@
         #${IDS.btn}{
           position:fixed;right:20px;bottom:70px;z-index:9999997;
           background:linear-gradient(135deg,var(--ml-blue),var(--ml-blue-3));
-          color:#fff;border:0;border-radius:var(--ml-radius-pill);
+          color:#fff;border:2px solid #FFC94A;border-radius:var(--ml-radius-pill);
           padding:12px 22px;font-weight:700;cursor:pointer;
+          display:inline-flex;align-items:center;
           box-shadow:var(--ml-shadow-blue),0 4px 12px rgba(0,0,0,.40);
           font-family:var(--ml-font);font-size:13px;letter-spacing:.3px;
           transition:transform .18s cubic-bezier(.34,1.56,.64,1),box-shadow .2s ease,filter .15s ease;
@@ -2368,7 +2377,7 @@
       const modal = document.getElementById(IDS.modal);
       const overlay = document.getElementById(IDS.overlay);
       if(!modal) return;
-      const title = modal.querySelector('.title')?.textContent?.trim() || 'IS Toolkit';
+      const title = modal.querySelector('.title')?.textContent?.trim() || 'NOVA';
       modal.style.display = 'none';
       if(overlay) overlay.style.display = 'none';
       _removeMinimizedPill();
@@ -2406,7 +2415,7 @@
       modal.innerHTML = `
         <div class="h">
           <div>
-            <div class="title"><span class="titleDot"></span>${esc(title)} <span style="font-size:10px;font-weight:400;color:var(--ml-text-mut);margin-left:4px;" title="Versão instalada do IS Toolkit">v${esc(APP_VERSION)}</span></div>
+            <div class="title"><span class="titleDot"></span>${esc(title)} <span style="font-size:10px;font-weight:400;color:var(--ml-text-mut);margin-left:4px;" title="Versão instalada do NOVA">v${esc(APP_VERSION)}</span></div>
             <div class="subtitle" id="ml_loc_sub">${esc(subtitle || '')}</div>
           </div>
           <div class="headerActions">
@@ -2596,7 +2605,7 @@
       const out = {};
       await Promise.all(Object.entries(queries).map(async ([k, jql]) => {
         try{ out[k] = await countByJql(jql); }
-        catch(e){ out[k] = null; console.warn(`[IS Toolkit][stats] falha em ${k}:`, e); }
+        catch(e){ out[k] = null; console.warn(`[NOVA][stats] falha em ${k}:`, e); }
       }));
       return out;
     }
@@ -2621,7 +2630,7 @@
       }
       const results = await Promise.all(days.map(async (d) => {
         try{ return await countByJql(d.jql); }
-        catch(e){ console.warn(`[IS Toolkit][stats] falha na contagem do dia -${d.offset}:`, e); return null; }
+        catch(e){ console.warn(`[NOVA][stats] falha na contagem do dia -${d.offset}:`, e); return null; }
       }));
       const now = new Date();
       return days.map((d, idx) => {
@@ -2692,7 +2701,7 @@
               oldest = { key: it.key, summary: it.fields.summary || '', ageDays };
             }
           }
-        }catch(e){ console.warn('[IS Toolkit][old-tickets] falha ao buscar o mais antigo:', e); }
+        }catch(e){ console.warn('[NOVA][old-tickets] falha ao buscar o mais antigo:', e); }
       }
       return { count, oldest };
     }
@@ -2802,7 +2811,7 @@
             await new Promise(r => setTimeout(r, 400));
             try{ name = await getAssetName(ref.workspaceId, ref.objectId); }catch(_){}
           }
-          if(!name) console.warn(`[IS Toolkit][categoria] objectId ${oid}: categoria preenchida no ticket, mas a Assets API nao devolveu nome legivel apos retry (objeto deletado/sem acesso/rate limit persistente?) — vai contar como "categoria nao identificada", nao "sem categoria".`);
+          if(!name) console.warn(`[NOVA][categoria] objectId ${oid}: categoria preenchida no ticket, mas a Assets API nao devolveu nome legivel apos retry (objeto deletado/sem acesso/rate limit persistente?) — vai contar como "categoria nao identificada", nao "sem categoria".`);
           nameById.set(oid, name);
         }
       }
@@ -2906,15 +2915,15 @@
           const arr = r.ok ? await r.json() : [];
           if(arr && arr[0]){
             if(arr[0].active === false){
-              console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: "${entry}" resolveu pra uma conta DESATIVADA — ignorado automaticamente (nao precisa remover da lista a mao).`);
+              console.warn(`[NOVA][ranking] RANKING_INCLUDE: "${entry}" resolveu pra uma conta DESATIVADA — ignorado automaticamente (nao precisa remover da lista a mao).`);
               continue;
             }
             members.push({ accountId: arr[0].accountId, displayName: arr[0].displayName || entry });
             continue;
           }
-          console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: nenhum usuario encontrado pra "${entry}" — ignorado.`);
+          console.warn(`[NOVA][ranking] RANKING_INCLUDE: nenhum usuario encontrado pra "${entry}" — ignorado.`);
         }catch(e){
-          console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: falha resolvendo "${entry}":`, e);
+          console.warn(`[NOVA][ranking] RANKING_INCLUDE: falha resolvendo "${entry}":`, e);
         }
       }
       // Resolve o displayName real de cada accountId via GET /rest/api/3/user?accountId=...,
@@ -2935,13 +2944,13 @@
                 displayName = d?.displayName || accountId;
                 active = d?.active !== false;
               } else {
-                console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: HTTP ${r.status} ao resolver nome de "${accountId}" — mostrando accountId cru.`);
+                console.warn(`[NOVA][ranking] RANKING_INCLUDE: HTTP ${r.status} ao resolver nome de "${accountId}" — mostrando accountId cru.`);
               }
             }catch(e){
-              console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: erro ao resolver nome de "${accountId}":`, e);
+              console.warn(`[NOVA][ranking] RANKING_INCLUDE: erro ao resolver nome de "${accountId}":`, e);
             }
             if(!active){
-              console.warn(`[IS Toolkit][ranking] RANKING_INCLUDE: "${accountId}" (${displayName}) esta DESATIVADO no Jira — ignorado automaticamente (nao precisa remover da lista a mao).`);
+              console.warn(`[NOVA][ranking] RANKING_INCLUDE: "${accountId}" (${displayName}) esta DESATIVADO no Jira — ignorado automaticamente (nao precisa remover da lista a mao).`);
               continue;
             }
             members.push({ accountId, displayName });
@@ -2992,7 +3001,7 @@
               `${scope}assignee = "${m.accountId}" AND resolutiondate >= ${startFn}`
             );
           }catch(e){
-            console.warn(`[IS Toolkit][ranking] falha contando ${m.displayName} (${period}):`, e);
+            console.warn(`[NOVA][ranking] falha contando ${m.displayName} (${period}):`, e);
             countByAccount[m.accountId] = 0;
           }
         }
@@ -3073,7 +3082,7 @@
       const memberIdsJql = members.map(m => `"${m.accountId}"`).join(',');
 
       const queueInflowPromise = countByJql(`${scope}assignee in (${memberIdsJql}) AND created >= ${startFn}`)
-        .catch(e => { console.warn(`[IS Toolkit][admin] falha contando entrada na fila (${period}):`, e); return 0; });
+        .catch(e => { console.warn(`[NOVA][admin] falha contando entrada na fila (${period}):`, e); return 0; });
 
       const rows = [];
       const CONCURRENCY = 4;
@@ -3090,7 +3099,7 @@
             ]);
             rows.push({ ...m, created, resolved, selfClosed, openNow });
           }catch(e){
-            console.warn(`[IS Toolkit][admin] falha contando ${m.displayName} (${period}):`, e);
+            console.warn(`[NOVA][admin] falha contando ${m.displayName} (${period}):`, e);
             rows.push({ ...m, created: 0, resolved: 0, selfClosed: 0, openNow: 0, error: true });
           }
         }
@@ -4489,7 +4498,7 @@
         try{ description = issue?.fields?.description ? _adfToText(issue.fields.description, 500) : ''; }catch(_){}
         return { reporter, summary, description };
       }catch(e){
-        console.warn('[IS Toolkit][placeholders] falha ao buscar campos do ticket pra substituir tokens:', e);
+        console.warn('[NOVA][placeholders] falha ao buscar campos do ticket pra substituir tokens:', e);
         return { reporter: '', summary: '', description: '' };
       }
     }
@@ -6968,7 +6977,7 @@
         if(namesFromError.length){
           let editMetaFields = {};
           try{ editMetaFields = await getIssueEditMeta(issueKey); }
-          catch(metaErr){ console.warn('[IS Toolkit][recovery] falha ao ler editmeta:', metaErr); }
+          catch(metaErr){ console.warn('[NOVA][recovery] falha ao ler editmeta:', metaErr); }
 
           const { matched, unresolved } = _matchFieldsByName(namesFromError, editMetaFields);
           const newlyMatched = Object.fromEntries(
@@ -7026,7 +7035,7 @@
               const issueNow = await getIssueFields(issueKey, Object.keys(newlyMatched));
               currentValues = issueNow?.fields || {};
             }catch(valErr){
-              console.warn('[IS Toolkit][recovery] falha ao ler valores atuais dos campos extras:', valErr);
+              console.warn('[NOVA][recovery] falha ao ler valores atuais dos campos extras:', valErr);
             }
             const _hasValue = (v) => Array.isArray(v) ? v.length > 0 : (v != null && v !== '' && !(typeof v === 'object' && !Object.keys(v).length));
             // v2.5.15: "Validated with the user" as vezes JA tem um valor selecionado ("Nenhum"/
@@ -7138,7 +7147,7 @@
                   cmdbSetOk.push(meta?.name || k);
                   log(`recovery: campo CMDB "${meta?.name || k}" setado via PUT dedicado (${setArr.length} objeto(s)) e confirmado`);
                 }catch(cmdbErr){
-                  console.warn('[IS Toolkit][recovery] falha ao setar campo CMDB via PUT dedicado:', cmdbErr);
+                  console.warn('[NOVA][recovery] falha ao setar campo CMDB via PUT dedicado:', cmdbErr);
                   needsManualEdit.push(meta?.name || k);
                 }
                 continue;
@@ -7675,7 +7684,7 @@
       };
     }
 
-    // Botao "Mudar status" removido — funcionalidade acessivel via IS Toolkit
+    // Botao "Mudar status" removido — funcionalidade acessivel via NOVA
     // (card na home) ou pelo atalho de teclado STATUS_MENU_SHORTCUTS.
     function ensureStatusButton(){
       document.getElementById('ml_loc_assign_btn')?.remove(); // limpa se sobrou de versao anterior
@@ -7953,7 +7962,7 @@
         const loose = exact || fields.find(f => /serial/i.test(norm(f.name)));
         _serialNumberFieldIdCache = loose ? loose.id : null;
       }catch(e){
-        console.warn('[IS Toolkit][duplicados] falha ao resolver campo Serial Number:', e);
+        console.warn('[NOVA][duplicados] falha ao resolver campo Serial Number:', e);
         _serialNumberFieldIdCache = null;
       }
       return _serialNumberFieldIdCache;
@@ -9560,7 +9569,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           // Reabre num modal NOVO — o objeto retornado por openModal() não tem .open()/.reopen(),
           // só setBody/setSubtitle/close, então reabrir precisa recriar o modal do zero.
           try{
-            const m = openModal('IS Toolkit', `Ticket atual: ${issueKey}`);
+            const m = openModal('NOVA', `Ticket atual: ${issueKey}`);
             if(_auditCache) _auditCache.modal = m;
             showAuditPanel(m, issueKey, {
               score: newScore, items, closing_comment: closingComment, summary,
@@ -9786,7 +9795,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         if(!_auditCache) return;
         const cache = _auditCache;
         try{
-          const m = openModal('IS Toolkit', `Ticket atual: ${cache.issueKey}`);
+          const m = openModal('NOVA', `Ticket atual: ${cache.issueKey}`);
           cache.modal = m;
           showAuditPanel(m, cache.issueKey, {
             score: cache.score, items: cache.items,
@@ -11183,7 +11192,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       // campos do Jira e telefone de contato ja vem prontos por padrao (configurados centralmente);
       // quem realmente precisar mexer neles acha tudo em Configuracoes → Avancado.
       box.innerHTML = `
-        <h3 style="margin:0 0 4px;font-size:18px;color:#fff;">&#128075; Bem-vindo ao IS Toolkit</h3>
+        <h3 style="margin:0 0 4px;font-size:18px;color:#fff;">&#128075; Bem-vindo ao NOVA</h3>
         <p style="margin:0 0 16px;color:#aaa;line-height:1.5;">
           Um tour rápido de menos de 1 minuto pra você achar as coisas. Nada aqui precisa ser
           configurado — o essencial já vem pronto. Pode fechar quando quiser e reabrir depois em
@@ -11194,9 +11203,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           <label style="font-weight:600;display:block;margin-bottom:4px;color:#ccc;">&#128309; Os 3 botões flutuantes</label>
           <div style="font-size:12px;color:#bbb;line-height:1.6;">
             Só um aparece por vez, dependendo da página:<br/>
-            <b>IS Toolkit</b> (azul) — dentro de um ticket (<code>/browse/...</code>): duplicados, derivação, ISS, status, snippets.<br/>
-            <b>IS Toolkit - Gerenciador</b> (verde) — na fila (<code>/issues</code> ou <code>/queues</code>): ações em lote nos tickets da fila.<br/>
-            <b>IS Toolkit - Meu Perfil</b> (roxo) — em Dashboards: seus cards de produtividade, SLA, auditoria pendente e afins.
+            <b>NOVA</b> (azul) — dentro de um ticket (<code>/browse/...</code>): duplicados, derivação, ISS, status, snippets.<br/>
+            <b>NOVA - Gerenciador</b> (verde) — na fila (<code>/issues</code> ou <code>/queues</code>): ações em lote nos tickets da fila.<br/>
+            <b>NOVA - Meu Perfil</b> (roxo) — em Dashboards: seus cards de produtividade, SLA, auditoria pendente e afins.
           </div>
         </div>
 
@@ -11279,7 +11288,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       modal.innerHTML = `
         <div class="sh">
           <div>
-            <div class="title">&#9881; Configuracoes <span style="font-size:10px;font-weight:400;color:var(--ml-text-mut);margin-left:4px;" title="Versão instalada do IS Toolkit">v${esc(APP_VERSION)}</span></div>
+            <div class="title">&#9881; Configuracoes <span style="font-size:10px;font-weight:400;color:var(--ml-text-mut);margin-left:4px;" title="Versão instalada do NOVA">v${esc(APP_VERSION)}</span></div>
             <div class="meta">Salvo neste navegador. Apos salvar, a pagina recarrega para aplicar.</div>
           </div>
           <div style="display:flex;gap:8px">
@@ -12002,7 +12011,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 <div>
                   <label style="display:flex; align-items:center; gap:8px;">
                     <input type="checkbox" id="ml_s_ar_pause_modal" ${cur.AUTO_RELOAD_PAUSE_MODAL !== false ? 'checked' : ''} />
-                    <span>Pausar com um modal do IS Toolkit aberto</span>
+                    <span>Pausar com um modal do NOVA aberto</span>
                   </label>
                   <div class="hint">Protege a&ccedil;&otilde;es em andamento (derivar, lote, configura&ccedil;&otilde;es).</div>
                 </div>
@@ -13318,7 +13327,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               ).join('') || `<option value="">${esc(curPrioName)}</option>`;
             }).catch(e => {
               sel.innerHTML = `<option value="">${esc(curPrioName)} (falha ao listar)</option>`;
-              console.warn('[IS Toolkit][prioridade] falha ao listar prioridades:', e);
+              console.warn('[NOVA][prioridade] falha ao listar prioridades:', e);
             });
             saveBtn.addEventListener('click', async () => {
               const newId = sel.value;
@@ -13460,7 +13469,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               linkOk++;
             }catch(e){
               linkFail++;
-              console.warn(`[IS Toolkit][Vincular+Fechar] falha ao vincular ${k}:`, e);
+              console.warn(`[NOVA][Vincular+Fechar] falha ao vincular ${k}:`, e);
               alert(`Falha ao vincular ${k}: ${e.message || e}`);
             }
           }
@@ -13485,7 +13494,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             });
             closed = true;
           }catch(e){
-            console.warn(`[IS Toolkit][Vincular+Fechar] falha ao fechar ${issueKey}:`, e);
+            console.warn(`[NOVA][Vincular+Fechar] falha ao fechar ${issueKey}:`, e);
             if(String(e?.message||'') !== 'cancelado'){
               alert(`Falha ao fechar ${issueKey}: ${e.message || e}`);
             }
@@ -13527,7 +13536,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               okCount++;
             }catch(e){
               failCount++;
-              console.warn(`[IS Toolkit][Prioridade] falha em ${k}:`, e);
+              console.warn(`[NOVA][Prioridade] falha em ${k}:`, e);
             }
           }
 
@@ -13591,7 +13600,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         </div>
       `);
 
-      try{ await renderHealthBanner(); }catch(e){ console.warn('[IS Toolkit][dashboards] health banner falhou:', e); }
+      try{ await renderHealthBanner(); }catch(e){ console.warn('[NOVA][dashboards] health banner falhou:', e); }
 
       // Aviso quando cards do Painel ficam escondidos por falta de configuracao — sem isso,
       // um card que simplesmente nao aparece pode parecer bug (ja aconteceu com os botoes
@@ -13631,7 +13640,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           { label: 'Resolvidos hoje',      icon: '&#9989;', value: stats.resolvedToday },
           { label: 'Resolvidos (últimos 7 dias)', icon: '&#128197;', value: stats.resolvedWeek },
           { label: 'Abertos comigo agora',  icon: '&#128203;', value: stats.openNow },
-          { label: 'Via IS Toolkit hoje',   icon: '&#9889;', value: stats.toolkitToday },
+          { label: 'Via NOVA hoje',   icon: '&#9889;', value: stats.toolkitToday },
         ];
         statsEl.innerHTML = cards.map(c => `
           <div class="homeCard" style="text-align:center;">
@@ -13658,7 +13667,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 <div class="muted">${esc(c.label)}</div>
               </div>
             `).join(''));
-          }).catch(e => console.warn('[IS Toolkit][stats] falha ao carregar SLA:', e));
+          }).catch(e => console.warn('[NOVA][stats] falha ao carregar SLA:', e));
         }
       }).catch(e => {
         const statsEl = document.getElementById('ml_dash_stats');
@@ -13855,7 +13864,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             </div>
           `;
 
-          Promise.all(periods.map(p => getTeamRanking(p.key).catch(e => { console.warn(`[IS Toolkit][ranking] falha (${p.key}):`, e); return null; })))
+          Promise.all(periods.map(p => getTeamRanking(p.key).catch(e => { console.warn(`[NOVA][ranking] falha (${p.key}):`, e); return null; })))
             .then(results => {
               const body = document.getElementById('ml_dash_ranking_body');
               if(!body) return;
@@ -13994,7 +14003,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
           } else {
             if(volEl) volEl.innerHTML = `<div class="muted">Carregando volume da fila...</div>`;
             if(peopleEl) peopleEl.innerHTML = `<div class="homeCard"><div class="muted">Carregando detalhamento por pessoa...</div></div>`;
-            Promise.all(volPeriods.map(p => getAdminTeamOverview(p.key).catch(e => { console.warn(`[IS Toolkit][admin] falha no overview (${p.key}):`, e); return null; })))
+            Promise.all(volPeriods.map(p => getAdminTeamOverview(p.key).catch(e => { console.warn(`[NOVA][admin] falha no overview (${p.key}):`, e); return null; })))
               .then(results => {
                 volPeriods.forEach((p, i) => { _adminOverviewByPeriod[p.key] = results[i]; });
                 _renderAdminVolumeCards();
@@ -14093,7 +14102,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               await navigator.clipboard.writeText(txt);
               btn.textContent = '✅ Copiado!';
             }catch(e){
-              console.warn('[IS Toolkit][admin] falha ao copiar:', e);
+              console.warn('[NOVA][admin] falha ao copiar:', e);
               btn.textContent = '❌ Falhou';
             }
             setTimeout(() => { btn.textContent = oldText; }, 1600);
@@ -14123,13 +14132,13 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const issueKey = getIssueKey();
       if(!issueKey){
         if(isDashboardsPage()){
-          const modal = openModal('IS Toolkit', 'Painel do analista');
+          const modal = openModal('NOVA', 'Painel do analista');
           await renderDashboardsHome(modal);
           return;
         }
         // Sem ticket aberto: abre o modal mesmo assim com um conteudo neutro,
         // dando acesso ao botao de Configuracoes (gear) no header e a busca por key.
-        const modal = openModal('IS Toolkit', 'Nenhum ticket detectado nesta pagina.');
+        const modal = openModal('NOVA', 'Nenhum ticket detectado nesta pagina.');
         modal.setBody(`
           <div style="padding: 14px 0;">
             <div style="background:var(--ml-bg-2); border:1px dashed var(--ml-border); border-radius:8px; padding:16px; margin-bottom:14px;">
@@ -14173,7 +14182,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         setTimeout(() => jumpInput?.focus(), 50);
         return;
       }
-      const modal = openModal('IS Toolkit', `Ticket atual: ${issueKey}`);
+      const modal = openModal('NOVA', `Ticket atual: ${issueKey}`);
       await renderHome(modal, issueKey);
     }
 
@@ -14187,7 +14196,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       }
     }
 
-    // Usado pelos botoes flutuantes (IS Toolkit / Meu Perfil): se ha um modal minimizado,
+    // Usado pelos botoes flutuantes (NOVA / Meu Perfil): se ha um modal minimizado,
     // restaura em vez de destruir o estado preservado e abrir um do zero.
     function runAppOrRestore(){
       if(isModalMinimized()){ restoreMinimizedModal(); return; }
@@ -14238,8 +14247,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       if(document.getElementById(IDS.btn)) return;
       const b = document.createElement('button');
       b.id = IDS.btn;
-      b.textContent = 'IS Toolkit';
-      b.title = `IS Toolkit — atalhos: ${SHORTCUTS.join(' ou ')}`;
+      b.innerHTML = NOVA_ICON_SVG + 'NOVA';
+      b.title = `NOVA — atalhos: ${SHORTCUTS.join(' ou ')}`;
       b.addEventListener('click', runAppOrRestore);
       document.body.appendChild(b);
     }
@@ -14355,21 +14364,21 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 // especifica nao saiu (bug real reportado: WhatsApp de ticket do Mexico saiu em
                 // pt-BR). Agora loga status+trecho da resposta quando algo foge do esperado.
                 if(resp.status < 200 || resp.status >= 300){
-                  console.warn(`[IS Toolkit][translate] HTTP ${resp.status} da API de traducao — resposta: ${String(resp.responseText || '').slice(0,200)}`);
+                  console.warn(`[NOVA][translate] HTTP ${resp.status} da API de traducao — resposta: ${String(resp.responseText || '').slice(0,200)}`);
                   resolve(null); return;
                 }
                 const data = JSON.parse(resp.responseText);
                 const translated = (data?.[0] || []).map(seg => seg?.[0] || '').join('');
                 resolve(translated || null);
               }catch(e){
-                console.warn('[IS Toolkit][translate] resposta inesperada/nao-JSON da API de traducao:', e, String(resp?.responseText || '').slice(0,200));
+                console.warn('[NOVA][translate] resposta inesperada/nao-JSON da API de traducao:', e, String(resp?.responseText || '').slice(0,200));
                 resolve(null);
               }
             },
-            onerror(e){ console.warn('[IS Toolkit][translate] falha de rede na chamada de traducao:', e); resolve(null); },
-            ontimeout(){ console.warn('[IS Toolkit][translate] timeout (8s) na chamada de traducao.'); resolve(null); }
+            onerror(e){ console.warn('[NOVA][translate] falha de rede na chamada de traducao:', e); resolve(null); },
+            ontimeout(){ console.warn('[NOVA][translate] timeout (8s) na chamada de traducao.'); resolve(null); }
           });
-        }catch(e){ console.warn('[IS Toolkit][translate] excecao ao montar a chamada de traducao:', e); resolve(null); }
+        }catch(e){ console.warn('[NOVA][translate] excecao ao montar a chamada de traducao:', e); resolve(null); }
       });
     }
 
@@ -14499,7 +14508,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             // nao tem SLA e falha/demora as vezes sem motivo aparente — antes isso caia pro
             // texto original em silencio total (nem log). Fix: 1 retry curto (cobre a maioria
             // das falhas transitorias) + log no console pra dar pra diagnosticar se acontecer
-            // de novo (F12 -> Console, procurar "[IS Toolkit][translate]").
+            // de novo (F12 -> Console, procurar "[NOVA][translate]").
             await new Promise(r => setTimeout(r, 700));
             translated = await translateText(protectedText, lang);
           }
@@ -14508,19 +14517,19 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             _translateCacheSet(clean, lang, restored);
             return { text: restored, translated: true, lang };
           }
-          console.warn(`[IS Toolkit][translate] nao foi possivel traduzir pro idioma "${lang}" depois de 2 tentativas — usando texto original sem traduzir.`);
+          console.warn(`[NOVA][translate] nao foi possivel traduzir pro idioma "${lang}" depois de 2 tentativas — usando texto original sem traduzir.`);
           // v2.6.17: ultimo recurso antes de desistir — se esse MESMO texto ja foi traduzido
           // com sucesso alguma vez (mesmo que o cache tenha "vencido", 30 dias e' bastante
           // tempo mas aceitamos aqui como fallback de emergencia), usa a traducao antiga em
           // vez de mandar o texto original (idioma errado) pro cliente.
           const stale = _translateCacheGet(clean, lang, { ignoreTtl: true });
           if(stale){
-            console.warn(`[IS Toolkit][translate] usando traducao em cache (pode estar desatualizada) como fallback de emergencia pro idioma "${lang}".`);
+            console.warn(`[NOVA][translate] usando traducao em cache (pode estar desatualizada) como fallback de emergencia pro idioma "${lang}".`);
             return { text: stale, translated: true, lang };
           }
         }
       }catch(e){
-        console.warn('[IS Toolkit][translate] erro inesperado em _autoTranslateForTicket:', e);
+        console.warn('[NOVA][translate] erro inesperado em _autoTranslateForTicket:', e);
       }
       // v2.6.17: antes retornava lang:'' aqui mesmo quando um idioma FOI detectado (so' a
       // traducao em si que falhou) — isso impedia o chamador (_waOpen) de diferenciar "nenhum
@@ -14623,7 +14632,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       }catch(e){
         // Antes isso era engolido em silencio — se os campos (reporter/summary/description)
         // vierem vazios na mensagem do WhatsApp, o erro real aparece aqui no console (F12).
-        console.warn('[IS Toolkit][WhatsApp] falha ao buscar campos do ticket, mensagem vai sair com campos em branco:', e);
+        console.warn('[NOVA][WhatsApp] falha ao buscar campos do ticket, mensagem vai sair com campos em branco:', e);
       }
       if(!phone) phone = _waPhoneFromDom();
       if(!phone){ showToast('Telefone de contato não encontrado neste ticket.', 'warn', 4000); return; }
@@ -14647,8 +14656,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         // v2.6.11: log leve (sempre, sucesso ou nao) pra diagnosticar caso a traducao nao saia —
         // sem isso era impossivel saber, so' pelo resultado final, se o idioma nem foi detectado
         // (locationKey sem prefixo de pais reconhecido) ou se foi detectado certo mas a chamada
-        // de traducao falhou (ver logs "[IS Toolkit][translate]" acima, no translateText).
-        console.log(`[IS Toolkit][wa] locationKey="${locationKey}" -> traduziu=${didTranslateWa} idioma=${waLang || '(nenhum detectado)'}`);
+        // de traducao falhou (ver logs "[NOVA][translate]" acima, no translateText).
+        console.log(`[NOVA][wa] locationKey="${locationKey}" -> traduziu=${didTranslateWa} idioma=${waLang || '(nenhum detectado)'}`);
         const langNames = { es: 'espanhol', en: 'inglês', pt: 'português' };
         if(didTranslateWa){
           tmplRaw = translatedTmpl;
@@ -14747,11 +14756,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         ensureButton(); ensureProviderButton(key); _waEnsureButton(key);
       } else {
         document.getElementById(PROVIDER_BTN_ID)?.remove(); document.getElementById(WA_BTN_ID)?.remove();
-        // Sem ticket aberto: o botao "IS Toolkit" nao aparece mais aqui — cada tipo de pagina
+        // Sem ticket aberto: o botao "NOVA" nao aparece mais aqui — cada tipo de pagina
         // sem ticket tem seu proprio botao dedicado (Gerenciador em issues/queues, Meu Perfil
         // em dashboards, ver ensureBatchButton/ensureProfileButton mais abaixo neste tick).
         // Evita 2 botoes na mesma posicao da tela (bug visto na v1.73.0: o Gerenciador ficava
-        // por cima do IS Toolkit, escondendo ele por completo).
+        // por cima do NOVA, escondendo ele por completo).
         document.getElementById(IDS.btn)?.remove();
       }
 
@@ -14779,7 +14788,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             // Reabre num modal NOVO (openModal() não retorna algo com .open()/.reopen()).
             clickFn = () => {
               try{
-                const m = openModal('IS Toolkit', `Ticket atual: ${key}`);
+                const m = openModal('NOVA', `Ticket atual: ${key}`);
                 _auditCache.modal = m;
                 showAuditPanel(m, key, {
                   score: sc, items: it,
@@ -14928,7 +14937,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       return tag === 'input' || tag === 'textarea' || el.isContentEditable === true;
     }
     function _arToolkitBusy(){
-      // Qualquer modal/overlay do IS Toolkit aberto pausa o reload (inclui lote,
+      // Qualquer modal/overlay do NOVA aberto pausa o reload (inclui lote,
       // derivar, configuracoes, capturas, o seletor de Service da ISS, o comentario
       // rapido e as janelas do modo auditoria — senão um reload no meio da interação
       // fecha tudo e perde o que estava sendo preenchido/revisado).
@@ -14954,7 +14963,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const b = document.createElement('button');
       b.id = AR_BTN_ID;
       b.style.cssText = [
-        // Ancorado logo acima do botao principal "IS Toolkit" (bottom:70px), sem gap.
+        // Ancorado logo acima do botao principal "NOVA" (bottom:70px), sem gap.
         'position:fixed;right:20px;bottom:116px;z-index:9999996;',
         'min-width:58px;height:30px;padding:0 11px;border:none;border-radius:var(--ml-radius-pill,999px);',
         'color:#fff;font:700 11.5px var(--ml-font,-apple-system,BlinkMacSystemFont,sans-serif);',
@@ -15072,11 +15081,11 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
 
     function isQueueOrIssuesPage(){
       // Se ja tem um ticket aberto (browse/X ou queues/issue/X), nao mostra "Gerenciador"
-      // - usuario quer "IS Toolkit" pra acoes daquele chamado.
+      // - usuario quer "NOVA" pra acoes daquele chamado.
       if(getIssueKey()) return false;
       // NAO inclui /jira/dashboards de proposito: essa tela tem seu proprio botao dedicado
       // ("Meu Perfil", ver ensureProfileButton) — 3 botoes mutuamente exclusivos por tipo de
-      // pagina (browse = IS Toolkit, issues/queues = Gerenciador, dashboards = Meu Perfil),
+      // pagina (browse = NOVA, issues/queues = Gerenciador, dashboards = Meu Perfil),
       // pra nao sobrepor 2 botoes na mesma posicao da tela.
       return /\/(issues|queues)(\b|\/|\?|$)/.test(location.pathname);
     }
@@ -15143,16 +15152,16 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       if(document.getElementById('ml_batch_btn')) return;
       const b = document.createElement('button');
       b.id = 'ml_batch_btn';
-      // v2.6.24: prefixo "IS Toolkit - " em todos os botoes flutuantes que nao sao o principal,
+      // v2.6.24: prefixo "NOVA - " em todos os botoes flutuantes que nao sao o principal,
       // pra deixar claro (pra quem nao usa toda hora) que os 3 botoes sao da MESMA ferramenta,
       // so mudando de nome/cor conforme a pagina (pedido do usuario).
-      b.textContent = 'IS Toolkit - Gerenciador';
-      b.title = 'IS Toolkit — Aplicar acoes em massa (derivar / criar ISS) nesta tela';
+      b.innerHTML = NOVA_ICON_SVG + 'NOVA - Gerenciador';
+      b.title = 'NOVA — Aplicar acoes em massa (derivar / criar ISS) nesta tela';
       Object.assign(b.style, {
         position: 'fixed', right: '18px', bottom: '70px', zIndex: '9999997',
         background: 'linear-gradient(135deg, #34c578, #28a366)', color: '#fff',
-        border: '0', borderRadius: '999px', padding: '11px 18px',
-        fontWeight: '700', cursor: 'pointer',
+        border: '2px solid #FFC94A', borderRadius: '999px', padding: '11px 18px',
+        fontWeight: '700', cursor: 'pointer', display: 'inline-flex', alignItems: 'center',
         boxShadow: '0 12px 28px rgba(52,197,120,.35), 0 4px 10px rgba(0,0,0,.30)',
         fontFamily: 'var(--ml-font, system-ui)', fontSize: '13px', letterSpacing: '.2px'
       });
@@ -15160,7 +15169,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       document.body.appendChild(b);
     }
 
-    // Botao "Meu Perfil" — so aparece em /jira/dashboards, mutuamente exclusivo com "IS Toolkit"
+    // Botao "Meu Perfil" — so aparece em /jira/dashboards, mutuamente exclusivo com "NOVA"
     // (browse/X) e "Gerenciador" (issues/queues). Abre direto o Painel do analista (mesmo
     // destino que o runApp() ja resolve sozinho nesta tela: sem ticket key + isDashboardsPage()).
     function ensureProfileButton(){
@@ -15172,13 +15181,13 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       if(document.getElementById('ml_profile_btn')) return;
       const b = document.createElement('button');
       b.id = 'ml_profile_btn';
-      b.textContent = 'IS Toolkit - Meu Perfil';
-      b.title = 'IS Toolkit — Painel do analista: desempenho, pendências de auditoria e SLA';
+      b.innerHTML = NOVA_ICON_SVG + 'NOVA - Meu Perfil';
+      b.title = 'NOVA — Painel do analista: desempenho, pendências de auditoria e SLA';
       Object.assign(b.style, {
         position: 'fixed', right: '20px', bottom: '70px', zIndex: '9999997',
         background: 'linear-gradient(135deg, var(--ml-purple, #a78bfa), #6d28d9)', color: '#fff',
-        border: '0', borderRadius: '999px', padding: '11px 18px',
-        fontWeight: '700', cursor: 'pointer',
+        border: '2px solid #FFC94A', borderRadius: '999px', padding: '11px 18px',
+        fontWeight: '700', cursor: 'pointer', display: 'inline-flex', alignItems: 'center',
         boxShadow: '0 12px 28px rgba(167,139,250,.35), 0 4px 10px rgba(0,0,0,.30)',
         fontFamily: 'var(--ml-font, system-ui)', fontSize: '13px', letterSpacing: '.2px'
       });
@@ -15193,7 +15202,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
     let _batchUnloadHandler = null;
     function _batchBlockReload(e){
       e.preventDefault();
-      e.returnValue = 'Você tem o Gerenciador de fila aberto no IS Toolkit. Sair da página agora pode perder o progresso.';
+      e.returnValue = 'Você tem o Gerenciador de fila aberto no NOVA. Sair da página agora pode perder o progresso.';
       return e.returnValue;
     }
 
@@ -15646,7 +15655,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                 `<option value="${esc(p.id)}" ${String(p.id) === String(curPrioId) ? 'selected' : ''}>${esc(p.name)}</option>`
               ).join('');
             }).catch(e => {
-              console.warn('[IS Toolkit][prioridade] falha ao listar prioridades:', e);
+              console.warn('[NOVA][prioridade] falha ao listar prioridades:', e);
             });
 
             saveBtn.onclick = async () => {
@@ -16452,7 +16461,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       if(!_auditCache) return;
       const c = _auditCache;
       try{
-        const m = openModal('IS Toolkit', `Ticket atual: ${c.issueKey}`);
+        const m = openModal('NOVA', `Ticket atual: ${c.issueKey}`);
         showAuditPanel(m, c.issueKey, {
           score: c.score, items: c.items,
           closing_comment: c.closingComment || '', summary: c.summary || '',
