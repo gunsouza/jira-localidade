@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NOVA
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.7.2
+// @version      2.7.3
 // @description  NOVA (Natis Operational Virtual Assistant) — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -42,7 +42,11 @@
     // v2.7.2: emblema trocado de estrela simples pra um "estouro" de supernova (raios
     // irregulares saindo de um nucleo) -- remete ao significado literal do nome NOVA
     // (fenomeno astronomico real) em vez de tentar remeter ao personagem da Marvel.
-    const NOVA_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="vertical-align:-2px;margin-right:6px;flex:none;"><circle cx="12" cy="12" r="2.6" fill="#FFC94A"/><g stroke="#FFC94A" stroke-linecap="round"><line x1="12" y1="0.5" x2="12" y2="6" stroke-width="2"/><line x1="12" y1="18" x2="12" y2="23.5" stroke-width="1.4"/><line x1="0.5" y1="12" x2="6" y2="12" stroke-width="1.4"/><line x1="18" y1="12" x2="23.5" y2="12" stroke-width="2"/><line x1="3" y1="3" x2="6.8" y2="6.8" stroke-width="1.2"/><line x1="17.2" y1="17.2" x2="21" y2="21" stroke-width="1.6"/><line x1="21" y1="3" x2="17.2" y2="6.8" stroke-width="1.6"/><line x1="6.8" y1="17.2" x2="3" y2="21" stroke-width="1.2"/></g></svg>';
+    // v2.7.3: dourado mais escuro/discreto (era #FFC94A, muito claro/vibrante -- usuario achou
+    // "esquisito"), e o icone agora "pulsa" (anima leve, tipo explosao respirando) via classe
+    // .nova-icon-anim (keyframes definidos em ensureStyle). Respeita prefers-reduced-motion.
+    const NOVA_GOLD = '#C9962E';
+    const NOVA_ICON_SVG = '<span class="nova-icon-anim" style="display:inline-flex;vertical-align:-2px;margin-right:6px;flex:none;"><svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="2.6" fill="' + NOVA_GOLD + '"/><g stroke="' + NOVA_GOLD + '" stroke-linecap="round"><line x1="12" y1="0.5" x2="12" y2="6" stroke-width="2"/><line x1="12" y1="18" x2="12" y2="23.5" stroke-width="1.4"/><line x1="0.5" y1="12" x2="6" y2="12" stroke-width="1.4"/><line x1="18" y1="12" x2="23.5" y2="12" stroke-width="2"/><line x1="3" y1="3" x2="6.8" y2="6.8" stroke-width="1.2"/><line x1="17.2" y1="17.2" x2="21" y2="21" stroke-width="1.6"/><line x1="21" y1="3" x2="17.2" y2="6.8" stroke-width="1.6"/><line x1="6.8" y1="17.2" x2="3" y2="21" stroke-width="1.2"/></g></svg></span>';
     // v2.7.2: fonte "Orbitron" (Google Fonts) so pro texto NOVA dos 3 botoes flutuantes --
     // resto do app (modais, textos, titulos) continua na fonte de sistema de sempre (--ml-font).
     const NOVA_BRAND_FONT = "'Orbitron', var(--ml-font, sans-serif)";
@@ -67,6 +71,9 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.7.3': [
+        'Ajustes finos no visual do NOVA: o dourado (ícone, borda dos botões, detalhe dos modais) ficou mais escuro e discreto — e o ícone de supernova dos 3 botões agora "pulsa" suavemente, como uma explosão acontecendo.'
+      ],
       '2.7.2': [
         'Novo emblema nos 3 botões flutuantes: uma "explosão" de supernova (o fenômeno astronômico que dá nome à ferramenta) no lugar da estrelinha simples. O texto "NOVA" desses botões também ganhou uma fonte com mais cara de identidade visual (o resto da ferramenta continua igual).'
       ],
@@ -1901,7 +1908,7 @@
         #${IDS.btn}{
           position:fixed;right:20px;bottom:70px;z-index:9999997;
           background:linear-gradient(135deg,var(--ml-blue),var(--ml-blue-3));
-          color:#fff;border:2px solid #FFC94A;border-radius:var(--ml-radius-pill);
+          color:#fff;border:2px solid ${NOVA_GOLD};border-radius:var(--ml-radius-pill);
           padding:12px 22px;font-weight:700;cursor:pointer;
           display:inline-flex;align-items:center;
           box-shadow:var(--ml-shadow-blue),0 4px 12px rgba(0,0,0,.40);
@@ -1910,6 +1917,16 @@
         }
         #${IDS.btn}:hover{transform:translateY(-3px) scale(1.03);box-shadow:0 16px 36px rgba(96,144,240,.40),0 6px 14px rgba(0,0,0,.40);filter:brightness(1.08);}
         #${IDS.btn}:active{transform:translateY(-1px) scale(1.01);}
+
+        /* ============= EMBLEMA NOVA (supernova "pulsando") ============= */
+        @keyframes novaBurst{
+          0%,100%{transform:scale(.86);opacity:.8;}
+          50%{transform:scale(1.14);opacity:1;}
+        }
+        .nova-icon-anim{transform-origin:center;animation:novaBurst 1.7s ease-in-out infinite;}
+        @media (prefers-reduced-motion: reduce){
+          .nova-icon-anim{animation:none;}
+        }
 
         /* ============= OVERLAY + MODAL BASE ============= */
         #${IDS.overlay}, #${IDS.dOverlay}, #${IDS.sOverlay}, .mlCapOverlay {
@@ -1946,7 +1963,7 @@
         }
         #${IDS.modal} .h::before,#${IDS.dModal} .dh::before,#${IDS.sModal} .sh::before,.mlCapModal .ch::before{
           content:'';position:absolute;top:0;left:0;right:0;height:2px;
-          background:linear-gradient(90deg,#FFC94A,var(--ml-purple),transparent);
+          background:linear-gradient(90deg,${NOVA_GOLD},var(--ml-purple),transparent);
         }
         #${IDS.modal} .h .title, #${IDS.dModal} .dh .title, #${IDS.sModal} .sh .title, .mlCapModal .ch .title{
           font-size: 17px; font-weight: 800; letter-spacing:.2px;
@@ -1957,7 +1974,7 @@
         }
         #${IDS.modal} .h .titleDot{
           width:8px; height:8px; border-radius:50%;
-          background: #FFC94A; box-shadow: 0 0 0 4px rgba(255,201,74,.22);
+          background: ${NOVA_GOLD}; box-shadow: 0 0 0 4px rgba(201,150,46,.22);
         }
 
         /* ============= BODY COMUM (rolavel) ============= */
@@ -15184,7 +15201,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       Object.assign(b.style, {
         position: 'fixed', right: '18px', bottom: '70px', zIndex: '9999997',
         background: 'linear-gradient(135deg, #34c578, #28a366)', color: '#fff',
-        border: '2px solid #FFC94A', borderRadius: '999px', padding: '11px 18px',
+        border: `2px solid ${NOVA_GOLD}`, borderRadius: '999px', padding: '11px 18px',
         fontWeight: '700', cursor: 'pointer', display: 'inline-flex', alignItems: 'center',
         boxShadow: '0 12px 28px rgba(52,197,120,.35), 0 4px 10px rgba(0,0,0,.30)',
         fontFamily: NOVA_BRAND_FONT, fontSize: '13px', letterSpacing: '.2px'
@@ -15211,7 +15228,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       Object.assign(b.style, {
         position: 'fixed', right: '20px', bottom: '70px', zIndex: '9999997',
         background: 'linear-gradient(135deg, var(--ml-purple, #a78bfa), #6d28d9)', color: '#fff',
-        border: '2px solid #FFC94A', borderRadius: '999px', padding: '11px 18px',
+        border: `2px solid ${NOVA_GOLD}`, borderRadius: '999px', padding: '11px 18px',
         fontWeight: '700', cursor: 'pointer', display: 'inline-flex', alignItems: 'center',
         boxShadow: '0 12px 28px rgba(167,139,250,.35), 0 4px 10px rgba(0,0,0,.30)',
         fontFamily: NOVA_BRAND_FONT, fontSize: '13px', letterSpacing: '.2px'
