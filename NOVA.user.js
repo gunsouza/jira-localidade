@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NOVA
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.7.4
+// @version      2.7.5
 // @description  NOVA (Natis Operational Virtual Assistant) — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -72,6 +72,9 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.7.5': [
+        'As cores de fundo dos 3 botões flutuantes (azul, verde, roxo) ficaram mais escuras, junto com o dourado que já tinha sido ajustado — visual geral mais discreto.'
+      ],
       '2.7.4': [
         'Dourado do NOVA escurecido de novo (ficou muito claro na v2.7.3) — agora num tom bronze mais discreto, na borda dos botões, no ícone e no detalhe dos modais.'
       ],
@@ -1911,7 +1914,7 @@
         /* ============= BOTAO FLUTUANTE ============= */
         #${IDS.btn}{
           position:fixed;right:20px;bottom:70px;z-index:9999997;
-          background:linear-gradient(135deg,var(--ml-blue),var(--ml-blue-3));
+          background:linear-gradient(135deg,#486cb4,#2c51a2);
           color:#fff;border:2px solid ${NOVA_GOLD};border-radius:var(--ml-radius-pill);
           padding:12px 22px;font-weight:700;cursor:pointer;
           display:inline-flex;align-items:center;
@@ -15204,10 +15207,10 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       b.title = 'NOVA — Aplicar acoes em massa (derivar / criar ISS) nesta tela';
       Object.assign(b.style, {
         position: 'fixed', right: '18px', bottom: '70px', zIndex: '9999997',
-        background: 'linear-gradient(135deg, #34c578, #28a366)', color: '#fff',
+        background: 'linear-gradient(135deg, #248a54, #1c7247)', color: '#fff',
         border: `2px solid ${NOVA_GOLD}`, borderRadius: '999px', padding: '11px 18px',
         fontWeight: '700', cursor: 'pointer', display: 'inline-flex', alignItems: 'center',
-        boxShadow: '0 12px 28px rgba(52,197,120,.35), 0 4px 10px rgba(0,0,0,.30)',
+        boxShadow: '0 12px 28px rgba(36,138,84,.35), 0 4px 10px rgba(0,0,0,.30)',
         fontFamily: NOVA_BRAND_FONT, fontSize: '13px', letterSpacing: '.2px'
       });
       b.addEventListener('click', openBatchModal);
@@ -15231,10 +15234,10 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       b.title = 'NOVA — Painel do analista: desempenho, pendências de auditoria e SLA';
       Object.assign(b.style, {
         position: 'fixed', right: '20px', bottom: '70px', zIndex: '9999997',
-        background: 'linear-gradient(135deg, var(--ml-purple, #a78bfa), #6d28d9)', color: '#fff',
+        background: 'linear-gradient(135deg, #7561af, #4c1c98)', color: '#fff',
         border: `2px solid ${NOVA_GOLD}`, borderRadius: '999px', padding: '11px 18px',
         fontWeight: '700', cursor: 'pointer', display: 'inline-flex', alignItems: 'center',
-        boxShadow: '0 12px 28px rgba(167,139,250,.35), 0 4px 10px rgba(0,0,0,.30)',
+        boxShadow: '0 12px 28px rgba(117,97,175,.35), 0 4px 10px rgba(0,0,0,.30)',
         fontFamily: NOVA_BRAND_FONT, fontSize: '13px', letterSpacing: '.2px'
       });
       b.addEventListener('click', runAppOrRestore);
