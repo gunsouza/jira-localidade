@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NOVA
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.7.7
+// @version      2.7.8
 // @description  NOVA (Natis Operational Virtual Assistant) — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -72,6 +72,9 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.7.8': [
+        'A Auditoria agora conhece o fluxo REAL do formulário do portal (Tipo de solicitação → Objeto/Item → Incident/Service Type, as 6 categorias oficiais). O critério "Categoria" passa a comparar contra o combo EXATO válido pra aquele objeto específico (ex: SAP só aceita os tipos de erro do Jira/SAP, não os de VPN ou de impressora), em vez de uma lista genérica solta.'
+      ],
       '2.7.7': [
         'Corrigido: o critério "Categoria" da Auditoria mostrava N/A em alguns tickets de incidente mesmo com o ticket já exibindo "Object-type"/"Incident-type" preenchidos na tela — a auditoria lia só um par de campos (Assets/CMDB) que vem vazio nesses casos. Agora ela também tenta um segundo par de campos (texto simples) antes de desistir.'
       ],
@@ -1190,7 +1193,15 @@
       // qualquer um que estiver preenchido (ver catCategoria/catSubcategoria abaixo).
       CF_OBJECT_TYPE_INCIDENT: 19426,
       CF_INCIDENT_TYPE_TEXT:   19424,
-      CF_REQUEST_TYPE:    0,
+      // v2.7.7: customfield_11100 = "Request Type" nativo do JSM (Customer Request Type) —
+      // ja conhecido no codigo desde a v2.5.x (ver comentarios do fluxo de Recovery de
+      // transicao), mas nunca tinha sido ligado ao CF_REQUEST_TYPE da auditoria. Confirmado
+      // no ticket IS-1115198: vem como {requestType:{id,name:"Tenho um problema de
+      // software",...}, _links:{...}} — shape distinto (ver _cfStr), nao {value/name/id}
+      // direto. Usado agora pra casar com o CATEGORY_CATALOG (o fluxo real do portal:
+      // Tipo de solicitacao -> Objeto -> Incident/Service Type) e validar a categorizacao
+      // com o combo EXATO, nao so uma lista solta.
+      CF_REQUEST_TYPE:    11100,
       // Confirmado via XML de um ticket real (IS-1098196, v1.99.0): customfield_26217
       // "Validated with the user" — cascading select (Yes/No -> canal, ver screenshots).
       CF_USER_VALIDATION: 26217,
@@ -5341,6 +5352,100 @@
       'Solicitar un nuevo cargador', 'Solicitar un nuevo dispositivo', 'Solicitar un préstamo'
     ];
 
+    // v2.7.7: catalogo REAL do formulario do portal (fornecido pelo usuario), cobrindo o
+    // fluxo completo em cascata Tipo de solicitacao (CF_REQUEST_TYPE, customfield_11100)
+    // -> Objeto/Item (CF_CATEGORY_*) -> Incident/Service Type (CF_SUBCATEGORY_*). As listas
+    // CATEGORY_HARDWARE_*/CATEGORY_TYPE_* acima cobrem só o par Assets/CMDB antigo (Problem
+    // Hardware/Incident Type) — este catalogo cobre as 6 categorias reais do portal,
+    // permitindo validar a categorizacao com o combo EXATO (Objeto -> só os Incident/Service
+    // Type que fazem sentido pra aquele objeto especifico), nao so uma lista solta com tudo
+    // que existe no projeto. Usado como fonte PRIMARIA quando da pra casar o Tipo de
+    // solicitacao do ticket com uma entrada aqui; cai pro fallback legado acima quando não.
+    const CATEGORY_CATALOG = [
+      {
+        requestType: 'Tenho um problema de software',
+        items: [
+          { names: ['Jira', 'SAP'], types: ['El programa no abre', 'Muestra una pantalla de error', 'Lentitud', 'Lentitud en el equipo', 'No puedo acceder', 'Sin acceso a la aplicación', 'Pop-up no aparece', 'Error operacional', 'Problemas de aplicación', 'Otros errores'] },
+          { names: ['VPN'], types: ['No conecta', 'Se conecta pero no navega', 'Se conecta pero es lento', 'Conectividad parcial', 'Sin conectividad total', 'El programa no abre', 'Otros errores'] },
+          { names: ['Workspace', 'Gmail', 'Office 365'], types: ['Sin acceso a la aplicación', 'Problemas con el login de usuario', 'Error al actualizar contenido', 'Muestra una pantalla de error', 'El programa no abre'] },
+          { names: ['Lenel', 'Genetec', 'Morpho', 'Claroty SRA'], types: ['Fallo de comunicación', 'El programa no abre', 'Sin acceso a la aplicación', 'Muestra una pantalla de error', 'Lentitud'] },
+          { names: ['Power BI', 'LibreOffice', 'Minitab', 'Cartelería Digital', 'Visual Studio', 'Outros Softwares'], types: ['El programa no abre', 'Muestra una pantalla de error', 'Problemas de aplicación', 'Otros errores'] },
+        ]
+      },
+      {
+        requestType: 'Tenho um problema de equipamento (Hardware)',
+        items: [
+          { names: ['Handheld', 'Coletor de Dados', 'Ring Scanner'], types: ['Lector no funciona', 'No lee o no identifica codigos', 'Problemas de batería y carga', 'Problemas en el cargador de bateria', 'No enciende', 'No se enciende o no funciona', 'No conecta', 'No tiene señal o red', 'Problemas físicos', 'Pantalla dañada', 'Reporte y reemplazo por robo'] },
+          { names: ['Impresora Térmica', 'Zebra', 'Impresora Laser', 'Impresora Cracha'], types: ['No imprime', 'Impresion ilegible o cortada', 'Lentitud o impresión fuera de orden', 'Atasco de Flyer', 'Atasco de papel', 'No enciende', 'Problemas de conectividad', 'Problemas físicos'] },
+          { names: ['Cámara', 'CCTV', 'Video Wall'], types: ['Apagada', 'Problemas con la cámara', 'Problemas de grabación', 'Problemas de enfoque o posición', 'Fallo de comunicación', 'No conecta', 'Generando falsas alarmas'] },
+          { names: ['Torniquete', 'Molinete', 'Porton PNE', 'Barrera de acceso', 'Puerta controlada'], types: ['Detenido', 'Biometría no funciona', 'Lector de reconocimiento facial', 'Panel offline', 'Problemas físicos'] },
+          { names: ['Packing Machine', 'Sorter', 'Robotics', 'G2P', 'Cubiscan', 'Balança'], types: ['Detenido', 'Atasco de Flyer', 'Fallo de comunicación', 'Error operacional', 'Inadaptado'] },
+          { names: ['Notebook', 'Laptop', 'Monitor', 'Teclado', 'Mouse'], types: ['No enciende', 'Problemas de batería y carga', 'Lentitud en el equipo', 'Problemas físicos', 'Sin acceso a la máquina'] },
+        ]
+      },
+      {
+        requestType: 'Tenho um problema de Rede / Wifi',
+        items: [
+          { names: ['Internet', 'Wifi', 'AP', 'Conexão Local'], types: ['Sin conectividad total', 'Conectividad parcial', 'Se conecta pero no navega', 'Se conecta pero es lento', 'Intermitencia', 'No tiene señal o red'] },
+          { names: ['VPN'], types: ['No conecta', 'Se conecta pero no navega', 'Se conecta pero es lento', 'Sin conectividad total'] },
+        ]
+      },
+      {
+        requestType: 'Acessos e Identidade',
+        items: [
+          { names: ['Solicitar um novo acesso'], types: ['Solicitar acceso', 'Asignar privilegio', 'Modificar privilegios'], objects: ['Jira', 'SAP', 'Genetec', 'Lenel', 'VPN', 'Google Drive'] },
+          { names: ['Solicitar desbloqueio ou reset de senha', 'Solicitar desbloqueio ou reset de MFA'], types: ['Desbloquear contraseña', 'Restablecer contraseña', 'Restablecer/Reset MFA - Auth0', 'Nuevo código de verificación'], objects: ['Auth0 Guardian', 'Google Authenticator', 'Login de red - Notebook', 'Jira', 'SAP'] },
+        ]
+      },
+      {
+        requestType: 'Solicitar novo equipamento ou acessório',
+        items: [
+          { names: ['Handheld', 'Colector', 'Notebook', 'Celular Corporativo', 'Monitor'], types: ['Solicitar un nuevo dispositivo', 'Solicitar un nuevo (a)', 'Solicitar un préstamo', 'Solicitar reemplazo del dispositivo'] },
+          { names: ['Acessórios e Insumos', 'Batería', 'Coldre', 'Disparador', 'Toner'], types: ['Solicitar batería', 'Solicitar coldre', 'Solicitar disparadores', 'Solicitar insumo/toner', 'Solicitar un cargador de bateria', 'Solicitar un nuevo cargador'] },
+        ]
+      },
+      {
+        requestType: 'Solicitar configuração de equipamento',
+        items: [
+          { names: ['CCTV', 'Detector de metais', 'Alarma', 'Totem', 'Molinete', 'Equipamentos de Segurança e Predial'], types: ['Configurar', 'Actualizar', 'Calibración de Sensibilidad', 'Cambiar Nomenclatura', 'Mover'] },
+        ]
+      },
+    ];
+
+    // Normaliza texto pra comparacao tolerante (minusculo + sem acento) na busca no catalogo.
+    const _normCat = s => String(s || '').toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[()]/g, ' ')
+      .trim();
+
+    // Acha, no CATEGORY_CATALOG, a entrada de Tipo de solicitacao + Objeto/Item que bate com
+    // o que o ticket tem preenchido — devolve a lista EXATA de Incident/Service Type validos
+    // pra essa combinacao especifica. Retorna null se o Tipo de solicitacao do ticket nao
+    // bate com nenhuma entrada do catalogo (ex: ticket antigo, ou CF_REQUEST_TYPE vazio).
+    function _findCategoryCatalogMatch(requestTypeName, categoriaName){
+      if(!requestTypeName) return null;
+      const rt = _normCat(requestTypeName);
+      const reqEntry = CATEGORY_CATALOG.find(e => {
+        const ent = _normCat(e.requestType);
+        return ent === rt || rt.includes(ent) || ent.includes(rt);
+      });
+      if(!reqEntry) return null;
+      const allTypes = [...new Set(reqEntry.items.flatMap(it => it.types))];
+      const allItemNames = [...new Set(reqEntry.items.flatMap(it => it.names))];
+      if(!categoriaName){
+        return { requestType: reqEntry.requestType, item: null, itemNames: allItemNames, validTypes: allTypes };
+      }
+      const cat = _normCat(categoriaName);
+      const itemEntry = reqEntry.items.find(it => it.names.some(n => {
+        const nn = _normCat(n);
+        return cat.includes(nn) || nn.includes(cat);
+      }));
+      if(!itemEntry){
+        return { requestType: reqEntry.requestType, item: null, itemNames: allItemNames, validTypes: allTypes };
+      }
+      return { requestType: reqEntry.requestType, item: itemEntry.names[0], itemNames: allItemNames, validTypes: itemEntry.types };
+    }
+
     // Orquestra a criacao completa da tarefa ISS a partir de um ticket de origem.
     // Retorna { newKey, linkType, attachmentsReport } em caso de sucesso. Lanca em caso de erro.
     // onProgress(stage:string) opcional para feedback de UI.
@@ -8579,6 +8684,14 @@
           if(typeof first === 'string') return first;
           return String(first.value ?? first.name ?? first.label ?? '');
         }
+        // v2.7.7: "Request Type" nativo do JSM (customfield_11100, CF_REQUEST_TYPE) tem um
+        // shape proprio — {requestType:{id,name,...}, _links:{...}} — sem value/name/id no
+        // nivel raiz (confirmado no IS-1115198: requestType.name = "Tenho um problema de
+        // software"). Sem esse caso especial, cairia no fallback generico abaixo e voltaria
+        // '' mesmo com o campo preenchido.
+        if(v && typeof v === 'object' && v.requestType && typeof v.requestType === 'object'){
+          return String(v.requestType.name ?? '');
+        }
         if(typeof v === 'object') return String(v.value ?? v.name ?? v.id ?? '');
         return String(v);
       };
@@ -8606,9 +8719,19 @@
       const catSubcategoria = isIncidentIssueType
         ? (_readCf('CF_SUBCATEGORY_INCIDENT') || _readCf('CF_INCIDENT_TYPE_TEXT') || _readCf('CF_SUBCATEGORY'))
         : (_readCf('CF_SUBCATEGORY_SERVICE') || _readCf('CF_SUBCATEGORY'));
-      const categoryOptions = isIncidentIssueType ? CATEGORY_HARDWARE_INCIDENT_OPTIONS : CATEGORY_HARDWARE_SERVICE_OPTIONS;
-      const subcategoryOptions = isIncidentIssueType ? CATEGORY_TYPE_INCIDENT_OPTIONS : CATEGORY_TYPE_SERVICE_OPTIONS;
+      // v2.7.7: catRequestType agora vem do CF_REQUEST_TYPE real (customfield_11100, "Request
+      // Type" do JSM) — antes ficava sempre vazio (DEFAULTS.CF_REQUEST_TYPE era 0). Usado
+      // pra casar com o CATEGORY_CATALOG (fluxo real do portal) e dar ao criterio "Categoria"
+      // a lista EXATA de Incident/Service Type validos pra esse Tipo de solicitacao + Objeto
+      // especifico, em vez de so uma lista solta com tudo que existe no projeto.
       const catRequestType = _readCf('CF_REQUEST_TYPE');
+      const _catalogMatch = _findCategoryCatalogMatch(catRequestType, catCategoria);
+      const categoryOptions = _catalogMatch
+        ? _catalogMatch.itemNames
+        : (isIncidentIssueType ? CATEGORY_HARDWARE_INCIDENT_OPTIONS : CATEGORY_HARDWARE_SERVICE_OPTIONS);
+      const subcategoryOptions = _catalogMatch
+        ? _catalogMatch.validTypes
+        : (isIncidentIssueType ? CATEGORY_TYPE_INCIDENT_OPTIONS : CATEGORY_TYPE_SERVICE_OPTIONS);
       const catUserValidation = _readCf('CF_USER_VALIDATION');
       // "Resolucao" (With technical intervention/etc.) e o campo NATIVO "resolution" do Jira,
       // nao um customfield (confirmado via XML real, v1.99.0) — le direto de f.resolution,
@@ -8880,9 +9003,9 @@ Avalie cada criterio e retorne "ok", "warn", "error" ou "skip":
 3. CATEGORIA
    ${hasCategoryData
      ? `Categoria (equipamento) / Subcategoria (tipo de problema) / Tipo de solicitacao atuais: "${catCategoria || '(vazio)'}" / "${catSubcategoria || '(vazio)'}" / "${catRequestType || '(vazio)'}".
-   Este ticket e do tipo ${isIncidentIssueType ? 'INCIDENTE' : 'SOLICITACAO'} — as unicas categorias/subcategorias VALIDAS pra esse tipo sao:
+   Este ticket e do tipo ${isIncidentIssueType ? 'INCIDENTE' : 'SOLICITACAO'}${_catalogMatch ? `, Tipo de solicitacao "${_catalogMatch.requestType}"${_catalogMatch.item ? ` com Objeto/Item "${_catalogMatch.item}"` : ''} — as unicas categorias/subcategorias VALIDAS pra ESSE COMBO ESPECIFICO (conforme o formulario real do portal) sao:` : ' — as unicas categorias/subcategorias VALIDAS pra esse tipo sao:'}
    Categorias (equipamento) validas: ${categoryOptions.join(', ')}.
-   Subcategorias (tipo de problema) validas: ${subcategoryOptions.join(', ')}.
+   Subcategorias (tipo de problema) validas: ${subcategoryOptions.join(', ')}.${_catalogMatch && !_catalogMatch.item ? '\n   OBS: nao foi possivel casar a Categoria atual com um Objeto/Item especifico do formulario — a lista de subcategorias acima cobre TODOS os itens desse Tipo de solicitacao, nao so o exato.' : ''}
    Compare com a CAUSA RAIZ REAL discutida nos comentarios dos analistas — nao so a queixa inicial do relator (o sintoma inicial pode nao refletir o que foi de fato investigado; ex: "instabilidade" pode virar "lentidao por sobrecarga de AP" ou "queda intermitente real" dependendo do que foi apurado).
    IMPORTANTE: a categoria inicial normalmente e preenchida pelo PROPRIO SOLICITANTE no portal ao abrir o chamado, nao pelo analista. O analista tem autonomia pra corrigir mas nem sempre corrige — uma categoria errada nao e automaticamente "culpa" do analista, mas se a causa raiz apurada e claramente diferente da categoria e o analista nao ajustou nem comentou, isso e um ajuste legitimo a sinalizar.
    NUNCA penalize por limitacoes tecnicas do formulario: se o campo e single-select (so permite escolher UMA opcao) e o ticket envolveu mais de uma acao/causa, aceite a opcao mais representativa escolhida pelo analista sem penalizar por nao cobrir as demais — a limitacao e do formulario, nao do analista.
