@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NOVA
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.7.6
+// @version      2.7.7
 // @description  NOVA (Natis Operational Virtual Assistant) — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -72,6 +72,9 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.7.7': [
+        'Corrigido: o critério "Categoria" da Auditoria mostrava N/A em alguns tickets de incidente mesmo com o ticket já exibindo "Object-type"/"Incident-type" preenchidos na tela — a auditoria lia só um par de campos (Assets/CMDB) que vem vazio nesses casos. Agora ela também tenta um segundo par de campos (texto simples) antes de desistir.'
+      ],
       '2.7.6': [
         'Corrigido: criar um atalho novo em "Outras ações por atalho" usando a MESMA combinação de tecla já usada por outro atalho (abrir/fechar NOVA, Menu de Status, Comentário rápido, Assumir ticket) fazia a ação nova nunca disparar, sem erro nenhum. Agora o Salvar bloqueia essa colisão e avisa qual atalho já está usando aquela combinação.'
       ],
@@ -1174,6 +1177,19 @@
       CF_SUBCATEGORY_INCIDENT: 18629,
       // "Service Type" (subcategoria/tipo de problema, ticket de solicitacao).
       CF_SUBCATEGORY_SERVICE:  18621,
+      // v2.7.7: BUG REAL achado no ticket IS-1115198 — CF_CATEGORY_INCIDENT (24989) e
+      // CF_SUBCATEGORY_INCIDENT (18629) vieram VAZIOS/nao-resolvidos pra esse ticket
+      // (confirmado via API: customfield_24989=[], customfield_18629=[{objectId:"90542",...}]
+      // sem label resolvido), fazendo a auditoria mostrar "Categoria: N/A" mesmo com o
+      // ticket exibindo campos preenchidos na tela (Object-type: SAP, Incident-type: Otros
+      // errores). Esses dois campos visiveis na UI sao, na verdade, customfield_19426
+      // ("Object-type") e customfield_19424 ("Incident-type") — campos de TEXTO simples,
+      // confirmados via expand=names na API — nao os campos Assets/CMDB antigos acima.
+      // Parecem ser de um formulario/tipo de solicitacao diferente do usado quando
+      // 24989/18629 foram confirmados originalmente. Mantidos os dois pares: o codigo usa
+      // qualquer um que estiver preenchido (ver catCategoria/catSubcategoria abaixo).
+      CF_OBJECT_TYPE_INCIDENT: 19426,
+      CF_INCIDENT_TYPE_TEXT:   19424,
       CF_REQUEST_TYPE:    0,
       // Confirmado via XML de um ticket real (IS-1098196, v1.99.0): customfield_26217
       // "Validated with the user" — cascading select (Yes/No -> canal, ver screenshots).
@@ -8549,6 +8565,20 @@
       const _cfStr = v => {
         if(v == null) return '';
         if(typeof v === 'string') return v;
+        // v2.7.7: campos Assets/CMDB (ex: customfield_18629) vem como ARRAY de objeto(s),
+        // nao um objeto unico — antes disso o "typeof v === 'object'" abaixo casava com o
+        // proprio ARRAY (typeof [] === 'object' em JS), tentava ler v.value/v.name/v.id
+        // direto do array (sempre undefined) e voltava '' mesmo com o array preenchido.
+        // So value/name/label contam aqui (nao "id"): esses refs normalmente trazem so
+        // {workspaceId,id,objectId} sem nome humano resolvido — um ID cru injetado no
+        // prompt da IA seria pior que reportar vazio (cai no fallback "skip").
+        if(Array.isArray(v)){
+          if(!v.length) return '';
+          const first = v[0];
+          if(first == null) return '';
+          if(typeof first === 'string') return first;
+          return String(first.value ?? first.name ?? first.label ?? '');
+        }
         if(typeof v === 'object') return String(v.value ?? v.name ?? v.id ?? '');
         return String(v);
       };
@@ -8564,11 +8594,17 @@
       // CF_CATEGORY/CF_SUBCATEGORY (sem sufixo) continuam como fallback legado, caso algum
       // projeto/instancia use um campo unico em vez do par incidente/solicitacao.
       const isIncidentIssueType = /incident|incidente/i.test(issueType);
+      // v2.7.7: CF_CATEGORY_INCIDENT/CF_SUBCATEGORY_INCIDENT (Assets/CMDB) vem vazios pra
+      // alguns tickets de incidente (ex: IS-1115198) mesmo com a UI do Jira mostrando
+      // "Object-type"/"Incident-type" preenchidos — esses dois sao campos de TEXTO
+      // separados (customfield_19426/19424), nao o par Assets/CMDB acima. Tenta os dois,
+      // na ordem: Assets/CMDB primeiro (mais especifico quando presente), depois o campo
+      // de texto simples, depois o legado CF_CATEGORY/CF_SUBCATEGORY.
       const catCategoria = isIncidentIssueType
-        ? (_readCf('CF_CATEGORY_INCIDENT') || _readCf('CF_CATEGORY'))
+        ? (_readCf('CF_CATEGORY_INCIDENT') || _readCf('CF_OBJECT_TYPE_INCIDENT') || _readCf('CF_CATEGORY'))
         : (_readCf('CF_CATEGORY_SERVICE') || _readCf('CF_CATEGORY'));
       const catSubcategoria = isIncidentIssueType
-        ? (_readCf('CF_SUBCATEGORY_INCIDENT') || _readCf('CF_SUBCATEGORY'))
+        ? (_readCf('CF_SUBCATEGORY_INCIDENT') || _readCf('CF_INCIDENT_TYPE_TEXT') || _readCf('CF_SUBCATEGORY'))
         : (_readCf('CF_SUBCATEGORY_SERVICE') || _readCf('CF_SUBCATEGORY'));
       const categoryOptions = isIncidentIssueType ? CATEGORY_HARDWARE_INCIDENT_OPTIONS : CATEGORY_HARDWARE_SERVICE_OPTIONS;
       const subcategoryOptions = isIncidentIssueType ? CATEGORY_TYPE_INCIDENT_OPTIONS : CATEGORY_TYPE_SERVICE_OPTIONS;
@@ -9114,8 +9150,9 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
       const _cpId = Number(SETTINGS.CF_CHANGED_PRIORITY || DEFAULTS.CF_CHANGED_PRIORITY || 0);
       const _categCfKeys = [
         'CF_CATEGORY','CF_SUBCATEGORY','CF_CATEGORY_INCIDENT','CF_CATEGORY_SERVICE',
-        'CF_SUBCATEGORY_INCIDENT','CF_SUBCATEGORY_SERVICE','CF_REQUEST_TYPE',
-        'CF_USER_VALIDATION','CF_SOLUTION_TYPE','CF_SOLUTION_TEXT'
+        'CF_SUBCATEGORY_INCIDENT','CF_SUBCATEGORY_SERVICE',
+        'CF_OBJECT_TYPE_INCIDENT','CF_INCIDENT_TYPE_TEXT', // v2.7.7
+        'CF_REQUEST_TYPE','CF_USER_VALIDATION','CF_SOLUTION_TYPE','CF_SOLUTION_TEXT'
       ];
       const _categCfIds = _categCfKeys
         .map(k => Number(SETTINGS[k] || DEFAULTS[k] || 0))
@@ -11905,6 +11942,16 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <div class="hint">"Service Type" no Assets/CMDB &mdash; tipo de problema quando o ticket &eacute; uma solicita&ccedil;&atilde;o. A auditoria (v2.0.0) usa esse par pra sugerir categoriza&ccedil;&atilde;o validada (ex: "Notebook - Laptop &rarr; Problemas f&iacute;sicos"), s&oacute; informativo.</div>
                 </div>
                 <div>
+                  <label>Categoria &mdash; Incidente, campo texto alternativo (CF ID)</label>
+                  <input type="number" id="ml_s_cf_object_type_incident" value="${Number(cur.CF_OBJECT_TYPE_INCIDENT || DEFAULTS.CF_OBJECT_TYPE_INCIDENT || 0)}" min="0" />
+                  <div class="hint">"Object-type" &mdash; campo de texto simples (n&atilde;o Assets/CMDB). Usado como fallback quando "Categoria &mdash; Incidente" acima vier vazio pro ticket (achado real no IS-1115198, v2.7.7).</div>
+                </div>
+                <div>
+                  <label>Subcategoria &mdash; Incidente, campo texto alternativo (CF ID)</label>
+                  <input type="number" id="ml_s_cf_incident_type_text" value="${Number(cur.CF_INCIDENT_TYPE_TEXT || DEFAULTS.CF_INCIDENT_TYPE_TEXT || 0)}" min="0" />
+                  <div class="hint">"Incident-type" &mdash; campo de texto simples (n&atilde;o Assets/CMDB). Usado como fallback quando "Subcategoria &mdash; Incidente" acima vier vazio pro ticket (achado real no IS-1115198, v2.7.7).</div>
+                </div>
+                <div>
                   <label>Tipo de solicita&ccedil;&atilde;o (CF ID)</label>
                   <input type="number" id="ml_s_cf_request_type" value="${Number(cur.CF_REQUEST_TYPE)||0}" min="0" />
                 </div>
@@ -12683,6 +12730,8 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             CF_CATEGORY_SERVICE:     Math.max(0, Number(modal.querySelector('#ml_s_cf_category_service')?.value)     || 0),
             CF_SUBCATEGORY_INCIDENT: Math.max(0, Number(modal.querySelector('#ml_s_cf_subcategory_incident')?.value) || 0),
             CF_SUBCATEGORY_SERVICE:  Math.max(0, Number(modal.querySelector('#ml_s_cf_subcategory_service')?.value)  || 0),
+            CF_OBJECT_TYPE_INCIDENT: Math.max(0, Number(modal.querySelector('#ml_s_cf_object_type_incident')?.value) || 0),
+            CF_INCIDENT_TYPE_TEXT:   Math.max(0, Number(modal.querySelector('#ml_s_cf_incident_type_text')?.value)   || 0),
             CF_REQUEST_TYPE:    Math.max(0, Number(modal.querySelector('#ml_s_cf_request_type')?.value)   || 0),
             CF_USER_VALIDATION: Math.max(0, Number(modal.querySelector('#ml_s_cf_user_validation')?.value)|| 0),
             CF_SOLUTION_TYPE:   Math.max(0, Number(modal.querySelector('#ml_s_cf_solution_type')?.value)  || 0),
