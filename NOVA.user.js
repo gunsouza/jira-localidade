@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NOVA
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.7.5
+// @version      2.7.6
 // @description  NOVA (Natis Operational Virtual Assistant) — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -72,6 +72,9 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.7.6': [
+        'Corrigido: criar um atalho novo em "Outras ações por atalho" usando a MESMA combinação de tecla já usada por outro atalho (abrir/fechar NOVA, Menu de Status, Comentário rápido, Assumir ticket) fazia a ação nova nunca disparar, sem erro nenhum. Agora o Salvar bloqueia essa colisão e avisa qual atalho já está usando aquela combinação.'
+      ],
       '2.7.5': [
         'As cores de fundo dos 3 botões flutuantes (azul, verde, roxo) ficaram mais escuras, junto com o dourado que já tinha sido ajustado — visual geral mais discreto.'
       ],
@@ -12457,6 +12460,38 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
               return showErr(`Atalho invalido ("${rowLabel}"): "${val}". Ex: Cmd+Shift+D, Ctrl+Alt+Q.`);
             }
             actionShortcutsVal[actionId] = val;
+          }
+
+          // v2.7.6: valida colisao de atalhos ENTRE categorias diferentes -- o handler de keydown
+          // (mais abaixo no arquivo) checa "Abrir/fechar NOVA" -> "Menu de Status" -> "Comentario
+          // rapido" -> "Assumir ticket" -> so DEPOIS o loop de ACTION_REGISTRY, com "return" assim
+          // que uma categoria anterior casa. Reusar o MESMO atalho numa acao nova (ou entre duas
+          // acoes novas) fazia a acao nova nunca disparar, sem nenhum erro visivel -- reportado
+          // pelo usuario como "salva mas nao funciona depois".
+          const _shortcutSig = (spec) => {
+            const p = parseShortcut(spec);
+            if(!p) return null;
+            return `${p.need.ctrl?1:0}${p.need.alt?1:0}${p.need.shift?1:0}${p.need.meta?1:0}:${p.key}`;
+          };
+          const _reservedShortcuts = new Map();
+          shortcutsArr.forEach(s => { const sig = _shortcutSig(s); if(sig && !_reservedShortcuts.has(sig)) _reservedShortcuts.set(sig, 'Abrir/fechar o NOVA'); });
+          asShortcutLines.forEach(s => { const sig = _shortcutSig(s); if(sig && !_reservedShortcuts.has(sig)) _reservedShortcuts.set(sig, 'Menu de Status'); });
+          qcShortcutLines.forEach(s => { const sig = _shortcutSig(s); if(sig && !_reservedShortcuts.has(sig)) _reservedShortcuts.set(sig, 'Comentário rápido'); });
+          { const sig = _shortcutSig(assignShortcutVal); if(sig && !_reservedShortcuts.has(sig)) _reservedShortcuts.set(sig, 'Assumir ticket + In Progress'); }
+
+          const _seenActionSigs = new Map(); // sig -> label da acao que ja usa esse atalho
+          for(const [actionId, val] of Object.entries(actionShortcutsVal)){
+            if(!val) continue;
+            const sig = _shortcutSig(val);
+            if(!sig) continue;
+            const actionLabel = ACTION_REGISTRY.find(a => a.id === actionId)?.label || actionId;
+            if(_reservedShortcuts.has(sig)){
+              return showErr(`Atalho "${val}" já está em uso por "${_reservedShortcuts.get(sig)}" — escolha outra combinação para "${actionLabel}".`);
+            }
+            if(_seenActionSigs.has(sig)){
+              return showErr(`Atalho "${val}" já está em uso por "${_seenActionSigs.get(sig)}" — escolha outra combinação para "${actionLabel}".`);
+            }
+            _seenActionSigs.set(sig, actionLabel);
           }
 
           // ISS Task fields
