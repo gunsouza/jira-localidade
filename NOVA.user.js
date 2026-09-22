@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NOVA
 // @namespace    https://github.com/gunsouza/jira-localidade
-// @version      2.7.8
+// @version      2.7.9
 // @description  NOVA (Natis Operational Virtual Assistant) — Ferramentas de atendimento N1 para o Jira: duplicados por localidade, derivacao automatica, criacao de ISS, status rapido, snippets, chips de documentacao e gerenciador de fila em lote.
 // @author       gunsouza
 // @match        https://*.atlassian.net/*
@@ -72,6 +72,9 @@
     // NAO e' o CHANGELOG inteiro, so' os destaques). Lista do mais recente pro mais antigo.
     // =========================
     const WHATS_NEW = {
+      '2.7.9': [
+        'Corrigido: tickets de SOLICITAÇÃO/SERVIÇO (não incidente) — ex: pedido de acesso a Lenel/Genetec/SAP — mostravam "Categoria" vazia na auditoria mesmo com Object-type/Service-type preenchidos na tela. A v2.7.7 só tinha corrigido esse campo pro lado de Incidente.'
+      ],
       '2.7.8': [
         'A Auditoria agora conhece o fluxo REAL do formulário do portal (Tipo de solicitação → Objeto/Item → Incident/Service Type, as 6 categorias oficiais). O critério "Categoria" passa a comparar contra o combo EXATO válido pra aquele objeto específico (ex: SAP só aceita os tipos de erro do Jira/SAP, não os de VPN ou de impressora), em vez de uma lista genérica solta.'
       ],
@@ -1191,8 +1194,18 @@
       // Parecem ser de um formulario/tipo de solicitacao diferente do usado quando
       // 24989/18629 foram confirmados originalmente. Mantidos os dois pares: o codigo usa
       // qualquer um que estiver preenchido (ver catCategoria/catSubcategoria abaixo).
-      CF_OBJECT_TYPE_INCIDENT: 19426,
-      CF_INCIDENT_TYPE_TEXT:   19424,
+      // v2.7.9: confirmado no ticket IS-1115152 (um "Service request", nao Incidente) que
+      // customfield_19426 ("Object-type") e COMPARTILHADO entre incidente e solicitacao —
+      // o mesmo campo, so muda o rotulo visivel conforme o contexto. Ja o campo de "tipo" (o
+      // que acompanha o Object-type) tem IDs DIFERENTES pros dois fluxos: customfield_19424
+      // = "Incident-type" (so em tickets de incidente), customfield_19425 = "Service-type"
+      // (so em tickets de solicitacao) — confirmado via names expand nos dois tickets reais.
+      // Ate a v2.7.8 so o ramo de incidente tentava o par 19426/19424; tickets de solicitacao
+      // (como o de acesso Lenel) ficavam sem ler nada disso e a Categoria saia vazia mesmo
+      // com Object-type/Service-type preenchidos na tela.
+      CF_OBJECT_TYPE_INCIDENT: 19426, // "Object-type" -- compartilhado (incidente E solicitacao)
+      CF_INCIDENT_TYPE_TEXT:   19424, // "Incident-type" -- so em tickets de incidente
+      CF_SERVICE_TYPE_TEXT:    19425, // "Service-type" -- so em tickets de solicitacao
       // v2.7.7: customfield_11100 = "Request Type" nativo do JSM (Customer Request Type) —
       // ja conhecido no codigo desde a v2.5.x (ver comentarios do fluxo de Recovery de
       // transicao), mas nunca tinha sido ligado ao CF_REQUEST_TYPE da auditoria. Confirmado
@@ -5391,10 +5404,24 @@
         ]
       },
       {
-        requestType: 'Acessos e Identidade',
+        // v2.7.9: "Acessos e Identidade" NAO e um valor real de Tipo de solicitacao — e so o
+        // rotulo de agrupamento que o usuario usou pra descrever essas duas solicitacoes.
+        // Confirmado no ticket real IS-1115152: o campo "Tipo de solicitacao" (customfield_
+        // 11100) vem como "Solicitar um novo acesso" diretamente, nao "Acessos e Identidade".
+        // Por isso cada solicitacao de acesso vira sua PROPRIA entrada de requestType aqui
+        // (senao o match por _findCategoryCatalogMatch nunca bateria com o campo real do
+        // ticket). O Object-type (Jira/SAP/Genetec/Lenel/VPN/Google Drive, etc.) e o "item";
+        // os Service Type disponiveis sao os mesmos pra qualquer objeto dentro da mesma
+        // solicitacao (o formulario do usuario nao os diferencia por objeto aqui).
+        requestType: 'Solicitar um novo acesso',
         items: [
-          { names: ['Solicitar um novo acesso'], types: ['Solicitar acceso', 'Asignar privilegio', 'Modificar privilegios'], objects: ['Jira', 'SAP', 'Genetec', 'Lenel', 'VPN', 'Google Drive'] },
-          { names: ['Solicitar desbloqueio ou reset de senha', 'Solicitar desbloqueio ou reset de MFA'], types: ['Desbloquear contraseña', 'Restablecer contraseña', 'Restablecer/Reset MFA - Auth0', 'Nuevo código de verificación'], objects: ['Auth0 Guardian', 'Google Authenticator', 'Login de red - Notebook', 'Jira', 'SAP'] },
+          { names: ['Jira', 'SAP', 'Genetec', 'Lenel', 'VPN', 'Google Drive'], types: ['Solicitar acceso', 'Asignar privilegio', 'Modificar privilegios'] },
+        ]
+      },
+      {
+        requestType: 'Solicitar desbloqueio ou reset de senha ou MFA',
+        items: [
+          { names: ['Auth0 Guardian', 'Google Authenticator', 'Login de red - Notebook', 'Jira', 'SAP'], types: ['Desbloquear contraseña', 'Restablecer contraseña', 'Restablecer/Reset MFA - Auth0', 'Nuevo código de verificación'] },
         ]
       },
       {
@@ -5436,14 +5463,17 @@
         return { requestType: reqEntry.requestType, item: null, itemNames: allItemNames, validTypes: allTypes };
       }
       const cat = _normCat(categoriaName);
+      let _matchedName = null;
       const itemEntry = reqEntry.items.find(it => it.names.some(n => {
         const nn = _normCat(n);
-        return cat.includes(nn) || nn.includes(cat);
+        const hit = cat.includes(nn) || nn.includes(cat);
+        if(hit) _matchedName = n; // guarda o nome REAL que bateu, nao so o primeiro da lista
+        return hit;
       }));
       if(!itemEntry){
         return { requestType: reqEntry.requestType, item: null, itemNames: allItemNames, validTypes: allTypes };
       }
-      return { requestType: reqEntry.requestType, item: itemEntry.names[0], itemNames: allItemNames, validTypes: itemEntry.types };
+      return { requestType: reqEntry.requestType, item: _matchedName || itemEntry.names[0], itemNames: allItemNames, validTypes: itemEntry.types };
     }
 
     // Orquestra a criacao completa da tarefa ISS a partir de um ticket de origem.
@@ -8713,12 +8743,17 @@
       // separados (customfield_19426/19424), nao o par Assets/CMDB acima. Tenta os dois,
       // na ordem: Assets/CMDB primeiro (mais especifico quando presente), depois o campo
       // de texto simples, depois o legado CF_CATEGORY/CF_SUBCATEGORY.
+      // v2.7.9: CF_OBJECT_TYPE_INCIDENT (19426, "Object-type") e COMPARTILHADO entre
+      // incidente e solicitacao (confirmado no IS-1115152, um Service request) — por isso
+      // entra tambem no ramo de SOLICITACAO abaixo. O campo de "tipo" que acompanha, porem,
+      // tem ID diferente por fluxo: CF_INCIDENT_TYPE_TEXT (19424) so em incidente,
+      // CF_SERVICE_TYPE_TEXT (19425) so em solicitacao.
       const catCategoria = isIncidentIssueType
         ? (_readCf('CF_CATEGORY_INCIDENT') || _readCf('CF_OBJECT_TYPE_INCIDENT') || _readCf('CF_CATEGORY'))
-        : (_readCf('CF_CATEGORY_SERVICE') || _readCf('CF_CATEGORY'));
+        : (_readCf('CF_CATEGORY_SERVICE') || _readCf('CF_OBJECT_TYPE_INCIDENT') || _readCf('CF_CATEGORY'));
       const catSubcategoria = isIncidentIssueType
         ? (_readCf('CF_SUBCATEGORY_INCIDENT') || _readCf('CF_INCIDENT_TYPE_TEXT') || _readCf('CF_SUBCATEGORY'))
-        : (_readCf('CF_SUBCATEGORY_SERVICE') || _readCf('CF_SUBCATEGORY'));
+        : (_readCf('CF_SUBCATEGORY_SERVICE') || _readCf('CF_SERVICE_TYPE_TEXT') || _readCf('CF_SUBCATEGORY'));
       // v2.7.7: catRequestType agora vem do CF_REQUEST_TYPE real (customfield_11100, "Request
       // Type" do JSM) — antes ficava sempre vazio (DEFAULTS.CF_REQUEST_TYPE era 0). Usado
       // pra casar com o CATEGORY_CATALOG (fluxo real do portal) e dar ao criterio "Categoria"
@@ -9275,6 +9310,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
         'CF_CATEGORY','CF_SUBCATEGORY','CF_CATEGORY_INCIDENT','CF_CATEGORY_SERVICE',
         'CF_SUBCATEGORY_INCIDENT','CF_SUBCATEGORY_SERVICE',
         'CF_OBJECT_TYPE_INCIDENT','CF_INCIDENT_TYPE_TEXT', // v2.7.7
+        'CF_SERVICE_TYPE_TEXT', // v2.7.9
         'CF_REQUEST_TYPE','CF_USER_VALIDATION','CF_SOLUTION_TYPE','CF_SOLUTION_TEXT'
       ];
       const _categCfIds = _categCfKeys
@@ -12065,14 +12101,19 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
                   <div class="hint">"Service Type" no Assets/CMDB &mdash; tipo de problema quando o ticket &eacute; uma solicita&ccedil;&atilde;o. A auditoria (v2.0.0) usa esse par pra sugerir categoriza&ccedil;&atilde;o validada (ex: "Notebook - Laptop &rarr; Problemas f&iacute;sicos"), s&oacute; informativo.</div>
                 </div>
                 <div>
-                  <label>Categoria &mdash; Incidente, campo texto alternativo (CF ID)</label>
+                  <label>Categoria &mdash; Objeto, campo texto alternativo (CF ID)</label>
                   <input type="number" id="ml_s_cf_object_type_incident" value="${Number(cur.CF_OBJECT_TYPE_INCIDENT || DEFAULTS.CF_OBJECT_TYPE_INCIDENT || 0)}" min="0" />
-                  <div class="hint">"Object-type" &mdash; campo de texto simples (n&atilde;o Assets/CMDB). Usado como fallback quando "Categoria &mdash; Incidente" acima vier vazio pro ticket (achado real no IS-1115198, v2.7.7).</div>
+                  <div class="hint">"Object-type" &mdash; campo de texto simples (n&atilde;o Assets/CMDB), <b>compartilhado entre Incidente e Solicita&ccedil;&atilde;o</b> (confirmado nos tickets IS-1115198 e IS-1115152, v2.7.7/v2.7.9). Usado como fallback quando "Categoria &mdash; Incidente"/"Categoria &mdash; Solicita&ccedil;&atilde;o" acima vierem vazias pro ticket.</div>
                 </div>
                 <div>
                   <label>Subcategoria &mdash; Incidente, campo texto alternativo (CF ID)</label>
                   <input type="number" id="ml_s_cf_incident_type_text" value="${Number(cur.CF_INCIDENT_TYPE_TEXT || DEFAULTS.CF_INCIDENT_TYPE_TEXT || 0)}" min="0" />
-                  <div class="hint">"Incident-type" &mdash; campo de texto simples (n&atilde;o Assets/CMDB). Usado como fallback quando "Subcategoria &mdash; Incidente" acima vier vazio pro ticket (achado real no IS-1115198, v2.7.7).</div>
+                  <div class="hint">"Incident-type" &mdash; campo de texto simples, s&oacute; em tickets de <b>incidente</b> (n&atilde;o Assets/CMDB). Usado como fallback quando "Subcategoria &mdash; Incidente" acima vier vazio pro ticket (achado real no IS-1115198, v2.7.7).</div>
+                </div>
+                <div>
+                  <label>Subcategoria &mdash; Solicita&ccedil;&atilde;o, campo texto alternativo (CF ID)</label>
+                  <input type="number" id="ml_s_cf_service_type_text" value="${Number(cur.CF_SERVICE_TYPE_TEXT || DEFAULTS.CF_SERVICE_TYPE_TEXT || 0)}" min="0" />
+                  <div class="hint">"Service-type" &mdash; campo de texto simples, s&oacute; em tickets de <b>solicita&ccedil;&atilde;o</b> (ID diferente do "Incident-type" acima, embora pare&ccedil;am o mesmo campo na tela). Usado como fallback quando "Subcategoria &mdash; Solicita&ccedil;&atilde;o" acima vier vazia pro ticket (achado real no IS-1115152, v2.7.9).</div>
                 </div>
                 <div>
                   <label>Tipo de solicita&ccedil;&atilde;o (CF ID)</label>
@@ -12855,6 +12896,7 @@ Formato exato (todo item de "items" e o "title_review" seguem {"check","status",
             CF_SUBCATEGORY_SERVICE:  Math.max(0, Number(modal.querySelector('#ml_s_cf_subcategory_service')?.value)  || 0),
             CF_OBJECT_TYPE_INCIDENT: Math.max(0, Number(modal.querySelector('#ml_s_cf_object_type_incident')?.value) || 0),
             CF_INCIDENT_TYPE_TEXT:   Math.max(0, Number(modal.querySelector('#ml_s_cf_incident_type_text')?.value)   || 0),
+            CF_SERVICE_TYPE_TEXT:    Math.max(0, Number(modal.querySelector('#ml_s_cf_service_type_text')?.value)    || 0),
             CF_REQUEST_TYPE:    Math.max(0, Number(modal.querySelector('#ml_s_cf_request_type')?.value)   || 0),
             CF_USER_VALIDATION: Math.max(0, Number(modal.querySelector('#ml_s_cf_user_validation')?.value)|| 0),
             CF_SOLUTION_TYPE:   Math.max(0, Number(modal.querySelector('#ml_s_cf_solution_type')?.value)  || 0),
